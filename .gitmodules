@@ -4,3 +4,19 @@
 [submodule "src/lib/detours"]
 	path = src/lib/detours
 	url = https://github.com/microsoft/Detours.git
+[submodule "FolderThumbnailFix-main"]
+	path = FolderThumbnailFix-main
+	url = https://github.com/LesFerch/FolderThumbnailFix.git
+	branch = main
+[submodule "RightClickTools-main"]
+	path = RightClickTools-main
+	url = https://github.com/LesFerch/RightClickTools.git
+	branch = main
+[submodule "SetFolderType-main"]
+	path = SetFolderType-main
+	url = https://github.com/LesFerch/SetFolderType.git
+	branch = main
+[submodule "WinSetView-main"]
+	path = WinSetView-main
+	url = https://github.com/LesFerch/WinSetView.git
+	branch = main
