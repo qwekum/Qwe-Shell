@@ -1,9 +1,34 @@
 # Local verification — 2026-09-10
 
 The Windows x64 implementation and MSI are built. The approved plan is **not
-fully qualified**: Explorer, installer lifecycle, system-operation parity,
+fully qualified**: Explorer, remaining installer cases, system-operation parity,
 runtime-language equivalence, and human acceptance remain pending in
 [acceptance.md](acceptance.md).
+
+## Sandbox registration fix — 2026-09-10
+
+Real guest installation exposed an inverted process-exit contract in
+`src/exe/src/Main.cpp`: `Register` returns a Boolean, while the MSI custom action
+requires zero on success. The executable now maps success to `0` and failure to
+`1`. Clean installation and both registrar outcomes passed in Windows Sandbox.
+See [the integration record](sandbox-integration.md) for lifecycle results,
+evidence, and limitations; [the roadmap](roadmap.md) lists the remaining work.
+
+The replacement Release/x64/v145 build completed in **66.26 seconds** at
+**2026-09-10 16:11:35 UTC**, with zero final WiX warnings or errors. This is whole
+build-command wall time, excluding tests.
+
+- Installer: `bin/setup-x64.msi` (54,385,858 bytes)
+- MSI SHA-256: `66D05AEE47EBC2FCFF0B6DEC0A6C8E52DC9B68C83982E2D2D370B9F3FDA88557`
+- Registrar SHA-256: `920CFD487FFD9FE3A8F7138AB334FBE6DAE10FF068DD6430B88FE40E3E04E754`
+- Native Shell DLL SHA-256: `420D3BA46BB9846AF088B882B3CE614FD2E6ACE742D92F2901F184FE045E462C`
+- Studio assembly SHA-256: `15273DBCA6F8EC26107E74A8038FD99D561EF48D0CE6ADE71D30A8CBB68ABB75`
+- Language DLL SHA-256: `E2F24F01FCA644D21494EF2C0D5686D9273EA2D64D315DD3ACFB6F48A2B5B916`
+
+The 107 checks below belong to the preceding interface verification. They were
+not rerun for this registrar-only change; guest process-exit probes and real MSI
+execution provide the targeted regression coverage. The prior MSI hash below
+is historical and is superseded by this receipt.
 
 ## Interface update — 2026-09-10
 

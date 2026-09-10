@@ -4,6 +4,10 @@ The root README contains the approved product scope. This directory describes th
 
 Start with [Build and run](build-and-run.md) for complete prerequisites and commands. See [the local verification record](local-verification.md) for the built artifact hashes and check results.
 
+See the [current roadmap](roadmap.md) for delivery status and the
+[Sandbox integration record](sandbox-integration.md) for real guest installer
+checks and their remaining qualification boundaries.
+
 ## Working with a configuration
 
 Open a root `.nss` configuration in Studio. The configuration view shows custom definitions without evaluating their commands or runtime conditions. Read-only import resolution loads supported deterministic paths and reports unresolved imports. Capture menu requests the actual classic menu from the matching native extension; open dynamic submenus during capture to include their children.

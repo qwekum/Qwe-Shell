@@ -1,14 +1,14 @@
 # Windows 11 x64 acceptance record
 
-Status: **pending**. Local parser, file, provider-fixture, offscreen WPF, and build checks do not qualify these cases. Run against a recorded disposable VM snapshot with the exact MSI and native/managed binary hashes. Do not run system-changing cases against the developer's active desktop.
+Status: **partially verified**. The [Sandbox integration record](sandbox-integration.md) records the first real installer and registration checks. The remaining cases below are pending. Local parser, file, provider-fixture, offscreen WPF, and build checks do not qualify them. Use a fresh disposable Windows Sandbox or a recorded VM snapshot with the exact MSI and native/managed binary hashes. Do not run system-changing cases against the developer's active desktop.
 
-The current artifact hashes and 93 passing local checks are in
+The current artifact hashes and 107 passing local checks are in
 [local-verification.md](local-verification.md). Follow
 [build-and-run.md](build-and-run.md) to rebuild, launch the application, and
 prepare the separate installation/capture stage. Retain the current package
-receipt with each VM run; a later rebuild requires a new receipt.
+receipt with each isolated run; a later rebuild requires a new receipt.
 
-For each case retain the OS build, starting state, steps, expected and observed result, diagnostics, and relevant before/after files or registry values. Mark failures explicitly. Restore the VM snapshot between cases that modify system resources or security.
+For each case retain the OS build, starting state, steps, expected and observed result, diagnostics, and relevant before/after files or registry values. Mark failures explicitly. Recreate the Sandbox or restore the VM snapshot between independent scenarios that modify system resources or security. Export evidence before disposing of the guest. Use a persistent VM for scenarios requiring state across guest disposal, multiple Windows versions, or physical presentation evidence that Sandbox cannot provide.
 
 | Area | Required cases and evidence |
 |---|---|

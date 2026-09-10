@@ -856,7 +856,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR,
 
 		if(reg.REGISTER || reg.UNREGISTER || reg.RESTART || reg.FOLDEREXTENSIONS)
 		{
-			return Register(reg);
+			// Process exit codes use zero for success; Register returns a Boolean.
+			return Register(reg) ? 0 : 1;
 		}
         else
         {

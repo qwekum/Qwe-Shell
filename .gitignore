@@ -45,3 +45,6 @@ src/packages/
 # Local agent instructions
 /AGENTS.md
 /CLAUDE.md
+
+# Local Windows Sandbox configuration and test artifacts
+/Sandbox/
