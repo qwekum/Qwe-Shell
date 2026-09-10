@@ -31,10 +31,13 @@ public partial class MainWindow : Window
     private EditorState editorState = new();
     private readonly bool renderOnly;
     private string? awaitingGeneration;
+    private Workspace? settingsWorkspace;
+    private Dictionary<string, string> settingsSources = new(StringComparer.OrdinalIgnoreCase);
 
     public MainWindow(string[] args)
     {
         renderOnly = args.Contains("--render-to", StringComparer.Ordinal);
+        StudioTheme.Initialize();
         InitializeComponent();
         DiagnosticList.ItemsSource = diagnostics;
         var expressionHint = new TextBlock { Text = "Choose a property's expression to open its node canvas.", Margin = new Thickness(20) };
@@ -71,7 +74,8 @@ public partial class MainWindow : Window
                 else if (e.Key == Key.Y && Keyboard.FocusedElement is not TextBox) { Redo_Click(this, e); e.Handled = true; }
             }
             if (e.Key == Key.F5) { Capture_Click(this, e); e.Handled = true; }
-            if (Keyboard.Modifiers == ModifierKeys.Alt && e.Key is Key.Up or Key.Down)
+            if (e.Key == Key.Delete && MenuTree.IsKeyboardFocusWithin) { Remove_Click(this, e); e.Handled = true; }
+            if (MenuTree.IsKeyboardFocusWithin && Keyboard.Modifiers == ModifierKeys.Alt && e.Key is Key.Up or Key.Down)
             { MoveSelected(e.Key == Key.Up ? -1 : 1); e.Handled = true; }
         };
     }
@@ -87,8 +91,9 @@ public partial class MainWindow : Window
         operationDiagnostics.Add(diagnostic);
         if (operationDiagnostics.Count > 500) operationDiagnostics.RemoveAt(0);
         diagnostics.Add(diagnostic); StatusLabel.Text = diagnostic.Message;
+        DiagnosticsExpander.IsExpanded = true; UpdateCommandState();
     }
-    private void ClearDiagnostics_Click(object sender, RoutedEventArgs e) { operationDiagnostics.Clear(); Refresh(); }
+    private void ClearDiagnostics_Click(object sender, RoutedEventArgs e) { operationDiagnostics.Clear(); diagnostics.Clear(); Refresh(); UpdateCommandState(); if (diagnostics.Count == 0) DiagnosticsExpander.IsExpanded = false; }
     private bool RequireWorkspace()
     {
         if (workspace is not null && workspace.Files.ContainsKey(workspace.RootPath)) return true;
@@ -123,6 +128,9 @@ public partial class MainWindow : Window
     {
         if (workspace is null) return;
         string? selectedId = selected?.Id;
+        var menuScroll = FindVisual<ScrollViewer>(MenuTree);
+        double scrollOffset = menuScroll?.VerticalOffset ?? 0;
+        bool treeHadFocus = MenuTree.IsKeyboardFocusWithin;
         var expanded = new HashSet<string>();
         void Collect(ItemsControl parent)
         {
@@ -153,12 +161,50 @@ public partial class MainWindow : Window
                 }
         }
         Restore(MenuTree);
+        menuScroll?.ScrollToVerticalOffset(scrollOffset);
+        if (treeHadFocus) MenuTree.Focus();
         EmptyMenu.Visibility = snapshot.Entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        PhaseLabel.Text = snapshot.Phase switch { "configuration" => "CONFIGURATION VIEW", "preview" => "EDITED PREVIEW", "verified" => "CAPTURED AFTER APPLY", "recorded" => "RECORDED CAPTURE", _ => "ACTUAL CAPTURE" };
+        PhaseLabel.Text = snapshot.Phase switch { "configuration" => "Configuration view", "preview" => "Edited preview", "verified" => "Captured after apply", "recorded" => "Recorded capture", _ => "Actual capture" };
         ContextLabel.Text = snapshot.Context + (snapshot.Paths.Length > 0 ? " · " + string.Join(", ", snapshot.Paths.Take(3)) : "") + " · " + workspace.RootPath;
         diagnostics.Clear();
         foreach (var diagnostic in workspace.Diagnostics.Concat(snapshot.Diagnostics).Concat(operationDiagnostics)) diagnostics.Add(diagnostic);
         BuildSettings();
+        UpdateCommandState();
+        if (diagnostics.Any(d => d.Severity == "error")) DiagnosticsExpander.IsExpanded = true;
+    }
+    private static T? FindVisual<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FindVisual<T>(child) is T descendant) return descendant;
+        }
+        return null;
+    }
+    private void UpdateCommandState()
+    {
+        bool opened = workspace is not null;
+        SaveTemplateButton.IsEnabled = opened;
+        SaveSelectionTemplateButton.IsEnabled = opened && selected is not null;
+        AddCommandButton.IsEnabled = AddMenuButton.IsEnabled = AddSeparatorButton.IsEnabled = opened;
+        ApplyButton.IsEnabled = workspace?.IsDirty == true;
+        MoveToButton.IsEnabled = RemoveButton.IsEnabled = ExplainButton.IsEnabled = opened && selected is not null;
+        OriginalButton.IsEnabled = snapshot.Original.Count > 0;
+        var siblings = selected is null ? null : FindParentList(snapshot.Entries, selected);
+        int index = selected is null ? -1 : siblings?.IndexOf(selected) ?? -1;
+        MoveUpButton.IsEnabled = index > 0;
+        MoveDownButton.IsEnabled = index >= 0 && index < siblings!.Count - 1;
+        UndoButton.IsEnabled = workspace?.CanUndo == true;
+        RedoButton.IsEnabled = workspace?.CanRedo == true;
+        DiagnosticsHeading.Text = diagnostics.Count == 0 ? "Diagnostics · no issues" : $"Diagnostics · {diagnostics.Count} messages";
+        DiagnosticsHeading.SetResourceReference(TextBlock.ForegroundProperty, diagnostics.Any(d => d.Severity == "error") ? "ErrorBrush" : diagnostics.Count > 0 ? "WarningBrush" : "MutedBrush");
+        if (workspace?.IsDirty == true && !PhaseLabel.Text.EndsWith(" · Pending edits", StringComparison.Ordinal)) PhaseLabel.Text += " · Pending edits";
+        PhaseLabel.ToolTip = workspace?.IsDirty == true ? "Pending edits. Review & apply to publish changes." : "Capture and verification states are distinct from configuration editing.";
+    }
+    private void Diagnostic_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter) { OpenSelectedDiagnostic(); e.Handled = true; }
     }
     private void Remember()
     {
@@ -218,9 +264,10 @@ public partial class MainWindow : Window
     private void Menu_Selected(object sender, RoutedPropertyChangedEventArgs<object> e)
     {
         selected = e.NewValue as MenuEntry;
+        UpdateCommandState();
         PropertyPanel.Children.Clear();
         SelectedTitle.Text = selected?.DisplayTitle ?? "Select an entry";
-        SourceLabel.Text = selected?.SourceFile is string sourcePath ? sourcePath + "\nEdits change this definition wherever its conditions allow it to appear." : "Native menu entry; edits create a scoped modification rule.";
+        SourceLabel.Text = selected is null ? "Select a menu entry to inspect its source and editing scope." : selected.SourceFile is string sourcePath ? sourcePath + "\nEdits change this definition wherever its conditions allow it to appear." : "Native menu entry; edits create a scoped modification rule.";
         if (selected is null || workspace is null) return;
         var entry = selected;
         foreach (var diagnostic in entry.Diagnostics)
@@ -323,14 +370,16 @@ public partial class MainWindow : Window
         caption.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
         panel.Children.Add(caption);
         var row = new DockPanel();
-        var input = new TextBox { Text = value, MinWidth = 130 };
-        var button = new Button { Content = "✓", Margin = new Thickness(5, 0, 0, 0), ToolTip = "Save " + label };
+        var input = new TextBox { Text = value, MinWidth = 100 };
+        System.Windows.Automation.AutomationProperties.SetName(input, label);
+        var button = new Button { Content = "Save", Margin = new Thickness(8, 0, 0, 0), ToolTip = "Save " + label };
+        System.Windows.Automation.AutomationProperties.SetName(button, "Save " + label);
         button.Click += (_, _) => Guard(() => save(input.Text));
         DockPanel.SetDock(button, Dock.Right); row.Children.Add(button); row.Children.Add(input); panel.Children.Add(row);
     }
     private void AddExpressionButton(Panel panel, string name, string value, SourceFile file, SyntaxNode node, SyntaxProperty property)
     {
-        var button = new Button { Content = "ƒ  " + name + " — edit nodes", HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 10, 0, 0), ToolTip = value };
+        var button = new Button { Content = name + " · Edit expression", HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 10, 0, 0), ToolTip = value };
         button.Click += (_, _) => Guard(() =>
         {
             string layoutKey = file.Path + "#" + node.Start + "." + name;
@@ -391,6 +440,24 @@ public partial class MainWindow : Window
         var parent = MenuEditing.Descendants(snapshot.Entries).FirstOrDefault(e => e.Children == list);
         MenuEditing.Move(workspace!, snapshot, selected, parent, target, Scope);
         list.RemoveAt(old); list.Insert(target, selected); MarkPreview();
+    });
+    private void MoveTo_Click(object sender, RoutedEventArgs e) => Guard(() =>
+    {
+        if (!RequireWorkspace() || selected is null) return;
+        var entry = selected;
+        var excluded = MenuEditing.Descendants(entry.Children).Select(n => n.Id).Append(entry.Id).ToHashSet();
+        var destinations = new Dictionary<string, MenuEntry?> { ["Top level"] = null };
+        int number = 0;
+        foreach (var menu in MenuEditing.Descendants(snapshot.Entries).Where(n => n.Kind == "menu" && !excluded.Contains(n.Id)))
+            destinations[$"{++number}. {menu.DisplayTitle}"] = menu;
+        string? choice = Dialogs.Choose(this, "Move entry", "Destination submenu", destinations.Keys);
+        if (choice is null) return;
+        var parent = destinations[choice];
+        var current = FindParentList(snapshot.Entries, entry);
+        var target = parent?.Children ?? snapshot.Entries;
+        if (current is null || ReferenceEquals(current, target)) return;
+        MenuEditing.Move(workspace!, snapshot, entry, parent, target.Count, Scope);
+        current.Remove(entry); target.Add(entry); MarkPreview();
     });
     private void MoveUp_Click(object sender, RoutedEventArgs e) => MoveSelected(-1);
     private void MoveDown_Click(object sender, RoutedEventArgs e) => MoveSelected(1);
@@ -507,9 +574,15 @@ public partial class MainWindow : Window
     }
     private void BuildSettings()
     {
-        SettingsPanel.Children.Clear();
         if (workspace is null) return;
-        var add = new Button { Content = "+ Configuration block / definition", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(12, 8, 0, 12) };
+        if (ReferenceEquals(workspace, settingsWorkspace) && settingsSources.Count == workspace.Files.Count &&
+            workspace.Files.All(pair => settingsSources.TryGetValue(pair.Key, out var text) && text == pair.Value.Text)) return;
+        double offset = SettingsScroll.VerticalOffset;
+        var expanded = SettingsPanel.Children.OfType<Expander>().Where(e => e.Tag is string).ToDictionary(e => (string)e.Tag, e => e.IsExpanded, StringComparer.OrdinalIgnoreCase);
+        SettingsPanel.Children.Clear();
+        var heading = new TextBlock { Text = "Appearance & settings", Margin = new Thickness(0, 0, 0, 8) }; heading.SetResourceReference(StyleProperty, "PageTitle"); SettingsPanel.Children.Add(heading);
+        var description = new TextBlock { Text = "Edit the definitions in your configuration. Expressions remain unevaluated until the menu runs.", Margin = new Thickness(0, 0, 0, 16) }; description.SetResourceReference(StyleProperty, "SecondaryText"); SettingsPanel.Children.Add(description);
+        var add = new Button { Content = "Add configuration block or definition", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 16) };
         add.Click += (_, _) => Guard(() =>
         {
             string? kind = Dialogs.Choose(this, "Add definition", "Choose a construct", ["settings", "theme", "variable", "image", "import", "loc", "modify", "remove"]);
@@ -538,17 +611,22 @@ public partial class MainWindow : Window
             foreach (var node in file.Syntax.Nodes.Where(n => n.Kind is not ("item" or "menu" or "separator"))) BuildDefinition(filePanel, file, node, 0);
             if (filePanel.Children.Count > 0)
             {
-                var expander = new Expander { Header = file.Path, Content = filePanel, IsExpanded = true, Margin = new Thickness(12, 4, 12, 12) };
+                string relative = Path.GetRelativePath(Path.GetDirectoryName(workspace.RootPath)!, file.Path);
+                var expander = new Expander { Header = relative, ToolTip = file.Path, Tag = file.Path, Content = filePanel, IsExpanded = expanded.GetValueOrDefault(file.Path, true), Margin = new Thickness(0, 4, 0, 16) };
+                System.Windows.Automation.AutomationProperties.SetName(expander, "Configuration file " + relative);
                 expander.SetResourceReference(Control.ForegroundProperty, "TextBrush");
                 SettingsPanel.Children.Add(expander);
             }
         }
+        settingsWorkspace = workspace;
+        settingsSources = workspace.Files.ToDictionary(pair => pair.Key, pair => pair.Value.Text, StringComparer.OrdinalIgnoreCase);
+        SettingsScroll.ScrollToVerticalOffset(offset);
     }
     private void BuildDefinition(Panel panel, SourceFile file, SyntaxNode node, int depth, string? parentPath = null)
     {
         if (depth > 32) return;
         string definitionPath = string.IsNullOrEmpty(parentPath) ? node.Name : parentPath + "." + node.Name;
-        var body = new StackPanel { Margin = new Thickness(depth > 0 ? 14 : 0, 4, 0, 8), MaxWidth = 850, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var body = new StackPanel { Margin = new Thickness(depth > 0 ? 14 : 0, 4, 0, 8) , HorizontalAlignment = HorizontalAlignment.Stretch };
         body.Children.Add(new TextBlock { Text = string.IsNullOrEmpty(node.Name) ? node.Kind : node.Name, FontSize = 16, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 6, 0, 4) });
         if (node.Expression is not null)
         {
@@ -564,11 +642,12 @@ public partial class MainWindow : Window
             else if (raw.Trim() is "true" or "false")
             {
                 var check = new CheckBox { Content = "Enabled", IsChecked = raw.Trim() == "true" };
+                System.Windows.Automation.AutomationProperties.SetName(check, node.Name + " enabled");
                 check.Click += (_, _) => Guard(() => Save(check.IsChecked == true ? "true" : "false")); body.Children.Add(check);
             }
             else if (double.TryParse(raw, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _))
                 AddField(body, "Number", raw, value => { if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out _)) throw new InvalidDataException("Enter a valid number."); Save(value); });
-            var edit = new Button { Content = "ƒ Edit value on canvas", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
+            var edit = new Button { Content = "Edit value on canvas", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 6, 0, 0) };
             edit.Click += (_, _) => { canvas = new(language, raw, value => Guard(() => Save(value))); ExpressionContent.Content = canvas; Pages.SelectedIndex = 1; };
             body.Children.Add(edit);
         }
@@ -615,15 +694,8 @@ public partial class MainWindow : Window
     private void Theme_Click(object sender, RoutedEventArgs e)
     {
         lightTheme = !lightTheme;
-        var values = lightTheme
-            ? new[] { "#F2F4F5", "#FFFFFF", "#E7EDF0", "#1A2833", "#566572", "#176B54", "#CDD7DE" }
-            : new[] { "#14191F", "#1D242C", "#28323D", "#E8EDF2", "#A9B6C3", "#89D8BE", "#394652" };
-        var keys = new[] { "BackgroundBrush", "PanelBrush", "RaisedBrush", "TextBrush", "MutedBrush", "AccentBrush", "BorderBrush" };
-        for (int i = 0; i < keys.Length; i++) Application.Current.Resources[keys[i]] = new SolidColorBrush((Color)ColorConverter.ConvertFromString(values[i]));
-        foreach (var key in new[] { SystemColors.HighlightBrushKey, SystemColors.InactiveSelectionHighlightBrushKey })
-            Application.Current.Resources[key] = Application.Current.Resources["RaisedBrush"];
-        foreach (var key in new[] { SystemColors.HighlightTextBrushKey, SystemColors.InactiveSelectionHighlightTextBrushKey })
-            Application.Current.Resources[key] = Application.Current.Resources["TextBrush"];
+        StudioTheme.Apply(lightTheme);
+        ThemeButton.ToolTip = lightTheme ? "Switch to dark theme" : "Switch to light theme";
         canvas?.RefreshAppearance();
     }
     private void SaveTemplate_Click(object sender, RoutedEventArgs e) => SaveTemplate(false);
@@ -717,7 +789,8 @@ public partial class MainWindow : Window
         var dialog = new SaveFileDialog { Filter = "Diagnostic report|*.json", FileName = "shell-studio-diagnostics.json" };
         if (dialog.ShowDialog(this) == true) File.WriteAllText(dialog.FileName, report);
     });
-    private void Diagnostic_Click(object sender, MouseButtonEventArgs e)
+    private void Diagnostic_Click(object sender, MouseButtonEventArgs e) => OpenSelectedDiagnostic();
+    private void OpenSelectedDiagnostic()
     {
         if (DiagnosticList.SelectedItem is not Diagnostic diagnostic) return;
         if (diagnostic.File is not null && workspace?.Files.TryGetValue(diagnostic.File, out var file) == true)

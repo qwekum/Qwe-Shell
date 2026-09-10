@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Automation;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -20,12 +21,21 @@ public sealed class ExpressionCanvas : UserControl
     private IReadOnlyList<SyntaxToken> tokens = [];
     private static readonly string[] BinaryOperators = ["+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "&", "|", "^", "<<", ">>"];
     private readonly Canvas surface = new() { Width = 2200, Height = 1800, Background = Brushes.Transparent };
-    private readonly StackPanel inspector = new() { Margin = new Thickness(16), Width = 265 };
+    private readonly StackPanel inspector = new() { Margin = new Thickness(16) };
     private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8) };
     private readonly Dictionary<string, Point> positions = [];
     private readonly Stack<string> undo = new();
     private readonly Stack<string> redo = new();
     private readonly Action<Dictionary<string, NodePosition>>? saveLayout;
+
+    private readonly ComboBox nodeNavigation = new() { Width = 240, DisplayMemberPath = "Label", Margin = new Thickness(8, 0, 0, 6) };
+    private readonly TextBox sourcePreview = new() { IsReadOnly = true, TextWrapping = TextWrapping.NoWrap, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 72, FontFamily = new FontFamily("Consolas"), FontSize = 13 };
+    private readonly ScrollViewer viewport;
+    private readonly Button saveButton, undoButton, redoButton;
+    private readonly TextBlock zoomLabel = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 8, 6) };
+    private bool updatingNavigation, fitted;
+    private readonly Dictionary<string, List<Action>> connectionUpdates = [];
+    private sealed record NodeChoice(ExpressionNode Node, string Label) { public override string ToString() => Label; }
 
     public ExpressionCanvas(ILanguageService language, string expression, Action<string> save,
         IReadOnlyDictionary<string, NodePosition>? layout = null, Action<Dictionary<string, NodePosition>>? saveLayout = null)
@@ -33,59 +43,143 @@ public sealed class ExpressionCanvas : UserControl
         this.language = language; this.expression = expression; this.save = save;
         this.saveLayout = saveLayout;
         if (layout is not null) foreach (var item in layout) positions[item.Key] = new Point(item.Value.X, item.Value.Y);
-        var grid = new Grid(); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(12) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(320), MinWidth = 280 });
         grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
         var toolbar = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-        toolbar.Children.Add(Button("Save expression", () => { if (root is not null) save(this.expression); }));
-        toolbar.Children.Add(Button("Undo", () => { if (undo.TryPop(out var value)) { redo.Push(this.expression); this.expression = value; Parse(); } }));
-        toolbar.Children.Add(Button("Redo", () => { if (redo.TryPop(out var value)) { undo.Push(this.expression); this.expression = value; Parse(); } }));
+        saveButton = Button("Save expression", () => { if (root is not null) { save(this.expression); status.Text = "Expression saved to the editor. Review & apply to publish it."; status.SetResourceReference(TextBlock.ForegroundProperty, "SuccessBrush"); } });
+        saveButton.SetResourceReference(StyleProperty, "PrimaryButton"); toolbar.Children.Add(saveButton);
+        undoButton = Button("Undo", () => { if (undo.TryPop(out var value)) { redo.Push(this.expression); this.expression = value; Parse(); } }); toolbar.Children.Add(undoButton);
+        redoButton = Button("Redo", () => { if (redo.TryPop(out var value)) { undo.Push(this.expression); this.expression = value; Parse(); } }); toolbar.Children.Add(redoButton);
         toolbar.Children.Add(Button("Arrange nodes", () => { positions.Clear(); Draw(); }));
-        toolbar.Children.Add(Button("+", () => Zoom(1.2))); toolbar.Children.Add(Button("−", () => Zoom(1 / 1.2)));
-        Grid.SetColumnSpan(toolbar, 2); grid.Children.Add(toolbar);
-        var scroll = new ScrollViewer { Content = surface, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        scroll.PreviewMouseWheel += (_, e) => { if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { Zoom(e.Delta > 0 ? 1.1 : 1 / 1.1); e.Handled = true; } };
-        Grid.SetRow(scroll, 1); grid.Children.Add(scroll);
+        toolbar.Children.Add(Button("Fit view", FitView));
+        toolbar.Children.Add(Button("Zoom −", () => Zoom(1 / 1.2))); toolbar.Children.Add(zoomLabel); toolbar.Children.Add(Button("Zoom +", () => Zoom(1.2)));
+        AutomationProperties.SetName(nodeNavigation, "Select expression node");
+        nodeNavigation.SelectionChanged += (_, _) => { if (!updatingNavigation && nodeNavigation.SelectedItem is NodeChoice choice) SelectNode(choice.Node); };
+        toolbar.Children.Add(nodeNavigation);
+        Grid.SetColumnSpan(toolbar, 3); grid.Children.Add(toolbar);
+        viewport = new ScrollViewer { Content = surface, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        viewport.PreviewMouseWheel += (_, e) => { if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { Zoom(e.Delta > 0 ? 1.1 : 1 / 1.1); e.Handled = true; } };
+        Grid.SetRow(viewport, 1); grid.Children.Add(viewport);
         var panel = new ScrollViewer { Content = inspector, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = (Brush)Application.Current.FindResource("PanelBrush") };
         panel.SetResourceReference(Control.BackgroundProperty, "PanelBrush");
-        Grid.SetRow(panel, 1); Grid.SetColumn(panel, 1); grid.Children.Add(panel);
-        Grid.SetRow(status, 2); Grid.SetColumnSpan(status, 2); grid.Children.Add(status);
+        Grid.SetRow(panel, 1); Grid.SetColumn(panel, 2); grid.Children.Add(panel);
+        var splitter = new GridSplitter { Width = 4, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch, ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext, KeyboardIncrement = 16 };
+        AutomationProperties.SetName(splitter, "Resize expression inspector"); Grid.SetRow(splitter, 1); Grid.SetColumn(splitter, 1); grid.Children.Add(splitter);
+        var footer = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+        AutomationProperties.SetName(sourcePreview, "Expression source"); AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        var editSource = Button("Edit source…", () => { var value = Dialogs.Input(Window.GetWindow(this)!, "Edit expression source", "Expression source (validated without execution)", this.expression); if (value is not null) Change(value); });
+        DockPanel.SetDock(editSource, Dock.Right); footer.Children.Add(editSource); footer.Children.Add(sourcePreview);
+        Grid.SetRow(footer, 2); Grid.SetColumnSpan(footer, 3); grid.Children.Add(footer);
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        Grid.SetRow(status, 3); Grid.SetColumnSpan(status, 3); grid.Children.Add(status);
         Content = grid;
+        void InitialFrame()
+        {
+            if (fitted || viewport.ActualWidth <= 0 || viewport.ActualHeight <= 0 || root is null) return;
+            fitted = true; FitView();
+            // Keep initial labels readable; the explicit Fit action may zoom further out.
+            if (scale < .85) { scale = .85; Zoom(1); }
+            viewport.UpdateLayout();
+            RefreshSelection();
+        }
+        Loaded += (_, _) => InitialFrame();
+        SizeChanged += (_, _) => InitialFrame();
+        viewport.SizeChanged += (_, _) =>
+        {
+            if (fitted) viewport.Dispatcher.InvokeAsync(RefreshSelection, System.Windows.Threading.DispatcherPriority.Loaded);
+        };
         Parse();
     }
 
     private static Button Button(string label, Action action)
     {
-        var button = new Button { Content = label, Margin = new Thickness(0, 0, 6, 6) };
+        var button = new Button { Content = label, Margin = new Thickness(0, 0, 6, 6), ToolTip = label };
+        button.SetResourceReference(ContentControl.ContentTemplateProperty, "WrappingButtonContent");
+        if (label.StartsWith("Remove", StringComparison.Ordinal)) button.SetResourceReference(StyleProperty, "DestructiveButton");
+        AutomationProperties.SetName(button, label);
         button.Click += (_, _) => action(); return button;
     }
     private double scale = 1;
-    public void RefreshAppearance() { if (root is not null) { Draw(); Inspect(); } }
-    private void Zoom(double factor) { scale = Math.Clamp(scale * factor, .35, 2); surface.LayoutTransform = new ScaleTransform(scale, scale); }
+    public void RefreshAppearance() => InvalidateVisual();
+    private void Zoom(double factor)
+    {
+        scale = Math.Clamp(scale * factor, .35, 2); surface.LayoutTransform = new ScaleTransform(scale, scale);
+        zoomLabel.Text = $"{scale:P0}";
+    }
+    private void FitView()
+    {
+        if (root is null || viewport.ActualWidth < 1 || viewport.ActualHeight < 1) return;
+        scale = Math.Clamp(Math.Min((viewport.ActualWidth - 24) / surface.Width, (viewport.ActualHeight - 24) / surface.Height), .35, 1);
+        Zoom(1); viewport.ScrollToHome();
+    }
+    private void SelectNode(ExpressionNode node)
+    {
+        selected = node; Inspect();
+        updatingNavigation = true;
+        nodeNavigation.SelectedItem = nodeNavigation.Items.OfType<NodeChoice>().FirstOrDefault(choice => choice.Node.Id == node.Id);
+        updatingNavigation = false;
+        RefreshSelection();
+    }
+    private void RefreshSelection()
+    {
+        foreach (var card in surface.Children.OfType<Button>())
+        {
+            bool active = card.Tag is ExpressionNode value && value.Id == selected?.Id;
+            card.SetResourceReference(Control.BorderBrushProperty, active ? "AccentBrush" : "BorderBrush");
+            card.SetResourceReference(Control.BackgroundProperty, active ? "RaisedBrush" : "PanelBrush");
+            if (active && viewport.IsLoaded) card.BringIntoView();
+        }
+    }
+    private void UpdateControls()
+    {
+        saveButton.IsEnabled = root is not null; undoButton.IsEnabled = undo.Count > 0; redoButton.IsEnabled = redo.Count > 0;
+        nodeNavigation.IsEnabled = root is not null; sourcePreview.Text = expression;
+        updatingNavigation = true;
+        nodeNavigation.ItemsSource = root is null ? Array.Empty<NodeChoice>() : Nodes(root).Select((node, i) => new NodeChoice(node, $"{i + 1}. {node.Kind} · {Summary(node)}")).ToArray();
+        updatingNavigation = false;
+        if (selected is not null) SelectNode(selected);
+        Zoom(1);
+    }
     private void Parse()
     {
+        status.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
         var parsed = language.Parse("item(title=" + expression + ")");
         tokens = parsed.Tokens;
         root = parsed.Nodes.FirstOrDefault()?.Properties.FirstOrDefault(p => p.Name == "title")?.Expression;
         var errors = parsed.Diagnostics.Where(d => d.Severity == "error").ToArray();
-        bool unmapped = root is not null && ContainsUnknown(root);
-        if (errors.Length > 0 || root is null || unmapped)
+        bool oversized = root is not null && ExceedsVisualLimit(root);
+        bool unmapped = !oversized && root is not null && ContainsUnknown(root);
+        if (errors.Length > 0 || root is null || unmapped || oversized)
         {
             status.Text = string.Join("\n", errors.Select(d => d.Code + ": " + d.Message));
             if (root is null) status.Text += "\nNo expression tree was returned.";
             if (unmapped) status.Text += "\nGRAPH_UNMAPPED: This expression contains a construct without a complete visual mapping.";
-            root = selected = null; surface.Children.Clear(); inspector.Children.Clear();
+            if (oversized) status.Text += "\nGRAPH_LIMIT: This expression exceeds 2,048 nodes or 64 levels. Simplify it using Edit source.";
+            root = selected = null; surface.Children.Clear(); connectionUpdates.Clear(); inspector.Children.Clear();
             inspector.Children.Add(new TextBlock { Text = "The current expression cannot be drawn. Start a replacement node, or correct the source and reopen it.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
             inspector.Children.Add(Button("Start replacement with text", () => Change("\"\"")));
+            status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush"); UpdateControls();
             return;
         }
-        selected = root; Draw(); Inspect();
+        selected = root; Draw(); UpdateControls();
         status.Text = "Arrows follow ordered operands and arguments. Moving cards changes layout only. Expressions are never executed here.";
+    }
+    private static bool ExceedsVisualLimit(ExpressionNode root)
+    {
+        var pending = new Stack<(ExpressionNode Node, int Depth)>(); pending.Push((root, 0));
+        int count = 0;
+        while (pending.TryPop(out var item))
+        {
+            if (++count > 2048 || item.Depth > 64) return true;
+            foreach (var child in item.Node.Children) pending.Push((child, item.Depth + 1));
+        }
+        return false;
     }
     private static bool ContainsUnknown(ExpressionNode node) => node.Kind == "unknown" || node.Children.Any(ContainsUnknown);
 
     private void Draw()
     {
-        surface.Children.Clear(); if (root is null) return;
+        surface.Children.Clear(); connectionUpdates.Clear(); if (root is null) return;
         int row = 0;
         var edges = new List<(ExpressionNode From, ExpressionNode To, int Index)>();
         var nodes = new List<ExpressionNode>();
@@ -102,30 +196,48 @@ public sealed class ExpressionCanvas : UserControl
         foreach (string id in positions.Keys.Where(id => !currentIds.Contains(id)).ToArray()) positions.Remove(id);
         foreach (var edge in edges)
         {
-            Point a = positions[edge.From.Id], b = positions[edge.To.Id];
-            var line = new System.Windows.Shapes.Path { Stroke = (Brush)Application.Current.FindResource("AccentBrush"), StrokeThickness = 1.4, Opacity = .65, Data = new PathGeometry([new PathFigure(new Point(a.X + 220, a.Y + 40), [new BezierSegment(new Point(a.X + 240, a.Y + 40), new Point(b.X - 20, b.Y + 40), new Point(b.X, b.Y + 40), true)], false)]), IsHitTestVisible = false };
-            surface.Children.Add(line);
-            surface.Children.Add(new Polygon { Points = [new(b.X, b.Y + 40), new(b.X - 7, b.Y + 36), new(b.X - 7, b.Y + 44)], Fill = line.Stroke, Opacity = .8, IsHitTestVisible = false });
-            var order = new TextBlock { Text = (edge.Index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 10, Foreground = line.Stroke, IsHitTestVisible = false };
-            Canvas.SetLeft(order, b.X - 17); Canvas.SetTop(order, b.Y + 22); surface.Children.Add(order);
+            var line = new System.Windows.Shapes.Path { StrokeThickness = 1.4, IsHitTestVisible = false };
+            line.SetResourceReference(Shape.StrokeProperty, "AccentBrush"); surface.Children.Add(line);
+            var arrow = new Polygon { IsHitTestVisible = false };
+            arrow.SetResourceReference(Shape.FillProperty, "AccentBrush"); surface.Children.Add(arrow);
+            var order = new TextBlock { Text = (edge.Index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 12, IsHitTestVisible = false };
+            order.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush"); surface.Children.Add(order);
+            void PositionConnection()
+            {
+                Point a = positions[edge.From.Id], b = positions[edge.To.Id];
+                line.Data = new PathGeometry([new PathFigure(new Point(a.X + 220, a.Y + 44), [new BezierSegment(new Point(a.X + 240, a.Y + 44), new Point(b.X - 20, b.Y + 44), new Point(b.X, b.Y + 44), true)], false)]);
+                arrow.Points = [new(b.X, b.Y + 44), new(b.X - 7, b.Y + 40), new(b.X - 7, b.Y + 48)];
+                Canvas.SetLeft(order, b.X - 17); Canvas.SetTop(order, b.Y + 24);
+            }
+            PositionConnection();
+            foreach (string id in new[] { edge.From.Id, edge.To.Id })
+            {
+                if (!connectionUpdates.TryGetValue(id, out var updates)) connectionUpdates[id] = updates = [];
+                updates.Add(PositionConnection);
+            }
         }
         foreach (var node in nodes)
         {
-            var stack = new StackPanel();
+            var stack = new StackPanel { ToolTip = node.Text };
             var header = new DockPanel();
-            var thumb = new Thumb { Width = 16, Height = 16, Cursor = Cursors.SizeAll, Opacity = .4 };
+            var thumb = new Thumb { Width = 16, Height = 16, Cursor = Cursors.SizeAll, Opacity = .8 };
+            thumb.SetResourceReference(StyleProperty, "NodeDragThumb");
             DockPanel.SetDock(thumb, Dock.Right); header.Children.Add(thumb);
-            header.Children.Add(new TextBlock { Text = node.Kind.ToUpperInvariant(), FontSize = 10, Foreground = (Brush)Application.Current.FindResource("AccentBrush") });
+            var kindLabel = new TextBlock { Text = node.Kind, FontSize = 14 }; kindLabel.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush"); header.Children.Add(kindLabel);
             stack.Children.Add(header);
-            stack.Children.Add(new TextBlock { Text = Summary(node), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 8, 0, 0), FontSize = 13 });
-            var card = new Border { Child = stack, Width = 220, MinHeight = 77, Padding = new Thickness(12), CornerRadius = new CornerRadius(6), Background = (Brush)Application.Current.FindResource("PanelBrush"), BorderBrush = (Brush)Application.Current.FindResource("BorderBrush"), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, Tag = node };
-            card.MouseLeftButtonUp += (_, _) => { selected = node; Inspect(); };
-            thumb.DragDelta += (_, e) => { var p = positions[node.Id]; positions[node.Id] = new(Math.Max(0, p.X + e.HorizontalChange), Math.Max(0, p.Y + e.VerticalChange)); Canvas.SetLeft(card, positions[node.Id].X); Canvas.SetTop(card, positions[node.Id].Y); };
+            stack.Children.Add(new TextBlock { Text = Summary(node), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 8, 0, 0), FontSize = 14 });
+            var card = new Button { Content = stack, Width = 220, MinHeight = 88, Padding = new Thickness(12), Margin = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = (Brush)Application.Current.FindResource("PanelBrush"), BorderBrush = (Brush)Application.Current.FindResource("BorderBrush"), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, Tag = node };
+            AutomationProperties.SetName(card, node.Kind + " node: " + Summary(node));
+            AutomationProperties.SetName(thumb, "Move " + node.Kind + " node");
+            card.Click += (_, _) => SelectNode(node);
+            thumb.DragStarted += (_, _) => { if (selected?.Id != node.Id) SelectNode(node); };
+            thumb.DragDelta += (_, e) => { var p = positions[node.Id]; positions[node.Id] = new(Math.Max(0, p.X + e.HorizontalChange), Math.Max(0, p.Y + e.VerticalChange)); Canvas.SetLeft(card, positions[node.Id].X); Canvas.SetTop(card, positions[node.Id].Y); if (connectionUpdates.TryGetValue(node.Id, out var updates)) foreach (var update in updates) update(); };
             thumb.DragCompleted += (_, _) => { Draw(); saveLayout?.Invoke(positions.ToDictionary(p => p.Key, p => new NodePosition(p.Value.X, p.Value.Y))); };
             Canvas.SetLeft(card, positions[node.Id].X); Canvas.SetTop(card, positions[node.Id].Y); surface.Children.Add(card);
         }
-        surface.Width = Math.Max(1000, positions.Values.Max(p => p.X) + 300);
-        surface.Height = Math.Max(700, positions.Values.Max(p => p.Y) + 180);
+        surface.Width = Math.Max(260, positions.Values.Max(p => p.X) + 244);
+        surface.Height = Math.Max(120, positions.Values.Max(p => p.Y) + 112);
+        RefreshSelection();
     }
     private string Summary(ExpressionNode node)
     {
@@ -138,12 +250,21 @@ public sealed class ExpressionCanvas : UserControl
     {
         inspector.Children.Clear(); if (selected is null) return;
         var node = selected;
-        inspector.Children.Add(new TextBlock { Text = node.Kind + " node", FontSize = 19, Margin = new Thickness(0, 0, 0, 16) });
+        if (root is not null && selected != root)
+        {
+            var navigation = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            navigation.Children.Add(Button("Root node", () => SelectNode(root)));
+            var parent = Nodes(root).FirstOrDefault(value => value.Children.Contains(node));
+            if (parent is not null) navigation.Children.Add(Button("Parent node", () => SelectNode(parent)));
+            inspector.Children.Add(navigation);
+        }
+        inspector.Children.Add(new TextBlock { Text = node.Kind + " node", FontSize = 16, Margin = new Thickness(0, 0, 0, 16) });
         if (OperatorToken(node) is { } op)
         {
             string[] choices = node.Kind == "unary" ? ["+", "-", "!", "~"] : node.Kind == "assignment" ? ["=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="] : BinaryOperators;
             var operators = new ComboBox { ItemsSource = choices, SelectedItem = op.Text, Margin = new Thickness(0, 0, 0, 8) };
             inspector.Children.Add(new TextBlock { Text = "Operator", Margin = new Thickness(0, 0, 0, 6) });
+            AutomationProperties.SetName(operators, "Operator");
             inspector.Children.Add(operators);
             inspector.Children.Add(Button("Update operator", () => { if (operators.SelectedItem is string value) ChangeOperator(node, value); }));
         }
@@ -154,11 +275,13 @@ public sealed class ExpressionCanvas : UserControl
             bool environment = node.Kind == "environment";
             var input = new TextBox { Text = environment ? node.Text.Trim('%') : literal ? value : node.Text, Margin = new Thickness(0, 0, 0, 8) };
             inspector.Children.Add(new TextBlock { Text = environment ? "Environment variable name" : node.Kind == "interpolationText" ? "Literal text segment" : literal ? "Text value" : "Value / identifier", Margin = new Thickness(0, 0, 0, 6) });
+            AutomationProperties.SetName(input, "Node value");
             inspector.Children.Add(input);
             inspector.Children.Add(Button("Update value", () => Replace(node, environment ? "%" + input.Text + "%" : literal ? Expressions.Quote(input.Text) : input.Text)));
         }
         var kinds = new ComboBox { ItemsSource = new[] { "Text", "Number", "Boolean", "Variable", "Environment variable", "Function or value", "Member", "Index", "Group", "Binary operator", "Unary operator", "Condition", "Array", "Assignment", "Statement", "For loop", "For each loop", "Interpolation" }, SelectedIndex = 0, Margin = new Thickness(0, 15, 0, 8) };
         inspector.Children.Add(new TextBlock { Text = "Replace this node with", Margin = new Thickness(0, 16, 0, 0) });
+        AutomationProperties.SetName(kinds, "Replacement node kind");
         inspector.Children.Add(kinds);
         inspector.Children.Add(Button("Create node…", () => CreateNode(node, (string)kinds.SelectedItem)));
         if (node.Children.Count > 0)
@@ -167,7 +290,7 @@ public sealed class ExpressionCanvas : UserControl
             for (int i = 0; i < node.Children.Count; i++)
             {
                 int index = i; var child = node.Children[i];
-                inspector.Children.Add(Button($"{BranchLabel(node, i)} · {Summary(child)}", () => { selected = child; Inspect(); }));
+                inspector.Children.Add(Button($"{BranchLabel(node, i)} · {Summary(child)}", () => SelectNode(child)));
                 if (i > 0) inspector.Children.Add(Button("↑ Swap with previous branch", () => Swap(node, index - 1, index)));
                 if (node.Kind is "call" or "array" or "statement") inspector.Children.Add(Button("Remove this branch", () => RemoveBranch(node, index)));
             }
@@ -344,7 +467,7 @@ public sealed class ExpressionCanvas : UserControl
     private void Change(string next)
     {
         var parsed = language.Parse("item(title=" + next + ")");
-        if (parsed.Diagnostics.Any(d => d.Severity == "error")) { status.Text = string.Join("\n", parsed.Diagnostics.Select(d => d.Code + ": " + d.Message)); return; }
+        if (parsed.Diagnostics.Any(d => d.Severity == "error")) { status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush"); status.Text = string.Join("\n", parsed.Diagnostics.Select(d => d.Code + ": " + d.Message)); return; }
         undo.Push(expression); redo.Clear(); expression = next; Parse();
     }
 }

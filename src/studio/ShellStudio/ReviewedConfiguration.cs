@@ -48,10 +48,24 @@ internal static class ReviewedConfiguration
 
     public static Window CreateWindow(string path, string hash)
     {
-        var window = new Window { Title = "Shell Studio — configuration writer", Width = 720, Height = 460, WindowStartupLocation = WindowStartupLocation.CenterScreen };
+        var window = new Window
+        {
+            Title = "Shell Studio — configuration writer",
+            Width = 760,
+            Height = 500,
+            MinWidth = 560,
+            MinHeight = 340,
+            ResizeMode = ResizeMode.CanResize,
+            WindowStartupLocation = WindowStartupLocation.CenterScreen
+        };
+        System.Windows.Automation.AutomationProperties.SetName(window, "Reviewed configuration writer");
         var panel = new StackPanel { Margin = new Thickness(24) };
-        var status = new TextBlock { Text = "Validating the reviewed configuration…", TextWrapping = TextWrapping.Wrap };
-        panel.Children.Add(status); window.Content = new ScrollViewer { Content = panel };
+        var status = new TextBlock { Text = "Validating the reviewed configuration…", TextWrapping = TextWrapping.Wrap, MinHeight = 48 };
+        status.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+        System.Windows.Automation.AutomationProperties.SetName(status, "Configuration writer status");
+        System.Windows.Automation.AutomationProperties.SetLiveSetting(status, System.Windows.Automation.AutomationLiveSetting.Polite);
+        panel.Children.Add(status);
+        window.Content = new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         window.Loaded += async (_, _) =>
         {
             Environment.ExitCode = 1;
@@ -76,7 +90,9 @@ internal static class ReviewedConfiguration
             catch (Exception ex)
             {
                 status.Text = ex.Message;
-                var close = new Button { Content = "Close", Margin = new Thickness(0, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+                status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+                var close = new Button { Content = "Close", Margin = new Thickness(0, 20, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, Style = Application.Current.TryFindResource("PrimaryButton") as Style };
+                System.Windows.Automation.AutomationProperties.SetName(close, "Close configuration writer");
                 close.Click += (_, _) => window.Close(); panel.Children.Add(close);
             }
         };

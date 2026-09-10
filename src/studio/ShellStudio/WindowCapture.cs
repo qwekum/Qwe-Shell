@@ -44,12 +44,37 @@ internal static class WindowCapture
         }
         finally { owner.Show(); owner.Activate(); }
         cancellationToken.ThrowIfCancellationRequested();
-        var preview = new Window { Owner = owner, Title = "Captured window — review", Width = 900, Height = 650, WindowStartupLocation = WindowStartupLocation.CenterOwner };
-        var dock = new DockPanel { Margin = new Thickness(16) };
+        var preview = CreatePreviewWindow(owner, bitmap);
+        preview.ShowDialog();
+    }
+
+    /// <summary>Builds the review surface from an already captured bitmap. This factory has no
+    /// window enumeration or capture side effect, so fixture UI checks can render it directly.</summary>
+    internal static Window CreatePreviewWindow(Window owner, BitmapSource bitmap)
+    {
+        var preview = new Window
+        {
+            Owner = owner,
+            Title = "Captured window — review",
+            Width = 900,
+            Height = 650,
+            MinWidth = 640,
+            MinHeight = 420,
+            ResizeMode = ResizeMode.CanResize,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        System.Windows.Automation.AutomationProperties.SetName(preview, "Captured window review");
+        var root = new DockPanel { Margin = new Thickness(24) };
+        var support = new TextBlock { Text = "Review the captured screen area before copying or saving it.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) };
+        support.SetResourceReference(TextBlock.StyleProperty, "SecondaryText");
+        DockPanel.SetDock(support, Dock.Top);
+        root.Children.Add(support);
         var buttons = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
-        var copy = new Button { Content = "Copy image" };
+        var copy = new Button { Content = "Copy image", Style = Application.Current.TryFindResource("PrimaryButton") as Style };
+        System.Windows.Automation.AutomationProperties.SetName(copy, "Copy captured image");
         copy.Click += (_, _) => { try { Clipboard.SetImage(bitmap); } catch (ExternalException ex) { MessageBox.Show(preview, ex.Message, "Clipboard unavailable"); } };
-        var save = new Button { Content = "Save PNG" };
+        var save = new Button { Content = "Save PNG", Style = Application.Current.TryFindResource("QuietButton") as Style };
+        System.Windows.Automation.AutomationProperties.SetName(save, "Save captured image as PNG");
         save.Click += (_, _) =>
         {
             var dialog = new SaveFileDialog { Filter = "PNG image|*.png", FileName = "Window capture.png" };
@@ -61,9 +86,16 @@ internal static class WindowCapture
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MessageBox.Show(preview, ex.Message, "Image could not be saved"); }
         };
-        buttons.Children.Add(copy); buttons.Children.Add(save); DockPanel.SetDock(buttons, Dock.Top); dock.Children.Add(buttons);
-        dock.Children.Add(new ScrollViewer { Content = new Image { Source = bitmap }, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
-        preview.Content = dock; preview.ShowDialog();
+        buttons.Children.Add(copy);
+        buttons.Children.Add(save);
+        DockPanel.SetDock(buttons, Dock.Top);
+        root.Children.Add(buttons);
+        var image = new Image { Source = bitmap, Stretch = System.Windows.Media.Stretch.None, HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Top };
+        var scroll = new ScrollViewer { Content = image, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        System.Windows.Automation.AutomationProperties.SetName(scroll, "Captured image");
+        root.Children.Add(scroll);
+        preview.Content = root;
+        return preview;
     }
 
     private static BitmapSource Capture(nint window, int borderAt96Dpi)

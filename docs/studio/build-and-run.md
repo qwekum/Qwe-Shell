@@ -139,6 +139,16 @@ extension. Opening Studio does not activate the fork in Explorer. **Capture
 menu** requires a matching loaded native extension and a configuration that
 corresponds to that runtime.
 
+The menu editor and Tools page have resizable panes. Use **Move to…** to choose
+a menu destination with the keyboard, or Alt+Up/Down while the menu list has
+focus to reorder entries. Diagnostics expand when a problem is reported.
+The expression canvas provides a node selector, root/parent navigation, zoom,
+Fit, and an exact source preview. Saving an expression updates the editing
+workspace; configuration changes still pass through **Review & apply**.
+Tool searches retain field drafts, and running operations expose cancellation
+when supported. The theme control switches between the authored light and
+dark palettes; Windows high contrast takes precedence.
+
 Open the native management window or its Customize entry point with:
 
 ```powershell
@@ -193,8 +203,9 @@ dotnet run --project .\src\studio\ShellStudio.Tools\Tests\ShellStudio.Tools.Test
 dotnet run --project .\src\studio\ShellStudio.NativeTests\ShellStudio.NativeTests.csproj -c Release --no-launch-profile
 ```
 
-The recorded result is 39 Core/native, 16 WPF, 34 tool-fixture, and 4 native
-resource checks passing. Run these sequentially: several projects share build
+See the [verification record](local-verification.md) for the latest counts and
+the [interface design record](design-system.md) for the UI review gates.
+Run these sequentially: several projects share build
 outputs. The WPF suite uses an offscreen window; the native resource suite only
 changes its own temporary PE copy.
 

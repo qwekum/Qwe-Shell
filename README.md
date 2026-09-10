@@ -1,8 +1,10 @@
 # Qwe Shell and Shell Studio
 
-This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio now has a Windows x64 implementation and a locally built MSI, including the visual editor and consolidated tool services. The [local verification record](docs/studio/local-verification.md) records 93 passing checks. Explorer, installer lifecycle, runtime parity, and human acceptance remain pending; this is not a qualified release.
+This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio now has a Windows x64 implementation and a locally built MSI, including the visual editor and consolidated tool services. The [local verification record](docs/studio/local-verification.md) records the checks and their limits. Explorer, installer lifecycle, runtime parity, and human acceptance remain pending; this is not a qualified release.
 
 See [Build and run Shell Studio](docs/studio/build-and-run.md) for prerequisites, complete build/run instructions, live capture setup, verification, and troubleshooting. The approved plan below remains the acceptance contract.
+
+The [Studio interface design](docs/studio/design-system.md) records the shared visual system, independent review gates, and the limits of local UI verification.
 
 ## Recommended companion: Microsoft PowerToys
 
