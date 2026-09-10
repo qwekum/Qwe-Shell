@@ -13,10 +13,15 @@ namespace Nilesoft
 		extern Logger &_log = Logger::Instance();
 
 		Parser::Parser()
+			: Parser(Initializer::instance ? Initializer::instance->cache : nullptr)
+		{
+		}
+
+		Parser::Parser(CACHE *target_cache)
 		{
 			context.Application = &Initializer::instance->application;
 
-			context.Cache = Initializer::instance->cache;
+			context.Cache = target_cache ? target_cache : Initializer::instance->cache;
 			context.variables.global = &context.Cache->variables.global;
 			context.variables.runtime = &context.Cache->variables.runtime;
 			context.Selections = nullptr;
@@ -67,6 +72,35 @@ namespace Nilesoft
 			}
 		}
 
+		Parser::Parser(SyntaxInput input)
+			: m_syntaxSource(input.source),
+			  m_syntaxPath(input.path),
+			  m_ownedCache(std::make_unique<CACHE>()),
+			  m_syntaxOnly(true)
+		{
+			// Syntax parsing gets an isolated context.  It can build the same
+			// native expression/menu objects as the runtime parser, but it never
+			// observes or mutates Initializer state.
+			context.Application = &m_syntaxApplication;
+			context.Cache = m_ownedCache.get();
+			context.variables.global = &context.Cache->variables.global;
+			context.variables.runtime = &context.Cache->variables.runtime;
+			context.Selections = nullptr;
+			context.Runtime = false;
+
+			m_syntaxApplication.Config = m_syntaxPath.empty() ? L"<studio>" : m_syntaxPath;
+			m_syntaxApplication.ConfigPortable = m_syntaxApplication.Config;
+			m_path = m_syntaxApplication.Config;
+
+			_imports.emplace_back(new Lexer);
+			l = _imports.front().get();
+			const wchar_t *source = m_syntaxSource.empty() ? L"" : m_syntaxSource.c_str();
+			const wchar_t *path = m_syntaxPath.empty() ? L"<studio>" : m_syntaxPath.c_str();
+			if(!l->load_buffer(source, m_syntaxSource.length(), path))
+				error(l->error == TokenError::None ? TokenError::InvalidFile : l->error,
+					  m_syntaxApplication.Config.c_str());
+		}
+
 		Parser::~Parser() { }
 		size_t Parser::Line() const { return l ? l->line : 0; };
 		size_t Parser::Column() const { return l ? l->column : 0; };
@@ -82,12 +116,85 @@ namespace Nilesoft
 			return error_code;
 		}
 
+		const StudioLanguage::Document &Parser::StudioSyntax() const
+		{
+			return m_studioSyntax;
+		}
+
+		void Parser::refresh_studio_syntax()
+		{
+			if(m_syntaxOnly)
+			{
+				StudioLanguage::Frontend frontend(
+					std::wstring_view(m_syntaxSource.data(), m_syntaxSource.length()));
+				m_studioSyntax = frontend.Parse();
+				return;
+			}
+
+			if(l && l->buffer && l->length > 0)
+			{
+				StudioLanguage::Frontend frontend(
+					std::wstring_view(l->buffer, l->length));
+				m_studioSyntax = frontend.Parse();
+			}
+			else
+			{
+				m_studioSyntax = {};
+			}
+		}
+
+		void Parser::append_studio_diagnostic()
+		{
+			if(!m_syntaxOnly || !m_error || m_syntaxDiagnosticAdded)
+				return;
+
+			m_syntaxDiagnosticAdded = true;
+			const auto start = l ? (std::min)(l->index, m_syntaxSource.length()) : 0;
+			const auto line = l ? l->line : 1;
+			const auto column = l ? l->column : 1;
+			const auto numeric_error = static_cast<unsigned>(error_code);
+			StudioLanguage::Diagnostic diagnostic;
+			diagnostic.code = "PARSER_" + std::to_string(numeric_error);
+			diagnostic.message = "The runtime parser rejected this configuration (error " +
+				std::to_string(numeric_error) + ").";
+			diagnostic.severity = "error";
+			diagnostic.start = static_cast<int>(start);
+			diagnostic.length = start < m_syntaxSource.length() ? 1 : 0;
+			diagnostic.remedy = "Correct the configuration syntax before applying it.";
+			m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+
+			// Keep the location visible in the native object for callers that inspect
+			// Parser directly; the JSON protocol carries UTF-16 start/length while
+			// line/column remain available through Parser::Line/Column.
+			(void)line;
+			(void)column;
+		}
+
+		void Parser::set_source_identity(NativeMenu *menu, size_t source_start)
+		{
+			if(!menu || !l)
+				return;
+
+			menu->source_file = l->path;
+			menu->source_node_id = L"n";
+			menu->source_node_id += std::to_wstring(source_start);
+			menu->source_hash = l->source_hash;
+		}
+
 		bool Parser::error(TokenError tokenError)
 		{
 			if(!m_error)
 			{
 				error_code = tokenError;
 				m_error = true;
+			}
+
+			if(m_syntaxOnly)
+			{
+				const auto line = l ? l->line : 0;
+				const auto column = l ? l->column : 0;
+				const string path = l ? l->path : m_syntaxApplication.Config;
+				throw ParserException(tokenError, line, column, path, false);
 			}
 
 			bool log = true;
@@ -104,6 +211,9 @@ namespace Nilesoft
 			{
 				error_code = tokenError;
 				m_error = true;
+
+				if(m_syntaxOnly)
+					return false;
 
 				auto le = &Initializer::LastError;
 				if(le->code != TokenError::None && (le->code == error_code && le->line == l->line && le->col == l->column))
@@ -370,6 +480,16 @@ namespace Nilesoft
 
 				if(ret)
 				{
+					if(m_syntaxOnly)
+					{
+						// Preserve the source spelling in the isolated parser.  The
+						// runtime path below is the only path allowed to expand
+						// process environment variables.
+						value.append(percent);
+						value = (percent + value).move();
+						return true;
+					}
+
 					string var = Environment::Variable(value).move();
 					if(!var.empty())
 					{
@@ -416,6 +536,7 @@ namespace Nilesoft
 				if(parse_image())
 					continue;
 
+				const auto source_start = l->index;
 				auto type = parse_ident(false);
 				
 				if(type == CONFIG_IMPORT)
@@ -438,6 +559,7 @@ namespace Nilesoft
 				}
 
 				std::unique_ptr<NativeMenu> sub(new NativeMenu(menu));
+				set_source_identity(sub.get(), source_start);
 				if(parse_menu_item(sub.get(), type))
 				{
 					menu->items.push_back(sub.release());
@@ -518,7 +640,7 @@ namespace Nilesoft
 
 		void Parser::parse_modify_items(uint32_t action)
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
 			std::unique_ptr<NativeMenu> item(new NativeMenu(true));
 			if(eat().parse_modify_properties(item.get(), action))
 				cache->statics.push_back(item.release());
@@ -605,7 +727,7 @@ namespace Nilesoft
 
 		void Parser::parse_settings(SETTING *setting, const Ident &id, bool imported)
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
 
 			if(!setting)
 				return;
@@ -1058,7 +1180,7 @@ namespace Nilesoft
 
 		bool Parser::parse_image()
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
 
 			skip();
 
@@ -1115,6 +1237,9 @@ namespace Nilesoft
 
 			std::unique_ptr<Expression> epath(parse_root_expression());
 			error_if(!epath, TokenError::ImportPathExpected, prevCol);
+
+			if(m_syntaxOnly)
+				return 0;
 
 			Object obj = context.Eval(epath.get()).move();
 
@@ -1216,6 +1341,7 @@ namespace Nilesoft
 					continue;
 				}
 
+				const auto source_start = l->index;
 				Hash id = parse_ident();
 				switch(id)
 				{
@@ -1238,6 +1364,7 @@ namespace Nilesoft
 					case CONFIG_SEPARATOR:
 					{
 						std::unique_ptr<NativeMenu> item(new NativeMenu(&cache->dynamic));
+						set_source_identity(item.get(), source_start);
 						if(parse_menu_item(item.get(), id))
 						{
 							cache->dynamic.items.push_back(item.release());
@@ -1247,6 +1374,68 @@ namespace Nilesoft
 					}
 					case IDENT_IMPORT:
 					{
+						if(m_syntaxOnly)
+						{
+							// Imports are represented and resolved by Studio's managed
+							// workspace.  The isolated native parser must not evaluate
+							// their path expressions or attempt filesystem IO, but it
+							// still needs to advance past the complete source statement
+							// so later declarations can receive runtime validation.
+							int paren = 0, bracket = 0, curly = 0;
+							wchar_t quote = 0;
+							while(!l->eof)
+							{
+								const wchar_t current = l->tok;
+								if(quote)
+								{
+									if(quote == L'"' && current == L'\\' && !l->eof)
+									{
+										l->next();
+										if(!l->eof) l->next();
+										continue;
+									}
+									if(current == quote) quote = 0;
+									l->next();
+									continue;
+								}
+								if(current == L'/' && l->peek == L'/')
+								{
+									while(!l->eof && l->tok != L'\r' && l->tok != L'\n') l->next();
+									break;
+								}
+								if(current == L'/' && l->peek == L'*')
+								{
+									l->next(2);
+									while(!l->eof)
+									{
+										if(l->tok == L'*' && l->peek == L'/') { l->next(2); break; }
+										l->next();
+									}
+									continue;
+								}
+								// A dynamic import may place its path expression across
+								// several lines.  End the statement at a newline only when
+								// all of the delimiters opened by the import are closed;
+								// otherwise the following line is still part of the path.
+								if((current == L'\r' || current == L'\n') &&
+								   paren == 0 && bracket == 0 && curly == 0)
+									break;
+								if(current == L'"' || current == L'\'' || current == L'`') quote = current;
+								else if(current == L'(') ++paren;
+								else if(current == L')' && paren > 0) --paren;
+								else if(current == L'[') ++bracket;
+								else if(current == L']' && bracket > 0) --bracket;
+								else if(current == L'{') ++curly;
+								else if(current == L'}' && curly > 0) --curly;
+								if(current == L';' && paren == 0 && bracket == 0 && curly == 0)
+								{
+									l->next();
+									break;
+								}
+								l->next();
+							}
+							break;
+						}
 						skip();
 						bool bloc = false;
 						if(l->peek_ident(IDENT_LOC))
@@ -1309,6 +1498,16 @@ namespace Nilesoft
 					}
 				};
 
+				refresh_studio_syntax();
+				// The lossless front end enforces structural limits before the
+				// shared recursive runtime grammar runs.  A limit diagnostic must
+				// stop syntax-only validation here; serializing it after parse_config
+				// would be too late to protect the editor's thread stack.
+				if(m_syntaxOnly && std::any_of(m_studioSyntax.diagnostics.begin(),
+					m_studioSyntax.diagnostics.end(), [](const auto &diagnostic)
+					{ return diagnostic.code == "LANG_LIMIT"; }))
+					return false;
+
 				if(_imports.empty() || (l->length == 0 && !m_error))
 					return true;
 			
@@ -1328,13 +1527,27 @@ namespace Nilesoft
 			}
 			catch(const ParserException&)
 			{
+				append_studio_diagnostic();
 			}
 			catch(...)
 			{
-#ifdef _DEBUG
-				Logger::Exception(__func__);
-#endif
+				if(m_syntaxOnly)
+				{
+					if(!m_error)
+					{
+						m_error = true;
+						error_code = TokenError::Unknown;
+					}
+					append_studio_diagnostic();
+				}
+				else
+				{
+		#ifdef _DEBUG
+					Logger::Exception(__func__);
+		#endif
+				}
 			}
+			append_studio_diagnostic();
 			return result;
 		}
 	}

@@ -50,6 +50,7 @@ BOOL CALLBACK WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 #define ID_EMAIL 0x008
 #define ID_GITHUB 0x009
 #define ID_DOCS 0x00d
+#define ID_CUSTOMIZE 0x00e
 
 /////////
 #define SetWindowStyle(hwnd, style)	 ::SetWindowLongW((hwnd), GWL_STYLE, (style))
@@ -391,6 +392,47 @@ bool Registration(REGOP reg)
 	return false;
 }
 
+// Launch the managed editor beside the native installation.  This path is
+// deliberately independent from registration and Explorer refresh so the
+// customize entry point is safe to use while the shell extension is running.
+bool LaunchStudio(HWND owner = nullptr)
+{
+	try
+	{
+		const string install_dir = IO::Path::Parent(IO::Path::Module(_hInstance));
+		const string studio = IO::Path::Combine(install_dir, L"Studio\\ShellStudio.exe").move();
+		if(!IO::Path::IsFileExists(studio))
+		{
+			const string message = L"Shell Studio is not installed beside shell.exe.";
+			_log->error(message);
+			if(owner)
+				::MessageBoxW(owner, message, APP_FULLNAME, MB_ICONWARNING | MB_OK);
+			return false;
+		}
+
+		const auto result = reinterpret_cast<INT_PTR>(::ShellExecuteW(
+			owner, L"open", studio, nullptr, install_dir, SW_SHOWNORMAL));
+		if(result <= 32)
+		{
+			const string message = L"Shell Studio could not be started. Windows error code: ";
+			string detail;
+			detail.format(L"%d", static_cast<int>(result));
+			_log->error(message + detail);
+			if(owner)
+				::MessageBoxW(owner, message + detail, APP_FULLNAME, MB_ICONERROR | MB_OK);
+			return false;
+		}
+		return true;
+	}
+	catch(...)
+	{
+		_log->error(L"Shell Studio could not be started.");
+		if(owner)
+			::MessageBoxW(owner, L"Shell Studio could not be started.", APP_FULLNAME, MB_ICONERROR | MB_OK);
+		return false;
+	}
+}
+
 bool Register(REGOP reg, HWND hwnd = nullptr)
 {
 	string path = IO::Path::Combine(IO::Path::Parent(IO::Path::Module(nullptr)), dll_name).move();
@@ -609,6 +651,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR,
 		_log->close();
 		return 0;
 	}
+	else if(cmdline.find(L"customize"))
+	{
+		const bool launched = LaunchStudio();
+		_log->close();
+		return launched ? 0 : 1;
+	}
 	else if(cmdline.empty())
     {
 		auto shell_window = ::FindWindowExW(nullptr, nullptr, UI::WC_Window, APP_FULLNAME);
@@ -639,7 +687,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR,
         ::GetClientRect(::GetDesktopWindow(), &rc_screen);
 
         rc_window.right = dpi(430);
-        rc_window.bottom = dpi(220);
+        rc_window.bottom = dpi(270);
 
         rc_window.left = (rc_screen.right - rc_window.right) / 2;
         rc_window.top = (rc_screen.bottom - rc_window.bottom) / 2;
@@ -707,7 +755,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR,
         
 		auto btn_reg = new UI::Button(L"Register\tCtrl+R", rc_reg, ID_REG, main_window, BS_OWNERDRAW);
         auto btn_unreg = new UI::Button(L"Unregister\tCtrl+U", rc_unreg, ID_UNREG, main_window, BS_OWNERDRAW);
-        auto btn_restart = new UI::Button(L"Restart Explorer\tCtrl+X", { rc_reg.left, rc_unreg.top + offset_2 + btn_h, btn_w, btn_h }, ID_RESTART, main_window, BS_OWNERDRAW);
+        auto btn_customize = new UI::Button(L"Customize\tCtrl+C", { rc_reg.left, rc_unreg.top + offset_2 + btn_h, btn_w, btn_h }, ID_CUSTOMIZE, main_window, BS_OWNERDRAW);
+        auto btn_restart = new UI::Button(L"Restart Explorer\tCtrl+X", { rc_reg.left, btn_customize->Rect.top + offset_2 + btn_h, btn_w, btn_h }, ID_RESTART, main_window, BS_OWNERDRAW);
 
         auto tt = btn_restart->Rect.top + dpi(30) + btn_h + offset_2;
         auto tl = btn_restart->Rect.left;
@@ -725,11 +774,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR,
         auto btn_donate = new UI::Button(L"\uE1A8", { tl, tt, btn_h, btn_h }, ID_DONATE, main_window, BS_OWNERDRAW, _hfont_icon, L"Donate Ctrl+D");
 
 
-        main_window->SetColor({ btn_reg, btn_unreg,btn_restart,btn_donate,btn_web,btn_email,btn_bug }, 
+        main_window->SetColor({ btn_reg, btn_unreg, btn_customize, btn_restart,btn_donate,btn_web,btn_email,btn_bug },
 							  m_theme.text.nor, m_theme.back.nor, m_theme.text.sel, m_theme.back.sel);//0xeeeee0
         main_window->SetColor({ btn_close }, 0xFFFFFF, m_theme.back.nor, m_theme.text.nor, 0x2311E8);//E81123
 
-		btn_reg->OnDraw = btn_unreg->OnDraw = btn_restart->OnDraw = btn_on_paint;
+		btn_reg->OnDraw = btn_unreg->OnDraw = btn_customize->OnDraw = btn_restart->OnDraw = btn_on_paint;
 
         auto ret = app.Run(main_window);
 
@@ -1060,9 +1109,11 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                 case ID_GITHUB:
 					Open(hWnd, L"https://github.com/moudey/shell");
                     break;
-				case ID_RESTART:
+                case ID_RESTART:
 					Windows::Explorer::Restart();
 					break;
+				case ID_CUSTOMIZE:
+					return LaunchStudio(hWnd);
                 case ID_REG:
 				case ID_UNREG:
 				{
@@ -1104,6 +1155,9 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
                         case 'X':
                             main_window->SendCommand(ID_RESTART);
                             break;
+						case 'C':
+							main_window->SendCommand(ID_CUSTOMIZE);
+							break;
                         case 'W':
                             main_window->SendCommand(ID_WEB);
                             break;

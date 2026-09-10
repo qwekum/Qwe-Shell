@@ -8,6 +8,145 @@ using namespace Nilesoft::Diagnostics;
 
 extern Logger &_log;
 
+namespace
+{
+	constexpr size_t kMaxCaptureTraceEntries = 64;
+	constexpr size_t kMaxCaptureTraceChars = 1024;
+	constexpr size_t kMaxRetainedCaptureEvaluations = 4096;
+	thread_local Nilesoft::Shell::StudioCapture *capture_trace_owner = nullptr;
+
+	class CaptureTraceScope final
+	{
+	public:
+		explicit CaptureTraceScope(Nilesoft::Shell::StudioCapture *owner)
+			: previous_(capture_trace_owner)
+		{
+			capture_trace_owner = owner;
+		}
+		~CaptureTraceScope() { capture_trace_owner = previous_; }
+
+	private:
+		Nilesoft::Shell::StudioCapture *previous_;
+	};
+
+	bool CaptureTracingEnabled()
+	{
+		return capture_trace_owner != nullptr && capture_trace_owner->IsActive();
+	}
+
+	void CaptureTraceFailure() noexcept
+	{
+		if(capture_trace_owner)
+			capture_trace_owner->Fail("CAPTURE_TRACE_MEMORY",
+				"The native capture could not retain a rule evaluation trace.");
+	}
+
+	void CaptureTrace(Nilesoft::Shell::StudioCaptureTrace &trace,
+		std::wstring_view text) noexcept
+	{
+		if(!CaptureTracingEnabled() || trace.size() >= kMaxCaptureTraceEntries || text.empty())
+			return;
+		try
+		{
+			const auto length = text.size() < kMaxCaptureTraceChars
+				? text.size() : kMaxCaptureTraceChars;
+			trace.emplace_back(text.substr(0, length));
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTrace(Nilesoft::Shell::StudioCaptureTrace &trace, std::wstring_view rule,
+		bool matched, std::wstring_view action = {}) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring text(rule);
+			text += matched ? L": matched" : L": not matched";
+			if(!action.empty())
+			{
+				text += L"; ";
+				text += action;
+			}
+			CaptureTrace(trace, text);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceNumber(Nilesoft::Shell::StudioCaptureTrace &trace,
+		std::wstring_view prefix, int value) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring text(prefix);
+			text += std::to_wstring(value);
+			CaptureTrace(trace, text);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceSource(Nilesoft::Shell::StudioCaptureTrace &trace,
+		const Nilesoft::Shell::NativeMenu *source,
+		std::wstring_view rule, bool matched, std::wstring_view action = {}) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			if(!source || (source->source_file.empty() && source->source_node_id.empty()))
+			{
+				CaptureTrace(trace, rule, matched, action);
+				return;
+			}
+			std::wstring named(rule);
+			named += L" [source=";
+			if(!source->source_file.empty())
+				named.append(source->source_file.c_str(), source->source_file.length());
+			if(!source->source_node_id.empty())
+			{
+				named += L'#';
+				named.append(source->source_node_id.c_str(), source->source_node_id.length());
+			}
+			named += L"]";
+			CaptureTrace(trace, named, matched, action);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceSourceNumber(Nilesoft::Shell::StudioCaptureTrace &trace,
+		const Nilesoft::Shell::NativeMenu *source, std::wstring_view rule,
+		std::wstring_view prefix, int value) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring action(prefix);
+			action += std::to_wstring(value);
+			CaptureTraceSource(trace, source, rule, true, action);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+}
+
 #pragma region
 
 /*
@@ -252,6 +391,8 @@ namespace Nilesoft
 				//if(_cache)
 				//	_cache->GC.clear();
 				Uninitialize();
+				if(Initializer::instance)
+					Initializer::instance->collect_retired_caches();
 			}
 			catch(...)
 			{
@@ -266,6 +407,7 @@ namespace Nilesoft
 										  MenuItemInfo *owner,
 										  menu_t *menu, bool moved)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
 			if(list.empty())
 				return false;
 
@@ -275,6 +417,7 @@ namespace Nilesoft
 			{
 				try 
 				{
+					StudioCaptureTrace trace;
 					_context._this = nullptr;
 					//std::lock_guard<std::mutex> lock(_mutex);
 					//_context.variables.runtime = &item->owner->variables;
@@ -288,6 +431,7 @@ namespace Nilesoft
 							mii->owner = owner;
 							mii->dynamic = true;
 							mii->type = NativeMenuType::Separator;
+							CaptureTraceSource(mii->trace, item, L"dynamic.separator", true, L"accepted");
 							posList.Auto.push_back(mii);
 						}
 						continue;
@@ -301,8 +445,12 @@ namespace Nilesoft
 
 					_this.type = not_sep ? (item->is_menu() ? 2 : 1) : 0;
 					_this.pos = _this_index++;
+					CaptureTraceNumber(trace, L"dynamic.index=", _this.pos);
 
-					if(!Selected.verify_types(item->fso))
+					const bool types_match = Selected.verify_types(item->fso);
+					CaptureTraceSource(trace, item, L"dynamic.types", types_match,
+						types_match ? L"accepted" : L"rejected");
+					if(!types_match)
 						continue;
 					
 					/*
@@ -316,9 +464,14 @@ namespace Nilesoft
 
 					if(item->where)
 					{
-						if(!_context.eval_bool(item->where))
+						const bool where_match = _context.eval_bool(item->where);
+						CaptureTraceSource(trace, item, L"dynamic.where", where_match,
+							where_match ? L"accepted" : L"rejected");
+						if(!where_match)
 							continue;
 					}
+					else
+						CaptureTraceSource(trace, item, L"dynamic.where", true, L"not defined");
 
 					string value;
 
@@ -326,21 +479,31 @@ namespace Nilesoft
 					{
 						if(item->owner != menu->parent)
 						{
-							if(_context.Eval(item->moveto, value, true) && !value.trim(L'/').empty())
+							const bool moveto_eval = _context.Eval(item->moveto, value, true);
+							const bool has_moveto = moveto_eval && !value.trim(L'/').empty();
+							CaptureTraceSource(trace, item, L"dynamic.moveto", has_moveto,
+								has_moveto ? L"moved" : L"not applied");
+							if(has_moveto)
 							{
 								auto mii = _gc.push();
 								mii->dynamic = true;
 								mii->owner_dynamic = item;
+								mii->trace = trace;
 								if(mii->parse_parent(value))
 									_moved_items.dynamics.push_back(mii);
 								continue;
 							}
 						}
 					}
+					else if(!item->is_separator())
+						CaptureTraceSource(trace, item, L"dynamic.moveto", false, L"not evaluated");
 
 					auto visibility = _context.parse_visibility(item->visibility);
+					const bool visible = visibility != Visibility::Hidden;
+					CaptureTraceSource(trace, item, L"dynamic.visibility", visible,
+						visible ? (visibility == Visibility::Disabled ? L"disabled" : L"enabled") : L"hidden; rejected");
 
-					if(visibility == Visibility::Hidden)
+					if(!visible)
 						continue;
 
 					_this.disabled = visibility == Visibility::Disabled;
@@ -357,7 +520,10 @@ namespace Nilesoft
 
 					mode = _context.parse_mode(item->mode, mode);
 
-					if(Selected.Window.id > WINDOW_TASKBAR && !Selected.verify_mode(mode))
+					const bool mode_match = Selected.Window.id <= WINDOW_TASKBAR || Selected.verify_mode(mode);
+					CaptureTraceSource(trace, item, L"dynamic.mode", mode_match,
+						mode_match ? L"accepted" : L"rejected");
+					if(!mode_match)
 						continue;
 
 					auto position = Position::Auto;
@@ -389,6 +555,8 @@ namespace Nilesoft
 
 					//	auto position = item->parse_position(&_context);
 					_this.pos = static_cast<int>(position);
+					CaptureTraceSourceNumber(trace, item, L"dynamic.position", L"pos=",
+						static_cast<int>(position));
 
 					auto push_back = [&](MenuItemInfo *mii)
 					{
@@ -420,6 +588,7 @@ namespace Nilesoft
 					{
 						auto mii = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE, MFT_SEPARATOR, -1));
 						mii->type = NativeMenuType::Separator;
+						mii->trace = std::move(trace);
 						mii->indexof.val = indexof.move();
 						mii->indexof.pos = indexof_pos;
 						mii->indexof.def = indexof_def;
@@ -428,9 +597,13 @@ namespace Nilesoft
 					else
 					{
 						string title;
+						bool title_evaluated = false;
+						bool title_accepted = false;
 						try
 						{
-							if(!_context.Eval(item->title, title) || title.empty())
+							title_evaluated = _context.Eval(item->title, title);
+							title_accepted = title_evaluated && !title.empty();
+							if(!title_accepted)
 							{
 								/*if(item->is_menu())
 									is_container = true;
@@ -441,12 +614,20 @@ namespace Nilesoft
 						catch(...) 
 						{
 						}
+						if(!title_evaluated)
+							CaptureTraceSource(trace, item, L"dynamic.title", false, L"evaluation failed");
+						if(title_evaluated)
+							CaptureTraceSource(trace, item, L"dynamic.title", title_accepted,
+								title_accepted ? L"accepted" : (item->image.defined ? L"empty; image fallback" : L"empty; rejected"));
+						if(!title_accepted && !item->image.defined)
+							continue;
 
 						_this.title = title;
 						_this.length = title.length<uint32_t>();
 
 						FindPattern find;
-						if(_context.Eval(item->find, value, true) && !value.empty())
+						const bool find_evaluated = _context.Eval(item->find, value, true);
+						if(find_evaluated && !value.empty())
 						{
 							if(find.split(value, L'|'))
 							{
@@ -462,11 +643,19 @@ namespace Nilesoft
 									found++;
 								}
 
-								if(found == 0) continue;;
+								const bool find_match = found != 0;
+								CaptureTraceSource(trace, item, L"dynamic.find", find_match,
+									find_match ? L"accepted" : L"rejected");
+								if(!find_match) continue;
 							}
+							else
+								CaptureTraceSource(trace, item, L"dynamic.find", true, L"accepted");
 						}
+						else
+							CaptureTraceSource(trace, item, L"dynamic.find", true, L"not defined");
 
 						auto mii = _gc.push(new MenuItemInfo(MIIM_STRING | MIIM_ID | MIIM_DATA | MIIM_STATE, 0, ident.get_id()));
+						mii->trace = std::move(trace);
 
 						mii->owner = owner;
 						mii->indexof.val = indexof.move();
@@ -685,6 +874,7 @@ namespace Nilesoft
 
 		void ContextMenu::prepare_system_item(menuitem_t *item, MenuItemInfo *mii, menu_t *menu)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
 			auto fix_image_size = [](auto v1, auto v2)->long {
 				double d = double(v1) / v2;
 				return long(d * v2);
@@ -694,10 +884,13 @@ namespace Nilesoft
 
 			auto ev_si = [=](NativeMenu *si, MenuItemInfo *mii, menuitem_t *item)
 			{
+				CaptureTraceSource(mii->trace, si, L"static.rule", true, L"matched");
 				if(item->type == 0 && si->checked)
 				{
 					if(auto checked = _context.eval_number<int>(si->checked, 0); checked > 0)
 					{
+						CaptureTraceSource(mii->trace, si, L"static.checked", true,
+							checked == 2 ? L"radio" : L"checked");
 						_context._this->checked = 1;
 						mii->fState = MFS_CHECKED;
 						if(checked == 2)
@@ -706,6 +899,8 @@ namespace Nilesoft
 							_context._this->checked = 2;
 						}
 					}
+					else
+						CaptureTraceSource(mii->trace, si, L"static.checked", false, L"not applied");
 				}
 
 				bool image_disabled_by_checked = mii->is_checked() && _theme.image.display == 0;
@@ -724,6 +919,9 @@ namespace Nilesoft
 				{
 					mii->separator = (int)_context.parse_separator(si->separator);
 					_context._this->sep = mii->separator;
+					if(si->separator)
+					CaptureTraceSourceNumber(mii->trace, si, L"static.separator", L"value=",
+						mii->separator);
 				}
 
 				auto position = Position::Auto;
@@ -752,6 +950,9 @@ namespace Nilesoft
 						position = _context.parse_pos(obj, Position::Auto);
 					}
 				}
+				if(si->position)
+					CaptureTraceSourceNumber(mii->trace, si, L"static.position", L"pos=",
+						static_cast<int>(position));
 
 				_context._this->pos = static_cast<int>(position);
 
@@ -767,11 +968,18 @@ namespace Nilesoft
 					if(_context.Eval(si->title, new_title) && !new_title.empty())
 					{
 						mii->set_title(new_title.move());
+						CaptureTraceSource(mii->trace, si, L"static.title", true, L"renamed");
 					}
+					else if(si->title)
+						CaptureTraceSource(mii->trace, si, L"static.title", false, L"not applied");
 				}
 
 				if(mii->is_item() && _settings.modify_items.keys)
+				{
 					_context.Eval(si->keys, mii->keys, true);
+					if(si->keys)
+						CaptureTraceSource(mii->trace, si, L"static.keys", true, L"applied");
+				}
 
 				//mii->tip = item->tip;
 				_context.eval_tip(si->tip, mii->tip.text, mii->tip.type, mii->tip.time);
@@ -780,6 +988,7 @@ namespace Nilesoft
 
 			mii->dwItemData = item->dwItemData;
 			mii->handle = menu->handle;
+			mii->trace = item->trace;
 
 			this_item _this; _context._this = &_this;
 
@@ -1052,7 +1261,9 @@ namespace Nilesoft
 		//finalize
 		LRESULT ContextMenu::OnInitMenuPopup(HMENU hMenu, [[maybe_unused]] uint32_t uPosition)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
 			__trace(L"ContextMenu.InitMenuPopup begin");
+			publish_original_capture_if_armed();
 
 			MENU m = hMenu;
 			LRESULT ret = msg.invoke();
@@ -1488,6 +1699,12 @@ namespace Nilesoft
 
 			dc.reset_font();
 
+			// The handshake may complete while this popup is being prepared.  A
+			// second gate check closes that bounded race even if the posted wake-up
+			// message is not dispatched until after the menu returns.
+			if(!_studio_original_published)
+				publish_original_capture_if_armed();
+
 			long image__size = _theme.image.size;
 			if(menu->draw.height < image__size)
 				menu->draw.height = image__size;
@@ -1531,6 +1748,25 @@ namespace Nilesoft
 
 				mi.hbrBack = composition ? GetStockBrush(BLACK_BRUSH) : ::CreateSolidBrush(_theme.background.color.to_BGR());
 				m.set(&mi);
+			}
+
+			// The final vector is the exact set of entries about to be displayed
+			// for this popup.  StudioCapture serializes it before this stack frame
+			// returns; it never receives HMENU handles or native pointers.
+			if(_studio_capture.IsActive())
+			{
+				try
+				{
+					const auto metadata = capture_metadata();
+					_studio_capture.PublishFinal(items, metadata,
+						menu->path.empty() ? std::wstring{} :
+						std::wstring(menu->path.c_str(), menu->path.length()));
+				}
+				catch(...)
+				{
+					_studio_capture.Fail("CAPTURE_METADATA",
+						"The native capture could not collect menu context metadata.");
+				}
 			}
 
 			__trace(L"ContextMenu.InitMenuPopup end");
@@ -4022,8 +4258,226 @@ namespace Nilesoft
 
 		HMENU ContextMenu::MenuHandle() const { return _hMenu; }
 
+		StudioCaptureMetadata ContextMenu::capture_metadata() const
+		{
+			StudioCaptureMetadata metadata;
+			auto copy = [](const string &value) -> std::wstring
+			{
+				return value.empty() ? std::wstring{} :
+					std::wstring(value.c_str(), value.length());
+			};
+
+			if(_cache)
+			{
+				metadata.configPath = _cache->config_path;
+				metadata.runtimeGeneration = _cache->runtime_generation;
+			}
+
+			const wchar_t *contextName = L"unknown";
+			switch(Selected.Window.id)
+			{
+				case WINDOW_UI: contextName = L"ui"; break;
+				case WINDOW_SYSMENU: contextName = L"system"; break;
+				case WINDOW_EDIT: contextName = L"edit"; break;
+				case WINDOW_START: contextName = L"start"; break;
+				case WINDOW_TASKBAR: contextName = L"taskbar"; break;
+				case WINDOW_DESKTOP: contextName = L"desktop"; break;
+				case WINDOW_EXPLORER: contextName = L"explorer"; break;
+				case WINDOW_EXPLORER_TREE: contextName = L"explorer-tree"; break;
+				case WINDOW_COMPUTER: contextName = L"computer"; break;
+				case WINDOW_RECYCLEBIN: contextName = L"recycle-bin"; break;
+				case WINDOW_LIBRARIES: contextName = L"libraries"; break;
+				case WINDOW_HOME: contextName = L"home"; break;
+				case WINDOW_QUICK_ACCESS: contextName = L"quick-access"; break;
+				default: break;
+			}
+			metadata.context = contextName;
+			metadata.context += Selected.Background ? L".background" : L".selection";
+
+			// Keep the semantic selection category separate from the host window
+			// name.  Rules commonly distinguish a file, directory background, or
+			// drive background even when all three are opened from Explorer.
+			if(Selected.is_taskbar())
+				metadata.contextCategory = L"taskbar";
+			else if(Selected.is_desktop_window() || Selected.Types[FSO_DESKTOP])
+				metadata.contextCategory = L"desktop";
+			else if(Selected.Background)
+			{
+				if(Selected.Types[FSO_BACK_DIRECTORY])
+					metadata.contextCategory = L"dir.back";
+				else if(Selected.Types[FSO_BACK_DRIVE])
+					metadata.contextCategory = L"drive.back";
+				else if(Selected.Types[FSO_BACK_NAMESPACE])
+					metadata.contextCategory = L"namespace.back";
+				else
+					metadata.contextCategory = L"background";
+			}
+			else if(Selected.Types[FSO_FILE])
+				metadata.contextCategory = L"file";
+			else if(Selected.Types[FSO_DIRECTORY])
+				metadata.contextCategory = L"dir";
+			else if(Selected.Types[FSO_DRIVE])
+				metadata.contextCategory = L"drive";
+			else if(Selected.Types[FSO_NAMESPACE])
+				metadata.contextCategory = L"namespace";
+			else
+				metadata.contextCategory = L"unknown";
+
+			for(auto item : Selected.Items)
+			{
+				if(metadata.paths.size() >= 128)
+					break;
+				if(item && !item->Path.empty())
+					metadata.paths.push_back(copy(item->Path));
+			}
+			if(metadata.paths.empty() && !Selected.Directory.empty())
+				metadata.paths.push_back(copy(Selected.Directory));
+			return metadata;
+		}
+
+		ContextMenu::CaptureEvaluationScope::~CaptureEvaluationScope() noexcept
+		{
+			if(owner)
+				owner->retain_capture_evaluation(item);
+		}
+
+		void ContextMenu::retain_capture_evaluation(menuitem_t *item) noexcept
+		{
+			if(!item || !item->native_menu || !_studio_capture.IsActive())
+				return;
+
+			try
+			{
+				StudioCaptureTrace evaluated;
+				for(const auto &value : item->trace)
+				{
+					if(value.size() < 7 || value.compare(0, 7, L"static.") != 0)
+						continue;
+					evaluated.push_back(value);
+				}
+				if(evaluated.empty())
+					return;
+
+				const StudioCaptureTraceKey key{item->native_menu, item->native_index};
+				const auto found = _studio_evaluated_traces.find(key);
+				if(found == _studio_evaluated_traces.end() &&
+					_studio_evaluated_traces.size() >= kMaxRetainedCaptureEvaluations)
+				{
+					_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+						"The native capture exceeded its retained trace limit.");
+					return;
+				}
+				if(found != _studio_evaluated_traces.end())
+					found->second = std::move(evaluated);
+				else
+					_studio_evaluated_traces.emplace(key, std::move(evaluated));
+			}
+			catch(...)
+			{
+				_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+					"The native capture could not retain all evaluated rule outcomes.");
+			}
+		}
+
+		void ContextMenu::overlay_capture_evaluations(menuitem_t *item)
+		{
+			if(!item)
+				return;
+
+			if(item->native_menu && _studio_capture.IsActive())
+			{
+				const bool staticRulesEnabled = _cache && !_cache->statics.empty();
+				const auto found = _studio_evaluated_traces.find(StudioCaptureTraceKey{
+					item->native_menu, item->native_index});
+				if(found != _studio_evaluated_traces.end())
+				{
+					try
+					{
+						// Static outcomes are the part that can disappear from the
+						// display tree.  Give them priority over bookkeeping entries
+						// when the bounded trace vector is full.
+						StudioCaptureTrace merged;
+						for(const auto &value : found->second)
+						{
+							if(merged.size() >= kMaxCaptureTraceEntries)
+								break;
+							merged.push_back(value);
+						}
+						for(const auto &value : item->trace)
+						{
+							if(value.size() >= 7 && value.compare(0, 7, L"static.") == 0)
+								continue;
+							if(merged.size() >= kMaxCaptureTraceEntries)
+								break;
+							merged.push_back(value);
+						}
+						item->trace = std::move(merged);
+					}
+					catch(...)
+					{
+						_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+							"The native capture could not merge retained rule outcomes.");
+					}
+				}
+				else
+				{
+					bool filtered = false;
+					for(const auto &value : item->trace)
+						filtered = filtered || (value.size() >= 7 &&
+							value.compare(0, 7, L"remove.") == 0);
+					if(filtered && !_studio_evaluated_traces.empty())
+						CaptureTrace(item->trace, L"capture.static", false,
+							L"not evaluated; filtered during native enumeration");
+					else if(!filtered && staticRulesEnabled &&
+						!_studio_capture_active_during_static_evaluation)
+						CaptureTrace(item->trace,
+							L"capture.static unavailable; capture armed after evaluation");
+				}
+			}
+
+			for(auto child : item->items)
+				overlay_capture_evaluations(child);
+		}
+
+		bool ContextMenu::publish_original_capture_if_armed()
+		{
+			if(_studio_original_published || !_studio_real_enumeration_complete ||
+				!_studio_static_evaluation_complete ||
+				::GetPropW(hwnd.owner, UxSubclass) != 0 ||
+				!_studio_capture.WantsOriginal() || !_hMenu_original ||
+				!::IsMenu(_hMenu_original))
+				return false;
+			try
+			{
+				CaptureTraceScope traceScope(&_studio_capture);
+
+				// The real enumeration has already sent WM_INITMENUPOPUP for every
+				// reachable submenu.  The getter pass is therefore read-only and does
+				// not re-enter the owner window or run the popup initializer again.
+				std::unique_ptr<menuitem_t> original_tree(new menuitem_t);
+				original_tree->type = 10;
+				build_system_menuitems(_hMenu_original, original_tree.get(), true, true);
+				overlay_capture_evaluations(original_tree.get());
+				const auto metadata = capture_metadata();
+				if(!_studio_capture.PublishOriginal(original_tree.get(), metadata))
+					return false;
+				_studio_original_published = true;
+				_studio_evaluated_traces.clear();
+				return true;
+			}
+			catch(...)
+			{
+				_studio_capture.Fail("CAPTURE_METADATA",
+					"The native capture could not collect menu context metadata.");
+				return false;
+			}
+		}
+
 		void ContextMenu::build_main_system_menuitems(menuitem_t *menu, bool is_root)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
+			if(_studio_capture.IsActive())
+				_studio_capture_active_during_static_evaluation = true;
 			if(!menu || menu->items.empty())
 				return;
 
@@ -4060,6 +4514,7 @@ namespace Nilesoft
 					bool removed = false;
 					auto where_defined = false;
 					auto item = items->at(i);
+					CaptureEvaluationScope captureEvaluation{this, item};
 					try 
 					{
 						string location;
@@ -4091,55 +4546,89 @@ namespace Nilesoft
 						if(si->mode)
 						{
 							auto mode = _context.parse_mode(si->mode);
-							if(Selected.Window.id > WINDOW_TASKBAR && !Selected.verify_mode(mode))
+							const bool mode_match = Selected.Window.id <= WINDOW_TASKBAR || Selected.verify_mode(mode);
+							CaptureTraceSource(item->trace, si, L"static.mode", mode_match,
+								mode_match ? L"accepted" : L"rejected");
+							if(!mode_match)
 								break;
 						}
 
 						if(si->location)
 						{
-							if(_context.Eval(si->location, location, true))
+							const bool location_evaluated = _context.Eval(si->location, location, true);
+							if(location_evaluated)
 							{
-								if(!is_location(location, item->path))
+								const bool location_match = is_location(location, item->path);
+								CaptureTraceSource(item->trace, si, L"static.location", location_match,
+									location_match ? L"accepted" : L"skipped");
+								if(!location_match)
 									goto skip;
 							}
+							else
+								CaptureTraceSource(item->trace, si, L"static.location", false, L"evaluation failed");
 						}
 						else if(!is_root)
+						{
+							CaptureTraceSource(item->trace, si, L"static.location", false, L"root only");
 							goto skip;
+						}
 
 						if(si->where)
 						{
-							if(where_defined = _context.Eval(si->where).to_bool(); !where_defined)
+							where_defined = _context.Eval(si->where).to_bool();
+							CaptureTraceSource(item->trace, si, L"static.where", where_defined,
+								where_defined ? L"accepted" : L"skipped");
+							if(!where_defined)
 								continue;
 						}
 
 						if(item->is_separator())
 						{
-							if(!where_defined || si->find)
+							const bool separator_match = where_defined && !si->find;
+							CaptureTraceSource(item->trace, si, L"static.separator", separator_match,
+								separator_match ? L"accepted" : L"skipped");
+							if(!separator_match)
 								goto skip;
 						}
 						else
 						{
 							if(item->title.empty())
+							{
+								CaptureTraceSource(item->trace, si, L"static.title", false, L"empty; skipped");
 								goto skip;
+							}
 
 							if(!si->find && !where_defined)
+							{
+								CaptureTraceSource(item->trace, si, L"static.match", false, L"find and where not defined");
 								goto skip;
+							}
 							else
 							{
 								Object find = _context.Eval(si->find).move();
 								if(find.is_null() || find.length() == 0)
 								{
-									if(!where_defined || (si->moveto && !is_root))
+									const bool empty_find_match = where_defined && !(si->moveto && !is_root);
+									CaptureTraceSource(item->trace, si, L"static.find", empty_find_match,
+										empty_find_match ? L"where matched" : L"empty; skipped");
+									if(!empty_find_match)
 										goto skip;
 								}
 								else
 								{
 									string pattern = find.to_string().trim().tolower().move();
 									FindPattern find_pattern;
-									if(!find_pattern.split(pattern, L'|') && !where_defined)
+									const bool pattern_valid = find_pattern.split(pattern, L'|');
+									if(!pattern_valid && !where_defined)
+									{
+										CaptureTraceSource(item->trace, si, L"static.find", false, L"invalid pattern; skipped");
 										goto skip;
+									}
 
-									if(!find_pattern.find(&item->name))
+									const bool pattern_match = find_pattern.find(&item->name);
+									CaptureTraceSource(item->trace, si, L"static.find", pattern_match,
+										pattern_match ? L"matched" : L"skipped");
+									if(!pattern_match)
 										goto skip;
 								}
 							}
@@ -4150,28 +4639,37 @@ namespace Nilesoft
 							item->visibility = _context.parse_visibility(si->visibility);
 
 							if(item->visibility == Visibility::Hidden)
+							{
+								CaptureTraceSource(item->trace, si, L"static.visibility", true, L"hidden; removed");
 								removed= true;
+							}
 							else if(!item->is_separator())
 							{
+								CaptureTraceSource(item->trace, si, L"static.visibility", true,
+									item->visibility == Visibility::Disabled ? L"disabled" : L"enabled");
 								if(item->visibility == Visibility::Enabled)
 									item->disabled = false;
-								else if(item->visibility == Visibility::Disabled)
-									item->disabled = true;
-								_context._this->disabled = item->disabled;
+									else if(item->visibility == Visibility::Disabled)
+										item->disabled = true;
+									_context._this->disabled = item->disabled;
 							}
 						}
+						else if(si->visibility)
+							CaptureTraceSource(item->trace, si, L"static.visibility", false, L"modification disabled");
 
 						if(removed)
 							items->erase(items->begin() + i--);
 						else if(_settings.modify_items.parent)
 						{
 							string moveto;
-							if(_context.Eval(si->moveto, moveto, true))
+							const bool moveto_evaluated = _context.Eval(si->moveto, moveto, true);
+							if(moveto_evaluated)
 							{
 								moveto.trim(L'/');
 
 								if(!moveto.equals(item->path))
 								{
+									CaptureTraceSource(item->trace, si, L"static.moveto", true, L"moved");
 									item->path = moveto.move();
 									if(auto submenu = __map_system_menu[item->path.hash()]; submenu)
 									{
@@ -4184,22 +4682,38 @@ namespace Nilesoft
 									}
 									items->erase(items->begin() + i--);
 								}
+								else
+									CaptureTraceSource(item->trace, si, L"static.moveto", false, L"destination unchanged");
 							}
+							else
+								CaptureTraceSource(item->trace, si, L"static.moveto", false, L"evaluation failed");
 						}
+						else if(si->moveto)
+							CaptureTraceSource(item->trace, si, L"static.moveto", false, L"modification disabled");
 
 						if(!removed)
-							item->native_items.push_back(si);
-
-						if(si->invoke && 0 == _context.parse_invoke(si->invoke))
 						{
-							if(!removed && item->is_menu())
-								build_main_system_menuitems(item);
-							break;
+							item->native_items.push_back(si);
+							CaptureTraceSource(item->trace, si, L"static.result", true, L"displayed");
+						}
+
+						if(si->invoke)
+						{
+							const bool invoke_match = _context.parse_invoke(si->invoke) == 0;
+							CaptureTraceSource(item->trace, si, L"static.invoke", invoke_match,
+								invoke_match ? L"applied" : L"not applied");
+							if(invoke_match)
+							{
+								if(!removed && item->is_menu())
+									build_main_system_menuitems(item);
+								break;
+							}
 						}
 
 						continue;
 
 					skip:
+						CaptureTraceSource(item->trace, si, L"static.result", false, L"skipped");
 						if(item->is_menu())
 							build_main_system_menuitems(item);
 					}
@@ -4211,9 +4725,12 @@ namespace Nilesoft
 			}
 		}
 
-		void ContextMenu::build_system_menuitems(HMENU hMenu, menuitem_t *menu, bool is_root)
+		void ContextMenu::build_system_menuitems(HMENU hMenu, menuitem_t *menu,
+			bool is_root, bool capture_original)
 		{
-			::SendMessageW(hwnd.owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(hMenu), 0xFFFFFFFF);
+			CaptureTraceScope traceScope(&_studio_capture);
+			if(!capture_original)
+				::SendMessageW(hwnd.owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(hMenu), 0xFFFFFFFF);
 
 			auto itmes_count = ::GetMenuItemCount(hMenu);
 
@@ -4232,9 +4749,12 @@ namespace Nilesoft
 				{
 					std::unique_ptr<menuitem_t> item(new menuitem_t);
 					auto itemPtr = item.get();
+					CaptureTraceNumber(item->trace, L"native.index=", i);
 					item->parent = menu;
 					item->wid = mii.wID;
 					item->dwItemData = mii.dwItemData;
+					item->native_menu = hMenu;
+					item->native_index = static_cast<uint32_t>(i);
 					item->is_toplevel = is_root;
 
 					if(is_root)
@@ -4250,7 +4770,12 @@ namespace Nilesoft
 					if(mii.fType & MFT_SEPARATOR)
 					{
 						if(_settings.modify_items.remove.separator)
-							continue;
+						{
+							CaptureTrace(item->trace, L"remove.separator", true,
+								capture_original ? L"would remove; retained for original evidence" : L"removed");
+							if(!capture_original)
+								continue;
+						}
 						item->type = 2;
 					}
 					else
@@ -4262,7 +4787,12 @@ namespace Nilesoft
 						item->image = MenuItemInfo::FindImage(&mii);
 
 						if(item->disabled && _settings.modify_items.remove.disabled)
-							continue;
+						{
+							CaptureTrace(item->trace, L"remove.disabled", true,
+								capture_original ? L"would remove; retained for original evidence" : L"removed");
+							if(!capture_original)
+								continue;
+						}
 						
 						if(mii.cch > 0)
 						{
@@ -4271,7 +4801,7 @@ namespace Nilesoft
 
 							item->ui = Initializer::get_muid(item->hash);
 
-							if(!item->is_menu() && is_root && item->disabled)
+							if(!capture_original && !item->is_menu() && is_root && item->disabled)
 							{
 								if(item->uid() == IDENT_ID_EMPTY_RECYCLE_BIN)
 								{
@@ -4292,16 +4822,28 @@ namespace Nilesoft
 									{
 										if(im->type == item->type)
 										{
-											found_duplicate = 1;
-											if(im->disabled)
+											if(capture_original)
 											{
-												if(!item->disabled)
+												CaptureTrace(item->trace, L"remove.duplicate", true,
+													L"would remove; retained for original evidence");
+												CaptureTrace(im->trace, L"remove.duplicate", true,
+													L"would be replaced by a later duplicate");
+											}
+											else
+											{
+												found_duplicate = 1;
+												if(im->disabled)
 												{
-													found_duplicate = 2;
-													menu->items[indexof] = item.release();
+													if(!item->disabled)
+													{
+														found_duplicate = 2;
+														CaptureTrace(item->trace, L"remove.duplicate", true, L"replaced disabled duplicate");
+														CaptureTrace(im->trace, L"remove.duplicate", true, L"replaced by enabled duplicate");
+														menu->items[indexof] = item.release();
+													}
 												}
 											}
-											break;
+												break;
 										}
 									}
 								}
@@ -4309,7 +4851,10 @@ namespace Nilesoft
 							}
 							
 							if(found_duplicate == 1)
+							{
+								CaptureTrace(item->trace, L"remove.duplicate", true, L"removed");
 								continue;
+							}
 						}
 						else if(mii.fType & MFT_BITMAP)
 						{
@@ -4317,12 +4862,12 @@ namespace Nilesoft
 						}
 
 						if(mii.hSubMenu)
-							build_system_menuitems(mii.hSubMenu, itemPtr, false);
+							build_system_menuitems(mii.hSubMenu, itemPtr, false, capture_original);
 					}
 					
-					if(found_duplicate != 2)
+					if(capture_original || found_duplicate != 2)
 					{
-						if(item->is_menu())
+						if(!capture_original && item->is_menu())
 						{
 							string sub_path = item->name;
 							if(!item->path.empty())
@@ -4341,6 +4886,12 @@ namespace Nilesoft
 			try
 			{
 				if(!Initializer::Inited()) return false;
+
+				// Start as soon as the context object exists so a Studio request
+				// can complete its handshake before native menu enumeration begins.
+				// The worker never waits on this thread and produces no data until
+				// it has received capture.start.
+				_studio_capture.Start(hwnd.owner);
 
 				__trace(L"ContextMenu init");
 
@@ -4462,16 +5013,28 @@ namespace Nilesoft
 				//set_prop(hWnd, ctx);
 
 				__trace(L"ContextMenu.Initialized");
-				
+
 				__system_menu_tree = new menuitem_t;
 				__system_menu_tree->type = 10;
 				__map_system_menu[0] = __system_menu_tree;
 
 				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
-					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
+				{
+					build_system_menuitems(_hMenu_original, __system_menu_tree, true, false);
+					_studio_real_enumeration_complete = true;
+				}
 
 				if(_settings.modify_items.enabled)
+				{
+					_studio_capture_active_during_static_evaluation = false;
 					build_main_system_menuitems(__system_menu_tree, true);
+				}
+				_studio_static_evaluation_complete = true;
+
+				// Publish only after the real tree has been statically evaluated so
+				// the original getter tree can receive those retained outcomes.  A
+				// late handshake reaches the same gate from the window subclass.
+				publish_original_capture_if_armed();
 
 				return true;
 			}
@@ -4494,6 +5057,8 @@ namespace Nilesoft
 			int result = FALSE;
 			try
 			{
+				_studio_capture.Stop();
+
 				if(_hMenu)
 				{
 					::DestroyMenu(_hMenu);
@@ -6314,6 +6879,14 @@ namespace Nilesoft
 
 				switch(uMsg)
 				{
+					case StudioCapture::CaptureArmedMessage:
+						// A worker-thread handshake can complete after Initialize has
+						// started ordinary menu construction.  Retry on the owner thread
+						// so the original HMENU is never dereferenced by the worker and
+						// the snapshot is immutable before it enters the IPC queue.
+						if(reinterpret_cast<StudioCapture *>(wParam) == &ctx->_studio_capture)
+							ctx->publish_original_capture_if_armed();
+						return 0;
 					case WM_ENTERMENULOOP:
 					{
 						//_log.info(L"WM_ENTERMENULOOP");

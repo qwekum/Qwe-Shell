@@ -245,6 +245,16 @@ namespace Nilesoft
 		public:
 			uint32_t sign = NILESOFTSHELL_SIGN + 1;
 
+			// Source identity is retained on parsed definitions so a captured
+			// custom entry can be resolved back to the lossless Studio document.
+			// The parser owns the format of source_node_id (currently n<UTF-16
+			// start offset>); runtime menu construction only carries this data.
+			string source_file;
+			string source_node_id;
+			// SHA-256 of the exact source-file bytes loaded by the parser.  Studio
+			// must compare this with its opened document before applying an edit.
+			std::string source_hash;
+
 			static constexpr auto TYPE_NONE = 0;
 			static constexpr auto TYPE_MAIN = 1;
 			static constexpr auto TYPE_MENU = 2;

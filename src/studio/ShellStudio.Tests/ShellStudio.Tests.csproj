@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><NativeLanguagePath Condition="'$(NativeLanguagePath)' == ''">../native/bin/Release/x64/ShellStudio.Language.dll</NativeLanguagePath></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../ShellStudio.Core/ShellStudio.Core.csproj" /></ItemGroup>
+  <ItemGroup><None Include="$(NativeLanguagePath)" Link="ShellStudio.Language.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(NativeLanguagePath)')" /></ItemGroup>
+</Project>

@@ -45,6 +45,9 @@
     <ClCompile Include="src\Parser\Parser.cpp">
       <Filter>Source Files\Parser</Filter>
     </ClCompile>
+    <ClCompile Include="src\Parser\LanguageFrontend.cpp">
+      <Filter>Source Files\Parser</Filter>
+    </ClCompile>
     <ClCompile Include="src\Parser\Verification.cpp">
       <Filter>Source Files\Parser</Filter>
     </ClCompile>
@@ -90,6 +93,9 @@
       <Filter>Header Files\Parser</Filter>
     </ClInclude>
     <ClInclude Include="src\Parser\Parser.h">
+      <Filter>Header Files\Parser</Filter>
+    </ClInclude>
+    <ClInclude Include="src\Parser\LanguageFrontend.h">
       <Filter>Header Files\Parser</Filter>
     </ClInclude>
     <ClInclude Include="src\Parser\Token.h">

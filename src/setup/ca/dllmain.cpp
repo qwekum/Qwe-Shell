@@ -111,12 +111,13 @@ BOOL ShellExec(const wchar_t *file, const wchar_t *parameters, const wchar_t *di
 	sei.lpDirectory = directory;
 	sei.nShow = nshow;
 
-	auto res = ::ShellExecuteExW(&sei) || (wait && !sei.hProcess);
-	if(!res)
-		return res;
+	if(!::ShellExecuteExW(&sei))
+		return false;
 
 	if(!wait)
-		return res;
+		return true;
+	if(!sei.hProcess)
+		return false;
 
 	// Wait until child process exits.
 	MSG msg;
@@ -124,6 +125,10 @@ BOOL ShellExec(const wchar_t *file, const wchar_t *parameters, const wchar_t *di
 	while(wait)
 	{
 		dw = ::MsgWaitForMultipleObjects(1, &sei.hProcess, FALSE, INFINITE, QS_ALLINPUT);
+		if(dw == WAIT_OBJECT_0)
+		{
+			break;
+		}
 		if(dw != WAIT_OBJECT_0 + 1)
 		{
 			// unexpected failure
@@ -140,8 +145,11 @@ BOOL ShellExec(const wchar_t *file, const wchar_t *parameters, const wchar_t *di
 			::DispatchMessageW(&msg);
 		}
 	}
+	DWORD exit_code = ERROR_PROCESS_ABORTED;
+	if(!::GetExitCodeProcess(sei.hProcess, &exit_code))
+		exit_code = ERROR_PROCESS_ABORTED;
 	::CloseHandle(sei.hProcess);
-	return res;
+	return exit_code == ERROR_SUCCESS;
 }
 
 /*
@@ -209,7 +217,22 @@ static std::wstring JoinPath(const std::wstring &path1, const std::wstring &path
 		if(path2.size() > 0 && path2.front() != L'\\')
 			path += L'\\';
 	}
-	return std::move(path1 + path2);
+	return std::move(path + path2);
+}
+
+static std::wstring NextBackupPath(const std::wstring &install_folder)
+{
+	std::wstring base = JoinPath(install_folder, FILEOLD);
+	if(!::PathFileExistsW(base.c_str()))
+		return base;
+
+	for(unsigned int index = 1; index <= 100; ++index)
+	{
+		std::wstring candidate = base + L"." + std::to_wstring(index);
+		if(!::PathFileExistsW(candidate.c_str()))
+			return candidate;
+	}
+	return {};
 }
 
 static bool InstallFolder(MSIHANDLE hInstall, std::wstring& install_folder, bool find_by_reg)
@@ -266,15 +289,12 @@ UINT __stdcall Install(MSIHANDLE hInstall)
 	std::wstring install_folder;
 	if(InstallFolder(hInstall, install_folder, false))
 	{
-		ShellExec(JoinPath(install_folder, FILEEXE).c_str(), 
-				  L"-r -s -t -restart", install_folder.c_str(), true, SW_HIDE, true);
+		if(!ShellExec(JoinPath(install_folder, FILEEXE).c_str(),
+				  L"-r -s -t", install_folder.c_str(), true, SW_HIDE, true))
+			return ERROR_INSTALL_FAILURE;
 
-		std::wstring old = std::move(JoinPath(install_folder, FILEOLD));
-		if(::PathFileExistsW(old.c_str()))
-			::DeleteFileW(old.c_str());
 	}
-	return ERROR_SUCCESS;
-	//return ERROR_INSTALL_FAILURE;
+	return install_folder.empty() ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS;
 }
 
 UINT __stdcall Uninstall(MSIHANDLE hInstall)
@@ -282,11 +302,11 @@ UINT __stdcall Uninstall(MSIHANDLE hInstall)
 	std::wstring install_folder;
 	if(InstallFolder(hInstall, install_folder, true))
 	{
-		ShellExec(JoinPath(install_folder, FILEEXE).c_str(), 
-				  L"-u -s -t -restart", install_folder.c_str(), true, SW_HIDE, true);
+		if(!ShellExec(JoinPath(install_folder, FILEEXE).c_str(),
+				  L"-u -s -t", install_folder.c_str(), true, SW_HIDE, true))
+			return ERROR_INSTALL_FAILURE;
 	}
-	return ERROR_SUCCESS;
-	//return res ? ERROR_SUCCESS : ERROR_INSTALL_FAILURE;
+	return install_folder.empty() ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS;
 }
 
 UINT __stdcall Update(MSIHANDLE hInstall)
@@ -295,15 +315,15 @@ UINT __stdcall Update(MSIHANDLE hInstall)
 	if(InstallFolder(hInstall, install_folder, true))
 	{
 		std::wstring dll = std::move(JoinPath(install_folder, FILEDLL));
-		std::wstring old = std::move(JoinPath(install_folder, FILEOLD));
 
 		if(::PathFileExistsW(dll.c_str()))
-			::MoveFileW(dll.c_str(), old.c_str());
-
-		if(::PathFileExistsW(old.c_str()))
-			::DeleteFileW(old.c_str());
+		{
+			std::wstring backup = NextBackupPath(install_folder);
+			if(backup.empty() || !::MoveFileW(dll.c_str(), backup.c_str()))
+				return ERROR_INSTALL_FAILURE;
+		}
 	}
-	return ERROR_SUCCESS;
+	return install_folder.empty() ? ERROR_INSTALL_FAILURE : ERROR_SUCCESS;
 }
 
 UINT __stdcall ValidatePath(MSIHANDLE hInstall)

@@ -2,6 +2,104 @@
 #include <pch.h>
 #include "Include\Hooker.h"
 #include "Include/ContextMenu.h"
+#include "RegistryConfig.h"
+
+#include <limits>
+
+namespace
+{
+	bool ReadFileWriteTime(const wchar_t *path, uint64_t &value)
+	{
+		value = 0;
+		if(!path || !path[0])
+			return false;
+
+		HANDLE handle = ::CreateFileW(path, GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if(handle == INVALID_HANDLE_VALUE)
+		{
+			const auto error = ::GetLastError();
+			return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+		}
+
+		FILETIME writeTime{};
+		const bool result = ::GetFileTime(handle, nullptr, nullptr, &writeTime) == TRUE;
+		::CloseHandle(handle);
+		if(result)
+		{
+			ULARGE_INTEGER integer{};
+			integer.LowPart = writeTime.dwLowDateTime;
+			integer.HighPart = writeTime.dwHighDateTime;
+			value = integer.QuadPart;
+		}
+		return result;
+	}
+
+	bool ReadStudioGeneration(const wchar_t *path, std::wstring &value)
+	{
+		value.clear();
+		if(!path || !path[0])
+			return false;
+
+		const auto attributes = ::GetFileAttributesW(path);
+		if(attributes == INVALID_FILE_ATTRIBUTES)
+		{
+			const auto error = ::GetLastError();
+			return error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND;
+		}
+		if((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+			return false;
+
+		HANDLE handle = ::CreateFileW(path, GENERIC_READ,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if(handle == INVALID_HANDLE_VALUE)
+			return false;
+
+		LARGE_INTEGER size{};
+		bool result = ::GetFileSizeEx(handle, &size) == TRUE &&
+			size.QuadPart > 0 && size.QuadPart <= 128;
+		std::string bytes;
+		if(result)
+		{
+			bytes.resize(static_cast<size_t>(size.QuadPart));
+			DWORD read = 0;
+			result = ::ReadFile(handle, bytes.data(), static_cast<DWORD>(bytes.size()),
+				&read, nullptr) == TRUE && read == bytes.size();
+		}
+		::CloseHandle(handle);
+		if(!result)
+			return false;
+
+		int length = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+			bytes.data(), static_cast<int>(bytes.size()), nullptr, 0);
+		if(length <= 0)
+			return false;
+		value.resize(static_cast<size_t>(length));
+		if(::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, bytes.data(),
+			static_cast<int>(bytes.size()), value.data(), length) != length)
+			return false;
+
+		while(!value.empty() && (value.back() == L' ' || value.back() == L'\t' ||
+			value.back() == L'\r' || value.back() == L'\n'))
+			value.pop_back();
+		while(!value.empty() && (value.front() == L' ' || value.front() == L'\t' ||
+			value.front() == L'\r' || value.front() == L'\n'))
+			value.erase(value.begin());
+
+		if(value.size() != 32)
+			return false;
+		for(const auto character : value)
+		{
+			if(!((character >= L'0' && character <= L'9') ||
+				(character >= L'a' && character <= L'f') ||
+				(character >= L'A' && character <= L'F')))
+				return false;
+		}
+		return true;
+	}
+}
 
 namespace Nilesoft
 {
@@ -65,6 +163,11 @@ namespace Nilesoft
 			{
 				//hooker.destroy();
 				this->uninit();
+				// Process teardown is the final opportunity to release caches that
+				// were kept alive for a context menu during a hot reload.
+				for(auto retired : _retired_caches)
+					delete retired;
+				_retired_caches.clear();
 				WIC::release();
 				D2D::destroy_Factory();
 			}
@@ -78,49 +181,158 @@ namespace Nilesoft
 
 		bool Initializer::init()
 		{
+			string current_directory;
+			bool directory_changed = false;
 			try
 			{
-				if(!cache)
+				// Resolve the same registry/portable selection that Parser uses before
+				// checking the transaction marker. Parser normally fills Config in its
+				// constructor, which is too late to protect the first load.
+				string configured;
+				if(RegistryConfig::get(nullptr, L"config", configured) && !configured.empty() &&
+					Path::IsFileExists(configured))
+					application.Config = configured;
+				else if(application.Config.empty() || !Path::IsFileExists(application.Config))
+					application.Config = application.ConfigPortable;
+
+				const string config_path = application.Config;
+				const string transaction_marker = config_path + L".studio-transaction.json";
+				const string generation_marker = config_path + L".studio-generation";
+				// A transaction marker is published before any staged file replaces
+				// occur.  Keep the last good cache visible until the marker is gone;
+				// on startup, fail closed until Studio recovery completes.
+				if(!config_path.empty() &&
+					Path::IsFileExists(transaction_marker))
 				{
-					cache = new CACHE;
+					Status.Refresh = true;
+					Status.Error = cache == nullptr;
+					Status.Loaded = cache != nullptr;
+					return cache != nullptr;
+				}
 
-					// Determine the required bitmap size.
-					cache->glyph.name = FontCache::Default;
+				uint64_t write_before = 0;
+				std::wstring generation_before;
+				if(!ReadFileWriteTime(config_path.c_str(), write_before) ||
+					!ReadStudioGeneration(generation_marker.c_str(), generation_before))
+				{
+					Status.Refresh = true;
+					Status.Error = cache == nullptr;
+					Status.Loaded = cache != nullptr;
+					return cache != nullptr;
+				}
 
-					auto cur_dir = Path::CurrentDirectory();
-					Path::CurrentDirectory(application.Dirctory);
-					Parser parser;
+				if(cache && !Status.Refresh)
+				{
+					Status.Loaded = true;
+					return true;
+				}
 
-					load_mui();
+				std::unique_ptr<CACHE> candidate(new CACHE);
 
-					cache->Packages.load();
+				// Determine the required bitmap size.
+				candidate->glyph.name = FontCache::Default;
 
-					if(!parser.Load())
+				current_directory = Path::CurrentDirectory();
+				Path::CurrentDirectory(application.Dirctory);
+				directory_changed = true;
+				Parser parser(candidate.get());
+
+				load_mui();
+
+				candidate->Packages.load();
+
+				if(!parser.Load())
+				{
+					Path::CurrentDirectory(current_directory);
+					directory_changed = false;
+					// Keep a complete previous cache serving Explorer.  The failed
+					// candidate is discarded and a later explicit refresh can retry.
+					Status.Refresh = true;
+					Status.Error = cache == nullptr;
+					Status.Loaded = cache != nullptr;
+					return cache != nullptr;
+				}
+
+				// A file can change while the isolated candidate is being parsed.  Do
+				// not publish a mixed generation; let the next query retry after the
+				// writer has completed.  The same check catches a transaction that
+				// started during parsing even when the root file timestamp is unchanged.
+				uint64_t write_after = 0;
+				std::wstring generation_after;
+				if(application.Config != config_path ||
+					Path::IsFileExists(transaction_marker) ||
+					!ReadFileWriteTime(application.Config.c_str(), write_after) ||
+					!ReadStudioGeneration((application.Config + L".studio-generation").c_str(), generation_after) ||
+					write_before != write_after || generation_before != generation_after)
+				{
+					Path::CurrentDirectory(current_directory);
+					directory_changed = false;
+					Status.Refresh = true;
+					Status.Error = false;
+					Status.Loaded = cache != nullptr;
+					return cache != nullptr;
+				}
+
+				Path::CurrentDirectory(current_directory);
+				directory_changed = false;
+				candidate->fonts.init(HInstance);
+				ContextMenu::FontNotFound = false;
+
+				// Resolve process-global image references without publishing candidate
+				// pointers.  Building this list can allocate, so keep all such work
+				// private until the candidate and publication bookkeeping are ready.
+				struct PendingMuidImage
+				{
+					MUID *uid;
+					Expression *image;
+				};
+				std::vector<PendingMuidImage> pending_muid_images;
+				pending_muid_images.reserve(MAP_MUID.size());
+				for(auto &entry : MAP_MUID)
+				{
+					for(auto &image : candidate->images)
 					{
-						Status.Error = true;
-						uninit();
-						Path::CurrentDirectory(cur_dir);
-						// Release ownership of the critical section.
-						return false;
-					}
-
-					// load images cache
-					for(auto &id : MAP_MUID)
-					{
-						auto uid = &MAP_MUID[id.first];
-						for(auto &si : cache->images)
+						if(image.equals(entry.second.id))
 						{
-							if(si.equals(uid->id))
-							{
-								uid->image = si.value;
-								break;
-							}
+							pending_muid_images.push_back({ &entry.second, image.value });
+							break;
 						}
 					}
+				}
 
-					Path::CurrentDirectory(cur_dir);
-					cache->fonts.init(HInstance);
-					ContextMenu::FontNotFound = false;
+				// Prepare every potentially throwing publication operation before
+				// changing either the active cache or MAP_MUID.  Retaining the previous
+				// cache first means a failed allocation cannot leave it unowned.
+				std::wstring next_runtime_config_path(application.Config.c_str(),
+					application.Config.length());
+				std::wstring next_runtime_generation = std::move(generation_after);
+				candidate->config_path = next_runtime_config_path;
+				candidate->runtime_generation = next_runtime_generation;
+				CACHE *previous = cache;
+				if(previous)
+					_retired_caches.reserve(_retired_caches.size() + 1);
+				if(previous)
+					_retired_caches.push_back(previous);
+
+				// Publish only a fully parsed and initialized cache.  Existing
+				// ContextMenu objects may still reference the old one, so defer its
+				// destruction until all active instances have gone away.
+				cache = candidate.release();
+				_runtime_generation.swap(next_runtime_generation);
+				_runtime_config_path.swap(next_runtime_config_path);
+				_last_write_time = write_after;
+				_config_state_initialized = true;
+
+				// These assignments are non-throwing and happen only after all setup
+				// that can discard the candidate has completed.
+				for(auto &entry : MAP_MUID)
+					entry.second.image = nullptr;
+				for(const auto &pending : pending_muid_images)
+					pending.uid->image = pending.image;
+
+				if(previous)
+				{
+					collect_retired_caches();
 				}
 
 				LastError = {};
@@ -134,11 +346,16 @@ namespace Nilesoft
 			}
 			catch(...)
 			{
+				if(directory_changed)
+					Path::CurrentDirectory(current_directory);
+				Status.Refresh = false;
+				Status.Error = cache == nullptr;
+				Status.Loaded = cache != nullptr;
 #ifdef _DEBUG
 				Logger::Exception(__func__);
 #endif
 			}
-			return false;
+			return cache != nullptr;
 		}
 
 		bool Initializer::uninit()
@@ -147,11 +364,20 @@ namespace Nilesoft
 			{
 				if(cache)
 				{
-					delete cache;
+					// ContextMenu instances retain pointers into their cache. Route the
+					// active cache through the same retired list used by reloads so a
+					// disable/uninitialize path cannot free it underneath Explorer.
+					_retired_caches.push_back(cache);
 					cache = nullptr;
 				}
 
-				MAP_MUID.clear();
+				_runtime_generation.clear();
+				_runtime_config_path.clear();
+				_last_write_time = 0;
+				_config_state_initialized = false;
+				collect_retired_caches();
+				if(ContextMenu::Processes.empty())
+					MAP_MUID.clear();
 			}
 			__except(EXCEPTION_EXECUTE_HANDLER)
 			{
@@ -164,6 +390,18 @@ namespace Nilesoft
 			Status.Refresh = false;
 			//Status->Unload = false;
 			return true;
+		}
+
+		void Initializer::collect_retired_caches()
+		{
+			// ContextMenu::Processes contains every live menu instance.  Do not
+			// release any retired cache while one could still dereference it.
+			if(!ContextMenu::Processes.empty())
+				return;
+
+			for(auto retired : _retired_caches)
+				delete retired;
+			_retired_caches.clear();
 		}
 
 		bool Initializer::query(int ch)
@@ -179,9 +417,12 @@ namespace Nilesoft
 				if(Status.Error && ch < 2)
 					return false;
 
-				if(Status.Refresh)
-					uninit();
-				
+				// Check the root timestamp at the same boundary that publishes a
+				// context-menu cache.  The transaction marker makes this a no-op
+				// while Studio is replacing its multi-file configuration.
+				if(Status.Loaded && !Status.Refresh && config_has_changed())
+					Status.Refresh = true;
+
 				return init();
 			}
 			__except(EXCEPTION_EXECUTE_HANDLER)
@@ -196,32 +437,31 @@ namespace Nilesoft
 		//determine config file changed
 		bool Initializer::config_has_changed()
 		{
-			bool res = false;
 			try
 			{
-				auto_handle hConfig = ::CreateFileW(application.Config, GENERIC_READ, FILE_SHARE_READ,
-													nullptr, OPEN_EXISTING, 0, nullptr);
-				if(hConfig)
-				{
-					FILETIME ft_lastWriteTime{};
-					auto last_write_time = reinterpret_cast<uintptr_t *>(&ft_lastWriteTime);
-					if(::GetFileTime(hConfig, nullptr, nullptr, &ft_lastWriteTime) && *last_write_time != 0)
-					{
-						if(*last_write_time != _last_write_time)
-						{
-							res = _last_write_time > 0;
-							_last_write_time = *last_write_time;
-						}
-					}
-				}
+				if(!_config_state_initialized || application.Config.empty())
+					return false;
+				if(Path::IsFileExists(application.Config + L".studio-transaction.json"))
+					return false;
+
+			uint64_t write_time = 0;
+			std::wstring generation;
+			const string generation_marker = application.Config + L".studio-generation";
+			if(!ReadFileWriteTime(application.Config.c_str(), write_time) ||
+				!ReadStudioGeneration(generation_marker.c_str(), generation))
+				return true;
+
+			const std::wstring current_path(application.Config.c_str(), application.Config.length());
+			return current_path != _runtime_config_path ||
+				write_time != _last_write_time || generation != _runtime_generation;
 			}
 			catch(...)
 			{
 #ifdef _DEBUG
 				Logger::Exception(__func__);
 #endif
+				return true;
 			}
-			return res;
 		}
 
 		bool Initializer::has_error(bool detect_changes)

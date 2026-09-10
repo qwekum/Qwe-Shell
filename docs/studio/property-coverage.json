@@ -1,0 +1,4454 @@
+{
+  "version": 1,
+  "scope": "Runtime menu properties and declarative SETTING trees; function inventory is separate.",
+  "sourceHashes": {
+    "Properties.cpp": "466C0BA4E26CA23513BB16E0E05DC34A83326CC1A01A040DC715A7E05296D1B1",
+    "Verification.cpp": "5195914D7166D2E633222741D9A7B2FBC3DA74AE888DE7CBE9CBF91FE9F7E1D7",
+    "Parser.cpp": "02923C47CB9A512EC5650F3827D23374AE32338532B5FDEA2EC1F47964A0F1CD",
+    "IdentHash.h": "9F8E4A116C63A28E26C4EFDF38A5786D18BF883CA688E3425CB4997168AE527A"
+  },
+  "properties": [
+    {
+      "name": "admin",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional",
+        "root": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "admin=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "root",
+        "command"
+      ]
+    },
+    {
+      "name": "arg",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "arg=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "args",
+      "contexts": {
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "args=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "argument",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "argument=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "arguments",
+      "contexts": {
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "arguments=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "checked",
+      "contexts": {
+        "item": "optional",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "checked=null"
+      },
+      "allowedOn": [
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "clsid",
+      "contexts": {
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "classIdSelector",
+      "expression": false,
+      "evidence": [
+        "Properties.cpp:808-851,891-897"
+      ],
+      "editor": {
+        "insertTemplate": "clsid=\"{00000000-0000-0000-0000-000000000000}\""
+      },
+      "allowedOn": [
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "cmd",
+      "contexts": {
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.explorer",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.explorer=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.line",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.line=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.powershell",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.powershell=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.prompt",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.prompt=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.ps",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.ps=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.pwsh",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.pwsh=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "cmd.shell",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "cmd.shell=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "col",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "col=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "column",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "column=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "command",
+      "contexts": {
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.explorer",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.explorer=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.line",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.line=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.powershell",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.powershell=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.prompt",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.prompt=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.ps",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.ps=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.pwsh",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.pwsh=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "command.shell",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:34-101,238-259;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "command.shell=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "commands",
+      "contexts": {
+        "item": "forbidden"
+      },
+      "visualKind": "commandSequence",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:234-237;Properties.cpp:593-616,673-678"
+      ],
+      "editor": {
+        "insertTemplate": "commands { cmd=\"\" }"
+      },
+      "allowedOn": [
+        "item"
+      ]
+    },
+    {
+      "name": "condition",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "condition=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "dir",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "dir=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "directory",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "directory=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "expanded",
+      "contexts": {
+        "menu": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "expanded=null"
+      },
+      "allowedOn": [
+        "menu"
+      ]
+    },
+    {
+      "name": "find",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "find=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "icon",
+      "contexts": {
+        "root": "optional",
+        "menu": "optional",
+        "item": "optional",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "icon=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "icon.cmd",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.cmd"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.disabled",
+      "contexts": {
+        "root": "forbidden",
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.disabled"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.enabled",
+      "contexts": {
+        "root": "forbidden",
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.enabled"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.inherit",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.inherit"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.nil",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.nil"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.none",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.none"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.null",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.null"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.parent",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "icon.parent"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "icon.sel",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "icon.sel=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "icon.select",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "icon.select=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "image",
+      "contexts": {
+        "root": "optional",
+        "menu": "optional",
+        "item": "optional",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "image=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "image.cmd",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.cmd"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.disabled",
+      "contexts": {
+        "root": "forbidden",
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.disabled"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.enabled",
+      "contexts": {
+        "root": "forbidden",
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.enabled"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.inherit",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.inherit"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.nil",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.nil"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.none",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.none"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.null",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.null"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.parent",
+      "contexts": {
+        "menu": "forbidden",
+        "item": "forbidden"
+      },
+      "visualKind": "flag",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "image.parent"
+      },
+      "allowedOn": [
+        "menu",
+        "item"
+      ]
+    },
+    {
+      "name": "image.sel",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "image.sel=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "image.select",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "image.select=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "in",
+      "contexts": {
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Properties.cpp:898-902"
+      ],
+      "editor": {
+        "insertTemplate": "in=null"
+      },
+      "allowedOn": [
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "invoke",
+      "contexts": {
+        "item": "optional",
+        "command": "optional",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "invoke=null"
+      },
+      "allowedOn": [
+        "item",
+        "command",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "keys",
+      "contexts": {
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "keys=null"
+      },
+      "allowedOn": [
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "location",
+      "contexts": {
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Properties.cpp:898-902"
+      ],
+      "editor": {
+        "insertTemplate": "location=null"
+      },
+      "allowedOn": [
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "menu",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "menu=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "mode",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "mode=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "move",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "move=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "parent",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "parent=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "path",
+      "contexts": {
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Properties.cpp:898-902"
+      ],
+      "editor": {
+        "insertTemplate": "path=null"
+      },
+      "allowedOn": [
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "pos",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "pos=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "position",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "position=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "sel",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "sel=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "sep",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional",
+        "modify": "optional",
+        "remove": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:930-941"
+      ],
+      "editor": {
+        "insertTemplate": "sep=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "separator",
+      "contexts": {
+        "menu": "optional",
+        "item": "optional",
+        "modify": "optional",
+        "remove": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:930-941"
+      ],
+      "editor": {
+        "insertTemplate": "separator=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "sub",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "sub=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "text",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "text=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "tip",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "tip=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "title",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "title=null"
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "type",
+      "contexts": {
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "typeSelector",
+      "expression": false,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800"
+      ],
+      "editor": {
+        "insertTemplate": "type=\"file\""
+      },
+      "allowedOn": [
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "verb",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "verb=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "vis",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "vis=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "visibility",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "visibility=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "wait",
+      "contexts": {
+        "item": "optional",
+        "command": "optional"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "wait=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    },
+    {
+      "name": "where",
+      "contexts": {
+        "root": "required",
+        "menu": "required",
+        "item": "required",
+        "separator": "required",
+        "modify": "required",
+        "remove": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Properties.cpp:853-999"
+      ],
+      "editor": {
+        "insertTemplate": "where=null"
+      },
+      "allowedOn": [
+        "root",
+        "menu",
+        "item",
+        "separator",
+        "modify",
+        "remove"
+      ]
+    },
+    {
+      "name": "window",
+      "contexts": {
+        "item": "required",
+        "command": "required"
+      },
+      "visualKind": "expression",
+      "expression": true,
+      "evidence": [
+        "Verification.cpp:104-285;Properties.cpp:618-800",
+        "Verification.cpp:34-101;Properties.cpp:449-539"
+      ],
+      "editor": {
+        "insertTemplate": "window=null"
+      },
+      "allowedOn": [
+        "item",
+        "command"
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "name": "theme",
+      "group": "theme",
+      "symbol": "IDENT_THEME",
+      "runtimeTarget": "&st->name",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 992
+      }
+    },
+    {
+      "name": "theme.name",
+      "group": "theme",
+      "symbol": "IDENT_NAME",
+      "runtimeTarget": "&st->name",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.name=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 993
+      }
+    },
+    {
+      "name": "theme.dark",
+      "group": "theme",
+      "symbol": "IDENT_DARK",
+      "runtimeTarget": "&st->dark",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.dark=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 994
+      }
+    },
+    {
+      "name": "theme.view",
+      "group": "theme",
+      "symbol": "IDENT_VIEW",
+      "runtimeTarget": "&st->view",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.view=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 995
+      }
+    },
+    {
+      "name": "theme.background",
+      "group": "theme",
+      "symbol": "IDENT_BACKGROUND",
+      "runtimeTarget": "&st->background.color",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 996
+      }
+    },
+    {
+      "name": "theme.background.color",
+      "group": "theme",
+      "symbol": "IDENT_COLOR",
+      "runtimeTarget": "&st->background.color",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.color=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 997
+      }
+    },
+    {
+      "name": "theme.background.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&st->background.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 998
+      }
+    },
+    {
+      "name": "theme.background.effect",
+      "group": "theme",
+      "symbol": "IDENT_EFFECT",
+      "runtimeTarget": "&st->background.effect",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.effect=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 999
+      }
+    },
+    {
+      "name": "theme.background.tintcolor",
+      "group": "theme",
+      "symbol": "IDENT_TINTCOLOR",
+      "runtimeTarget": "&st->background.tintcolor",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.tintcolor=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1000
+      }
+    },
+    {
+      "name": "theme.background.image",
+      "group": "theme",
+      "symbol": "IDENT_IMAGE",
+      "runtimeTarget": "&st->background.image",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.image=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1001
+      }
+    },
+    {
+      "name": "theme.background.gradient",
+      "group": "theme",
+      "symbol": "IDENT_GRADIENT",
+      "runtimeTarget": "nullptr",
+      "expression": false,
+      "hasChildren": true,
+      "visualKind": "settingsGroup",
+      "editor": {
+        "insertTemplate": "theme.background.gradient {}"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 956
+      }
+    },
+    {
+      "name": "theme.background.gradient.enabled",
+      "group": "theme",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&st->gradient.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.gradient.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 957
+      }
+    },
+    {
+      "name": "theme.background.gradient.linear",
+      "group": "theme",
+      "symbol": "IDENT_GRADIENT_LINEAR",
+      "runtimeTarget": "&st->gradient.linear",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.gradient.linear=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 958
+      }
+    },
+    {
+      "name": "theme.background.gradient.radial",
+      "group": "theme",
+      "symbol": "IDENT_GRADIENT_RADIAL",
+      "runtimeTarget": "&st->gradient.radial",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.gradient.radial=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 959
+      }
+    },
+    {
+      "name": "theme.background.gradient.stop",
+      "group": "theme",
+      "symbol": "IDENT_GRADIENT_STOP",
+      "runtimeTarget": "&st->gradient.stop",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.background.gradient.stop=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 960
+      }
+    },
+    {
+      "name": "theme.font",
+      "group": "theme",
+      "symbol": "IDENT_FONT",
+      "runtimeTarget": "&st->font.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.font=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 963
+      }
+    },
+    {
+      "name": "theme.font.size",
+      "group": "theme",
+      "symbol": "IDENT_SIZE",
+      "runtimeTarget": "&st->font.size",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.font.size=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 964
+      }
+    },
+    {
+      "name": "theme.font.name",
+      "group": "theme",
+      "symbol": "IDENT_NAME",
+      "runtimeTarget": "&st->font.name",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.font.name=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 965
+      }
+    },
+    {
+      "name": "theme.font.weight",
+      "group": "theme",
+      "symbol": "IDENT_FONT_WEIGHT",
+      "runtimeTarget": "&st->font.weight",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.font.weight=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 966
+      }
+    },
+    {
+      "name": "theme.font.italic",
+      "group": "theme",
+      "symbol": "IDENT_FONT_ITALIC",
+      "runtimeTarget": "&st->font.italic",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.font.italic=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 967
+      }
+    },
+    {
+      "name": "theme.item",
+      "group": "theme",
+      "symbol": "IDENT_ITEM",
+      "runtimeTarget": "nullptr",
+      "expression": false,
+      "hasChildren": true,
+      "visualKind": "settingsGroup",
+      "editor": {
+        "insertTemplate": "theme.item {}"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 827
+      }
+    },
+    {
+      "name": "theme.item.text",
+      "group": "theme",
+      "symbol": "IDENT_TEXT",
+      "runtimeTarget": "&st->item.text.color.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 828
+      }
+    },
+    {
+      "name": "theme.item.text.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->item.text.color.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 829
+      }
+    },
+    {
+      "name": "theme.item.text.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.text.color.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 830
+      }
+    },
+    {
+      "name": "theme.item.text.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->item.text.color.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 832
+      }
+    },
+    {
+      "name": "theme.item.text.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.text.color.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 833
+      }
+    },
+    {
+      "name": "theme.item.text.align",
+      "group": "theme",
+      "symbol": "IDENT_ALIGN",
+      "runtimeTarget": "&st->item.text.align",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.text.align=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 835
+      }
+    },
+    {
+      "name": "theme.item.back",
+      "group": "theme",
+      "symbol": "IDENT_BACK",
+      "runtimeTarget": "&st->item.back.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.back=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 837
+      }
+    },
+    {
+      "name": "theme.item.back.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->item.back.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.back.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 838
+      }
+    },
+    {
+      "name": "theme.item.back.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.back.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.back.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 839
+      }
+    },
+    {
+      "name": "theme.item.back.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->item.back.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.back.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 841
+      }
+    },
+    {
+      "name": "theme.item.back.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.back.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.back.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 842
+      }
+    },
+    {
+      "name": "theme.item.border",
+      "group": "theme",
+      "symbol": "IDENT_BORDER",
+      "runtimeTarget": "&st->item.border.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.border=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 845
+      }
+    },
+    {
+      "name": "theme.item.border.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->item.border.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.border.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 846
+      }
+    },
+    {
+      "name": "theme.item.border.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.border.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.border.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 847
+      }
+    },
+    {
+      "name": "theme.item.border.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->item.border.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.border.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 849
+      }
+    },
+    {
+      "name": "theme.item.border.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->item.border.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.border.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 850
+      }
+    },
+    {
+      "name": "theme.item.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&st->item.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 853
+      }
+    },
+    {
+      "name": "theme.item.radius",
+      "group": "theme",
+      "symbol": "IDENT_RADIUS",
+      "runtimeTarget": "&st->item.radius",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.radius=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 854
+      }
+    },
+    {
+      "name": "theme.item.prefix",
+      "group": "theme",
+      "symbol": "IDENT_PREFIX",
+      "runtimeTarget": "&st->item.prefix",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.prefix=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 855
+      }
+    },
+    {
+      "name": "theme.item.padding",
+      "group": "theme",
+      "symbol": "IDENT_PADDING",
+      "runtimeTarget": "&st->item.padding.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.padding=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 856
+      }
+    },
+    {
+      "name": "theme.item.padding.left",
+      "group": "theme",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&st->item.padding.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.padding.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 857
+      }
+    },
+    {
+      "name": "theme.item.padding.top",
+      "group": "theme",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&st->item.padding.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.padding.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 858
+      }
+    },
+    {
+      "name": "theme.item.padding.right",
+      "group": "theme",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&st->item.padding.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.padding.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 859
+      }
+    },
+    {
+      "name": "theme.item.padding.bottom",
+      "group": "theme",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&st->item.padding.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.padding.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 860
+      }
+    },
+    {
+      "name": "theme.item.margin",
+      "group": "theme",
+      "symbol": "IDENT_MARGIN",
+      "runtimeTarget": "&st->item.margin.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.margin=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 862
+      }
+    },
+    {
+      "name": "theme.item.margin.left",
+      "group": "theme",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&st->item.margin.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.margin.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 863
+      }
+    },
+    {
+      "name": "theme.item.margin.top",
+      "group": "theme",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&st->item.margin.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.margin.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 864
+      }
+    },
+    {
+      "name": "theme.item.margin.right",
+      "group": "theme",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&st->item.margin.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.margin.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 865
+      }
+    },
+    {
+      "name": "theme.item.margin.bottom",
+      "group": "theme",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&st->item.margin.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.item.margin.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 866
+      }
+    },
+    {
+      "name": "theme.shadow",
+      "group": "theme",
+      "symbol": "IDENT_SHADOW",
+      "runtimeTarget": "&st->shadow.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 870
+      }
+    },
+    {
+      "name": "theme.shadow.enabled",
+      "group": "theme",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&st->shadow.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 871
+      }
+    },
+    {
+      "name": "theme.shadow.size",
+      "group": "theme",
+      "symbol": "IDENT_SIZE",
+      "runtimeTarget": "&st->shadow.size",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow.size=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 872
+      }
+    },
+    {
+      "name": "theme.shadow.color",
+      "group": "theme",
+      "symbol": "IDENT_COLOR",
+      "runtimeTarget": "&st->shadow.color",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow.color=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 873
+      }
+    },
+    {
+      "name": "theme.shadow.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&st->shadow.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 874
+      }
+    },
+    {
+      "name": "theme.shadow.offset",
+      "group": "theme",
+      "symbol": "IDENT_OFFSET",
+      "runtimeTarget": "&st->shadow.offset",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.shadow.offset=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 875
+      }
+    },
+    {
+      "name": "theme.border",
+      "group": "theme",
+      "symbol": "IDENT_BORDER",
+      "runtimeTarget": "&st->border.size",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 878
+      }
+    },
+    {
+      "name": "theme.border.enabled",
+      "group": "theme",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&st->border.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 879
+      }
+    },
+    {
+      "name": "theme.border.size",
+      "group": "theme",
+      "symbol": "IDENT_SIZE",
+      "runtimeTarget": "&st->border.size",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.size=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 880
+      }
+    },
+    {
+      "name": "theme.border.color",
+      "group": "theme",
+      "symbol": "IDENT_COLOR",
+      "runtimeTarget": "&st->border.color",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.color=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 881
+      }
+    },
+    {
+      "name": "theme.border.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&st->border.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 882
+      }
+    },
+    {
+      "name": "theme.border.radius",
+      "group": "theme",
+      "symbol": "IDENT_RADIUS",
+      "runtimeTarget": "&st->border.radius",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.radius=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 883
+      }
+    },
+    {
+      "name": "theme.border.padding",
+      "group": "theme",
+      "symbol": "IDENT_PADDING",
+      "runtimeTarget": "&st->border.padding.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.padding=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 884
+      }
+    },
+    {
+      "name": "theme.border.padding.left",
+      "group": "theme",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&st->border.padding.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.padding.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 885
+      }
+    },
+    {
+      "name": "theme.border.padding.top",
+      "group": "theme",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&st->border.padding.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.padding.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 886
+      }
+    },
+    {
+      "name": "theme.border.padding.right",
+      "group": "theme",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&st->border.padding.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.padding.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 887
+      }
+    },
+    {
+      "name": "theme.border.padding.bottom",
+      "group": "theme",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&st->border.padding.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.border.padding.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 888
+      }
+    },
+    {
+      "name": "theme.separator",
+      "group": "theme",
+      "symbol": "IDENT_SEPARATOR",
+      "runtimeTarget": "&st->separator.color",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 892
+      }
+    },
+    {
+      "name": "theme.separator.color",
+      "group": "theme",
+      "symbol": "IDENT_COLOR",
+      "runtimeTarget": "&st->separator.color",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.color=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 893
+      }
+    },
+    {
+      "name": "theme.separator.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&st->separator.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 894
+      }
+    },
+    {
+      "name": "theme.separator.size",
+      "group": "theme",
+      "symbol": "IDENT_SIZE",
+      "runtimeTarget": "&st->separator.size",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.size=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 895
+      }
+    },
+    {
+      "name": "theme.separator.margin",
+      "group": "theme",
+      "symbol": "IDENT_MARGIN",
+      "runtimeTarget": "&st->separator.margin.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.margin=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 896
+      }
+    },
+    {
+      "name": "theme.separator.margin.left",
+      "group": "theme",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&st->separator.margin.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.margin.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 897
+      }
+    },
+    {
+      "name": "theme.separator.margin.top",
+      "group": "theme",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&st->separator.margin.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.margin.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 898
+      }
+    },
+    {
+      "name": "theme.separator.margin.right",
+      "group": "theme",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&st->separator.margin.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.margin.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 899
+      }
+    },
+    {
+      "name": "theme.separator.margin.bottom",
+      "group": "theme",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&st->separator.margin.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.separator.margin.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 900
+      }
+    },
+    {
+      "name": "theme.symbol",
+      "group": "theme",
+      "symbol": "IDENT_SYMBOL",
+      "runtimeTarget": "&st->symbol.color.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 904
+      }
+    },
+    {
+      "name": "theme.symbol.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->symbol.color.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 905
+      }
+    },
+    {
+      "name": "theme.symbol.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.color.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 906
+      }
+    },
+    {
+      "name": "theme.symbol.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->symbol.color.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 908
+      }
+    },
+    {
+      "name": "theme.symbol.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.color.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 909
+      }
+    },
+    {
+      "name": "theme.symbol.checkmark",
+      "group": "theme",
+      "symbol": "IDENT_CHECKMARK",
+      "runtimeTarget": "&st->symbol.checkmark.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.checkmark=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 911
+      }
+    },
+    {
+      "name": "theme.symbol.checkmark.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->symbol.checkmark.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.checkmark.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 912
+      }
+    },
+    {
+      "name": "theme.symbol.checkmark.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.checkmark.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.checkmark.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 913
+      }
+    },
+    {
+      "name": "theme.symbol.checkmark.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->symbol.checkmark.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.checkmark.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 915
+      }
+    },
+    {
+      "name": "theme.symbol.checkmark.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.checkmark.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.checkmark.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 916
+      }
+    },
+    {
+      "name": "theme.symbol.bullet",
+      "group": "theme",
+      "symbol": "IDENT_BULLET",
+      "runtimeTarget": "&st->symbol.bullet.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.bullet=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 919
+      }
+    },
+    {
+      "name": "theme.symbol.bullet.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->symbol.bullet.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.bullet.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 920
+      }
+    },
+    {
+      "name": "theme.symbol.bullet.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.bullet.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.bullet.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 921
+      }
+    },
+    {
+      "name": "theme.symbol.bullet.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->symbol.bullet.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.bullet.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 923
+      }
+    },
+    {
+      "name": "theme.symbol.bullet.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.bullet.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.bullet.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 924
+      }
+    },
+    {
+      "name": "theme.symbol.chevron",
+      "group": "theme",
+      "symbol": "IDENT_CHEVRON",
+      "runtimeTarget": "&st->symbol.chevron.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.chevron=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 927
+      }
+    },
+    {
+      "name": "theme.symbol.chevron.normal",
+      "group": "theme",
+      "symbol": "IDENT_NORMAL",
+      "runtimeTarget": "&st->symbol.chevron.normal",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.chevron.normal=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 928
+      }
+    },
+    {
+      "name": "theme.symbol.chevron.normal.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.chevron.normal_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.chevron.normal.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 929
+      }
+    },
+    {
+      "name": "theme.symbol.chevron.select",
+      "group": "theme",
+      "symbol": "IDENT_SELECT",
+      "runtimeTarget": "&st->symbol.chevron.select",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.chevron.select=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 931
+      }
+    },
+    {
+      "name": "theme.symbol.chevron.select.disabled",
+      "group": "theme",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&st->symbol.chevron.select_disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.symbol.chevron.select.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 932
+      }
+    },
+    {
+      "name": "theme.layout",
+      "group": "theme",
+      "symbol": "IDENT_LAYOUT",
+      "runtimeTarget": "nullptr",
+      "expression": false,
+      "hasChildren": true,
+      "visualKind": "settingsGroup",
+      "editor": {
+        "insertTemplate": "theme.layout {}"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 948
+      }
+    },
+    {
+      "name": "theme.layout.width",
+      "group": "theme",
+      "symbol": "IDENT_WIDTH",
+      "runtimeTarget": "&st->layout.width",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.layout.width=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 949
+      }
+    },
+    {
+      "name": "theme.layout.rtl",
+      "group": "theme",
+      "symbol": "IDENT_RTL",
+      "runtimeTarget": "&st->layout.rtl",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.layout.rtl=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 950
+      }
+    },
+    {
+      "name": "theme.layout.popup",
+      "group": "theme",
+      "symbol": "IDENT_POPUP",
+      "runtimeTarget": "&st->layout.popup.align",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.layout.popup=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 951
+      }
+    },
+    {
+      "name": "theme.layout.popup.align",
+      "group": "theme",
+      "symbol": "IDENT_ALIGN",
+      "runtimeTarget": "&st->layout.popup.align",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.layout.popup.align=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 952
+      }
+    },
+    {
+      "name": "theme.image",
+      "group": "theme",
+      "symbol": "IDENT_IMAGE",
+      "runtimeTarget": "&st->image.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 937
+      }
+    },
+    {
+      "name": "theme.image.enabled",
+      "group": "theme",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&st->image.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 938
+      }
+    },
+    {
+      "name": "theme.image.color",
+      "group": "theme",
+      "symbol": "IDENT_COLOR",
+      "runtimeTarget": "&st->image.color",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.color=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 939
+      }
+    },
+    {
+      "name": "theme.image.gap",
+      "group": "theme",
+      "symbol": "IDENT_GAP",
+      "runtimeTarget": "&st->image.gap",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.gap=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 940
+      }
+    },
+    {
+      "name": "theme.image.size",
+      "group": "theme",
+      "symbol": "IDENT_SIZE",
+      "runtimeTarget": "&st->image.size",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.size=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 941
+      }
+    },
+    {
+      "name": "theme.image.glyph",
+      "group": "theme",
+      "symbol": "IDENT_GLYPH",
+      "runtimeTarget": "&st->image.glyph",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.glyph=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 942
+      }
+    },
+    {
+      "name": "theme.image.scale",
+      "group": "theme",
+      "symbol": "IDENT_SCALE",
+      "runtimeTarget": "&st->image.scale",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.scale=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 943
+      }
+    },
+    {
+      "name": "theme.image.align",
+      "group": "theme",
+      "symbol": "IDENT_ALIGN",
+      "runtimeTarget": "&st->image.display",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.align=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 944
+      }
+    },
+    {
+      "name": "theme.image.display",
+      "group": "theme",
+      "symbol": "IDENT_DISPLAY",
+      "runtimeTarget": "&st->image.display",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.image.display=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 945
+      }
+    },
+    {
+      "name": "theme.tip",
+      "group": "theme",
+      "symbol": "IDENT_TIP",
+      "runtimeTarget": "&sets->tip.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 971
+      }
+    },
+    {
+      "name": "theme.tip.enabled",
+      "group": "theme",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&sets->tip.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 972
+      }
+    },
+    {
+      "name": "theme.tip.default",
+      "group": "theme",
+      "symbol": "IDENT_DEFAULT",
+      "runtimeTarget": "&sets->tip.normal",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.default=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 973
+      }
+    },
+    {
+      "name": "theme.tip.primary",
+      "group": "theme",
+      "symbol": "IDENT_PRIMARY",
+      "runtimeTarget": "&sets->tip.primary",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.primary=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 974
+      }
+    },
+    {
+      "name": "theme.tip.info",
+      "group": "theme",
+      "symbol": "IDENT_INFO",
+      "runtimeTarget": "&sets->tip.info",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.info=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 975
+      }
+    },
+    {
+      "name": "theme.tip.success",
+      "group": "theme",
+      "symbol": "IDENT_SUCCESS",
+      "runtimeTarget": "&sets->tip.success",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.success=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 976
+      }
+    },
+    {
+      "name": "theme.tip.warning",
+      "group": "theme",
+      "symbol": "IDENT_WARNING",
+      "runtimeTarget": "&sets->tip.warning",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.warning=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 977
+      }
+    },
+    {
+      "name": "theme.tip.danger",
+      "group": "theme",
+      "symbol": "IDENT_DANGER",
+      "runtimeTarget": "&sets->tip.danger",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.danger=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 978
+      }
+    },
+    {
+      "name": "theme.tip.border",
+      "group": "theme",
+      "symbol": "IDENT_BORDER",
+      "runtimeTarget": "&sets->tip.border",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.border=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 979
+      }
+    },
+    {
+      "name": "theme.tip.width",
+      "group": "theme",
+      "symbol": "IDENT_WIDTH",
+      "runtimeTarget": "&sets->tip.width",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.width=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 980
+      }
+    },
+    {
+      "name": "theme.tip.opacity",
+      "group": "theme",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&sets->tip.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 981
+      }
+    },
+    {
+      "name": "theme.tip.radius",
+      "group": "theme",
+      "symbol": "IDENT_RADIUS",
+      "runtimeTarget": "&sets->tip.radius",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.radius=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 982
+      }
+    },
+    {
+      "name": "theme.tip.time",
+      "group": "theme",
+      "symbol": "IDENT_TIME",
+      "runtimeTarget": "&sets->tip.time",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.time=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 983
+      }
+    },
+    {
+      "name": "theme.tip.padding",
+      "group": "theme",
+      "symbol": "IDENT_PADDING",
+      "runtimeTarget": "&sets->tip.padding.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.padding=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 984
+      }
+    },
+    {
+      "name": "theme.tip.padding.left",
+      "group": "theme",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&sets->tip.padding.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.padding.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 985
+      }
+    },
+    {
+      "name": "theme.tip.padding.top",
+      "group": "theme",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&sets->tip.padding.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.padding.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 986
+      }
+    },
+    {
+      "name": "theme.tip.padding.right",
+      "group": "theme",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&sets->tip.padding.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.padding.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 987
+      }
+    },
+    {
+      "name": "theme.tip.padding.bottom",
+      "group": "theme",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&sets->tip.padding.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "theme.tip.padding.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 988
+      }
+    },
+    {
+      "name": "settings",
+      "group": "settings",
+      "symbol": "CONFIG_SETTINGS",
+      "runtimeTarget": "&sets->priority",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1065
+      }
+    },
+    {
+      "name": "settings.priority",
+      "group": "settings",
+      "symbol": "IDENT_PRIORITY",
+      "runtimeTarget": "&sets->priority",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.priority=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1066
+      }
+    },
+    {
+      "name": "settings.showdelay",
+      "group": "settings",
+      "symbol": "IDENT_SHOWDELAY",
+      "runtimeTarget": "&sets->showdelay",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.showdelay=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1067
+      }
+    },
+    {
+      "name": "settings.screenshot",
+      "group": "settings",
+      "symbol": "IDENT_SCREENSHOT",
+      "runtimeTarget": "&sets->screenshot.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.screenshot=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1068
+      }
+    },
+    {
+      "name": "settings.screenshot.enabled",
+      "group": "settings",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&sets->screenshot.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.screenshot.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1069
+      }
+    },
+    {
+      "name": "settings.screenshot.directory",
+      "group": "settings",
+      "symbol": "IDENT_DIRECTORY",
+      "runtimeTarget": "&sets->screenshot.directory",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.screenshot.directory=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1070
+      }
+    },
+    {
+      "name": "settings.exclude",
+      "group": "settings",
+      "symbol": "IDENT_EXCLUDE",
+      "runtimeTarget": "&sets->exclude.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.exclude=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1072
+      }
+    },
+    {
+      "name": "settings.exclude.where",
+      "group": "settings",
+      "symbol": "IDENT_WHERE",
+      "runtimeTarget": "&sets->exclude.value",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.exclude.where=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1073
+      }
+    },
+    {
+      "name": "settings.exclude.window",
+      "group": "settings",
+      "symbol": "IDENT_WINDOW",
+      "runtimeTarget": "&sets->exclude.window",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.exclude.window=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1074
+      }
+    },
+    {
+      "name": "settings.exclude.process",
+      "group": "settings",
+      "symbol": "IDENT_PROCESS",
+      "runtimeTarget": "&sets->exclude.process",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.exclude.process=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1075
+      }
+    },
+    {
+      "name": "settings.tip",
+      "group": "settings",
+      "symbol": "IDENT_TIP",
+      "runtimeTarget": "&sets->tip.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1044
+      }
+    },
+    {
+      "name": "settings.tip.enabled",
+      "group": "settings",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&sets->tip.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1045
+      }
+    },
+    {
+      "name": "settings.tip.default",
+      "group": "settings",
+      "symbol": "IDENT_DEFAULT",
+      "runtimeTarget": "&sets->tip.normal",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.default=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1046
+      }
+    },
+    {
+      "name": "settings.tip.primary",
+      "group": "settings",
+      "symbol": "IDENT_PRIMARY",
+      "runtimeTarget": "&sets->tip.primary",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.primary=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1047
+      }
+    },
+    {
+      "name": "settings.tip.info",
+      "group": "settings",
+      "symbol": "IDENT_INFO",
+      "runtimeTarget": "&sets->tip.info",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.info=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1048
+      }
+    },
+    {
+      "name": "settings.tip.success",
+      "group": "settings",
+      "symbol": "IDENT_SUCCESS",
+      "runtimeTarget": "&sets->tip.success",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.success=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1049
+      }
+    },
+    {
+      "name": "settings.tip.warning",
+      "group": "settings",
+      "symbol": "IDENT_WARNING",
+      "runtimeTarget": "&sets->tip.warning",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.warning=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1050
+      }
+    },
+    {
+      "name": "settings.tip.danger",
+      "group": "settings",
+      "symbol": "IDENT_DANGER",
+      "runtimeTarget": "&sets->tip.danger",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.danger=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1051
+      }
+    },
+    {
+      "name": "settings.tip.border",
+      "group": "settings",
+      "symbol": "IDENT_BORDER",
+      "runtimeTarget": "&sets->tip.border",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.border=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1052
+      }
+    },
+    {
+      "name": "settings.tip.width",
+      "group": "settings",
+      "symbol": "IDENT_WIDTH",
+      "runtimeTarget": "&sets->tip.width",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.width=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1053
+      }
+    },
+    {
+      "name": "settings.tip.opacity",
+      "group": "settings",
+      "symbol": "IDENT_OPACITY",
+      "runtimeTarget": "&sets->tip.opacity",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.opacity=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1054
+      }
+    },
+    {
+      "name": "settings.tip.radius",
+      "group": "settings",
+      "symbol": "IDENT_RADIUS",
+      "runtimeTarget": "&sets->tip.radius",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.radius=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1055
+      }
+    },
+    {
+      "name": "settings.tip.time",
+      "group": "settings",
+      "symbol": "IDENT_TIME",
+      "runtimeTarget": "&sets->tip.time",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.time=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1056
+      }
+    },
+    {
+      "name": "settings.tip.padding",
+      "group": "settings",
+      "symbol": "IDENT_PADDING",
+      "runtimeTarget": "&sets->tip.padding.value",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.padding=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1057
+      }
+    },
+    {
+      "name": "settings.tip.padding.left",
+      "group": "settings",
+      "symbol": "IDENT_LEFT",
+      "runtimeTarget": "&sets->tip.padding.left",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.padding.left=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1058
+      }
+    },
+    {
+      "name": "settings.tip.padding.top",
+      "group": "settings",
+      "symbol": "IDENT_TOP",
+      "runtimeTarget": "&sets->tip.padding.top",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.padding.top=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1059
+      }
+    },
+    {
+      "name": "settings.tip.padding.right",
+      "group": "settings",
+      "symbol": "IDENT_RIGHT",
+      "runtimeTarget": "&sets->tip.padding.right",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.padding.right=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1060
+      }
+    },
+    {
+      "name": "settings.tip.padding.bottom",
+      "group": "settings",
+      "symbol": "IDENT_BOTTOM",
+      "runtimeTarget": "&sets->tip.padding.bottom",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.tip.padding.bottom=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1061
+      }
+    },
+    {
+      "name": "settings.modify",
+      "group": "settings",
+      "symbol": "IDENT_MODIFY",
+      "runtimeTarget": "&sets->modify_items.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1023
+      }
+    },
+    {
+      "name": "settings.modify.enabled",
+      "group": "settings",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&sets->modify_items.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1024
+      }
+    },
+    {
+      "name": "settings.modify.image",
+      "group": "settings",
+      "symbol": "MENU_IMAGE",
+      "runtimeTarget": "&sets->modify_items.image",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.image=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1025
+      }
+    },
+    {
+      "name": "settings.modify.title",
+      "group": "settings",
+      "symbol": "MENU_TITLE",
+      "runtimeTarget": "&sets->modify_items.title",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.title=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1026
+      }
+    },
+    {
+      "name": "settings.modify.visibility",
+      "group": "settings",
+      "symbol": "MENU_VISIBILITY",
+      "runtimeTarget": "&sets->modify_items.visibility",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.visibility=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1027
+      }
+    },
+    {
+      "name": "settings.modify.parent",
+      "group": "settings",
+      "symbol": "MENU_PARENT",
+      "runtimeTarget": "&sets->modify_items.parent",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.parent=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1028
+      }
+    },
+    {
+      "name": "settings.modify.position",
+      "group": "settings",
+      "symbol": "MENU_POSITION",
+      "runtimeTarget": "&sets->modify_items.position",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.position=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1029
+      }
+    },
+    {
+      "name": "settings.modify.separator",
+      "group": "settings",
+      "symbol": "MENU_SEPARATOR",
+      "runtimeTarget": "&sets->modify_items.separator",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.separator=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1030
+      }
+    },
+    {
+      "name": "settings.modify.auto",
+      "group": "settings",
+      "symbol": "IDENT_AUTO",
+      "runtimeTarget": "&sets->modify_items.auto_image_group",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.auto=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1031
+      }
+    },
+    {
+      "name": "settings.modify.remove",
+      "group": "settings",
+      "symbol": "IDENT_REMOVE",
+      "runtimeTarget": "nullptr",
+      "expression": false,
+      "hasChildren": true,
+      "visualKind": "settingsGroup",
+      "editor": {
+        "insertTemplate": "settings.modify.remove {}"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1032
+      }
+    },
+    {
+      "name": "settings.modify.remove.duplicate",
+      "group": "settings",
+      "symbol": "IDENT_DUPLICATE",
+      "runtimeTarget": "&sets->modify_items.remove.duplicate",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.remove.duplicate=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1033
+      }
+    },
+    {
+      "name": "settings.modify.remove.disabled",
+      "group": "settings",
+      "symbol": "IDENT_DISABLED",
+      "runtimeTarget": "&sets->modify_items.remove.disabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.remove.disabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1034
+      }
+    },
+    {
+      "name": "settings.modify.remove.separator",
+      "group": "settings",
+      "symbol": "IDENT_SEPARATOR",
+      "runtimeTarget": "&sets->modify_items.remove.separator",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.modify.remove.separator=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1035
+      }
+    },
+    {
+      "name": "settings.new",
+      "group": "settings",
+      "symbol": "CONFIG_NEW",
+      "runtimeTarget": "&sets->new_items.enabled",
+      "expression": true,
+      "hasChildren": true,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.new=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1039
+      }
+    },
+    {
+      "name": "settings.new.enabled",
+      "group": "settings",
+      "symbol": "IDENT_ENABLED",
+      "runtimeTarget": "&sets->new_items.enabled",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.new.enabled=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1040
+      }
+    },
+    {
+      "name": "settings.new.image",
+      "group": "settings",
+      "symbol": "MENU_IMAGE",
+      "runtimeTarget": "&sets->new_items.image",
+      "expression": true,
+      "hasChildren": false,
+      "visualKind": "expression",
+      "editor": {
+        "insertTemplate": "settings.new.image=null"
+      },
+      "source": {
+        "file": "src/dll/src/Parser/Parser.cpp",
+        "line": 1041
+      }
+    }
+  ],
+  "reviewNotes": [
+    "MENU_ID is accepted by verify(menu) but has no parse_properties/parse_properties_command handler; it is not offered as a working property.",
+    "MENU_CMDS is accepted by verify(menu) but parse_properties dispatch checks only MENU_COMMANDS; cmds is not offered as a working alias.",
+    "The root context records internal NativeMenuType::Main verification, not an independently authored root declaration; the current parse_config entry point creates menu/item/separator nodes.",
+    "Modify/remove parse their own property switch rather than verify(menu). Removal parses but discards styling/movement values.",
+    "Modify without CLSID requires a find/where selector and at least two effective properties; remove inserts visibility automatically.",
+    "Property identifiers accept dotted and hyphenated separators through parse_property_ident; the inventory uses dotted canonical forms.",
+    "Settings records come directly from SETTING initializers and preserve aliases pointing to the same runtime field. Expression does not imply evaluation during editing.",
+    "Source mappings and parser acceptance need validation with the exported DLL; this inventory alone does not establish runtime semantic equivalence or UI completion."
+  ]
+}

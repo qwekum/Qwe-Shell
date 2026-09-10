@@ -1,6 +1,7 @@
 #pragma once
 
 #include <oleacc.h>
+#include "StudioCapture.h"
 
 /*
 sent to: +0x18, dwItemData start with 0xaa0df00d before its submenu being populated
@@ -199,6 +200,7 @@ namespace Nilesoft
 			std::vector<uint32_t> parent;
 			std::vector<MenuItemInfo *> items;
 			std::vector<NativeMenu *> native_items;
+			StudioCaptureTrace trace;
 
 			std::vector<struct menuitem_t *> *sys_items=0;
 

@@ -1,5 +1,11 @@
 #pragma once
 
+#include "LanguageFrontend.h"
+
+#include <memory>
+#include <string>
+#include <string_view>
+
 namespace Nilesoft
 {
 	namespace Shell
@@ -26,6 +32,13 @@ namespace Nilesoft
 
 			std::vector<uint32_t> m_imports;
 			std::vector<std::unique_ptr<Lexer>> _imports;
+			StudioLanguage::Document m_studioSyntax;
+			std::wstring m_syntaxSource;
+			std::wstring m_syntaxPath;
+			std::unique_ptr<CACHE> m_ownedCache;
+			Application m_syntaxApplication;
+			bool m_syntaxOnly = false;
+			bool m_syntaxDiagnosticAdded = false;
 
 		private:
 
@@ -119,6 +132,9 @@ namespace Nilesoft
 			void parse_theme();
 			void parse_settings();
 			void parse_config();
+			void refresh_studio_syntax();
+			void append_studio_diagnostic();
+			void set_source_identity(NativeMenu *menu, size_t source_start);
 
 			bool is_lexer() const { return l == _imports.front().get(); };
 
@@ -181,13 +197,25 @@ namespace Nilesoft
 */
 
 		public:
+			struct SyntaxInput
+			{
+				std::wstring_view source;
+				std::wstring_view path = {};
+			};
+
 			Parser();
+			explicit Parser(CACHE *target_cache);
+			explicit Parser(SyntaxInput input);
 			~Parser();
 
 
 			bool			Load();
 			bool			HasError() const;
 			TokenError		Error() const;
+			// This view is built from the same reusable native front end that
+			// powers Shell Studio. Runtime object construction and evaluation stay
+			// on the existing semantic path below.
+			const StudioLanguage::Document &StudioSyntax() const;
 
 			size_t			Line() const;
 			size_t			Column() const;

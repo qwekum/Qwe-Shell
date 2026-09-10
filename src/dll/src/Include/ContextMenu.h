@@ -14,6 +14,7 @@ constexpr auto Windows_UI_FileExplorer = L"Windows.UI.FileExplorer.dll";
 #include "Include/Theme.h"
 #include <Library/PlutoVGWrap.h>
 #include "Include/Tip.h"
+#include "Include/StudioCapture.h"
 #include <stack>
 
 #define MF_ALLSTATE         0x00FF
@@ -92,12 +93,19 @@ namespace Nilesoft
 			int checked = 0;
 			ULONG_PTR dwItemData = 0;
 			HBITMAP image = nullptr;
+			// The source HMENU and native ordinal remain stable while this context
+			// owns the Explorer menu.  They let capture overlay static evaluations
+			// onto the lossless getter tree even when display filtering or moveto
+			// changes the real tree's order.
+			HMENU native_menu = nullptr;
+			uint32_t native_index = 0;
 			menuitem_t *parent = nullptr;
 			string path;
 			Position position = Position::Auto;
 			Visibility visibility = Visibility::Enabled;
 			std::vector<NativeMenu*> native_items;
 			std::vector<menuitem_t *> items;
+			StudioCaptureTrace trace;
 			bool is_toplevel = false;
 			~menuitem_t()
 			{
@@ -109,6 +117,29 @@ namespace Nilesoft
 			bool is_menu() const { return type == 1; }
 
 			uint32_t uid() const { return ui ? ui->id : hash; }
+		};
+
+		struct StudioCaptureTraceKey
+		{
+			HMENU menu = nullptr;
+			uint32_t index = 0;
+
+			bool operator==(const StudioCaptureTraceKey &other) const noexcept
+			{
+				return menu == other.menu && index == other.index;
+			}
+		};
+
+		struct StudioCaptureTraceKeyHash
+		{
+			size_t operator()(const StudioCaptureTraceKey &key) const noexcept
+			{
+				const auto menuHash = std::hash<uintptr_t>{}(
+					reinterpret_cast<uintptr_t>(key.menu));
+				const auto indexHash = std::hash<uint32_t>{}(key.index);
+				return menuHash ^ (indexHash + static_cast<size_t>(0x9e3779b9) +
+					(menuHash << 6) + (menuHash >> 2));
+			}
 		};
 
 		struct WND
@@ -701,6 +732,22 @@ plutovg_move_to(pluto, start.x, start.y);
 			std::unordered_map<uint32_t, menuitem_t *> __map_system_menu;
 
 			std::vector<menuitem_t *> __movable_system_items;
+			StudioCapture _studio_capture;
+			bool _studio_original_published = false;
+			bool _studio_real_enumeration_complete = false;
+			bool _studio_static_evaluation_complete = false;
+			bool _studio_capture_active_during_static_evaluation = false;
+			std::unordered_map<StudioCaptureTraceKey, StudioCaptureTrace,
+				StudioCaptureTraceKeyHash> _studio_evaluated_traces;
+
+		void retain_capture_evaluation(menuitem_t *item) noexcept;
+		void overlay_capture_evaluations(menuitem_t *item);
+		struct CaptureEvaluationScope
+		{
+			ContextMenu *owner;
+			menuitem_t *item;
+			~CaptureEvaluationScope() noexcept;
+		};
 
 		public:// functions
 
@@ -730,10 +777,13 @@ plutovg_move_to(pluto, start.x, start.y);
 
 			uint32_t invoke(CommandProperty *cmd_prop);
 			bool is_excluded();
+			StudioCaptureMetadata capture_metadata() const;
+			bool publish_original_capture_if_armed();
 			bool Initialize();
 			int Uninitialize();
 			int InvokeCommand(int id);	
-			void build_system_menuitems(HMENU hMenu, menuitem_t *menu, bool is_root = false);
+			void build_system_menuitems(HMENU hMenu, menuitem_t *menu,
+				bool is_root = false, bool capture_original = false);
 			void build_main_system_menuitems(menuitem_t *menu, bool is_root = false);
 
 

@@ -5,6 +5,131 @@ namespace Nilesoft
 {
 	namespace Shell
 	{
+		namespace
+		{
+			// The syntax host has no imported runtime symbol table.  Keep a root
+			// that is genuinely outside the built-in verifier inspectable so an
+			// imported definition can be reviewed without evaluation.  Known roots
+			// still enter verify_ident below, where argument counts and member
+			// shapes remain semantic diagnostics even in syntax-only mode.
+			bool IsKnownVerifyRoot(uint32_t id)
+			{
+				switch(id)
+				{
+					case IDENT_EVAL:
+					case IDENT_SEL:
+					case IDENT_SYS:
+					case IDENT_SYSTEM:
+					case IDENT_APP:
+					case IDENT_USER:
+					case IDENT_IO:
+					case IDENT_PATH:
+					case IDENT_STR:
+					case IDENT_MSG:
+					case IDENT_REG:
+					case IDENT_INI:
+					case IDENT_CLIPBOARD:
+					case IDENT_INPUT:
+					case IDENT_PACKAGE:
+					case IDENT_APPX:
+					case IDENT_UWP:
+					case IDENT_IMAGE:
+					case IDENT_ICON:
+					case IDENT_IMG:
+					case IDENT_SVG:
+					case IDENT_ID:
+					case IDENT_TITLE:
+					case IDENT_TIP:
+					case IDENT_CMD:
+					case IDENT_LAUNCH:
+					case IDENT_RUN:
+					case IDENT_EXEC:
+					case IDENT_SHELL:
+					case IDENT_THIS:
+					case IDENT_TYPE:
+					case IDENT_MODE:
+					case MENU_VIS:
+					case MENU_VISIBILITY:
+					case IDENT_SEP:
+					case IDENT_SEPARATOR:
+					case IDENT_POS:
+					case IDENT_KEY:
+					case IDENT_KEYS:
+					case IDENT_COLOR:
+					case IDENT_FONT:
+					case IDENT_VIEW:
+					case IDENT_THEME:
+					case IDENT_EFFECT:
+					case IDENT_WINDOW:
+					case IDENT_WND:
+					case IDENT_PROCESS:
+					case IDENT_COMMAND:
+					case IDENT_RANDOM:
+					case IDENT_REGEX:
+					case IDENT_INVOKE:
+					case IDENT_IF:
+					case IDENT_FOR:
+					case IDENT_FOREACH:
+					case IDENT_BREAK:
+					case IDENT_CONTINUE:
+					case IDENT_EQUAL:
+					case IDENT_GREATER:
+					case IDENT_LESS:
+					case IDENT_SHL:
+					case IDENT_SHR:
+					case IDENT_EQUALS:
+					case IDENT_CHAR:
+					case IDENT_PRINT:
+					case IDENT_QUOTE:
+					case IDENT_TOHEX:
+					case IDENT_LENGTH:
+					case IDENT_LEN:
+					case IDENT_TOINT:
+					case IDENT_TODOUBLE:
+					case IDENT_TOUINT:
+					case IDENT_TOFLOAT:
+					case IDENT_NOT:
+					case IDENT_NULL:
+					case IDENT_NIL:
+					case IDENT_TRUE:
+					case IDENT_YES:
+					case IDENT_OK:
+					case IDENT_FALSE:
+					case IDENT_NO:
+					case IDENT_DEFAULT:
+					case IDENT_AUTO:
+					case IDENT_BOOL:
+					case IDENT_NONE:
+					case IDENT_INHERIT:
+					case IDENT_PARENT:
+					case IDENT_BOTH:
+					case IDENT_TOP:
+					case IDENT_BOTTOM:
+					case IDENT_BEFORE:
+					case IDENT_AFTER:
+					case IDENT_HIDDEN:
+					case IDENT_REMOVE:
+					case IDENT_DISABLE:
+					case IDENT_DISABLED:
+					case IDENT_ENABLE:
+					case IDENT_ENABLED:
+					case IDENT_NORMAL:
+					case IDENT_SHOW:
+					case IDENT_VISIBLE:
+					case IDENT_MINIMIZED:
+					case IDENT_MAXIMIZED:
+					case IDENT_VIS_STATIC:
+					case IDENT_VIS_LABEL:
+					case IDENT_INDEXOF:
+					case IDENT_VAR:
+					case IDENT_LOC:
+						return true;
+					default:
+						return false;
+				}
+			}
+		}
+
 		ExpressionType Parser::make_error(TokenError tokenError, size_t column)
 		{
 			l->column = column;
@@ -350,6 +475,26 @@ namespace Nilesoft
 		ExpressionType Parser::verify_ident(const Ident &id, const size_t argc, bool hasdot)
 		{
 			if(id[0] == 0) return ExpressionType::None;
+			// Runtime imports provide names for MUID-style namespaces (titles and
+			// command IDs) and user-defined values may occupy the same spelling as
+			// built-in namespaces.  Studio deliberately does not resolve imports,
+			// so an uncalled two-part reference can remain an unresolved value. Keep
+			// calls and deeper member chains on the normal verifier path so known
+			// arity and shape errors remain diagnostics.
+			if(m_syntaxOnly && id.length() == 2 && argc == 0)
+			{
+				switch(id[0])
+				{
+					case IDENT_ID:
+					case IDENT_TITLE:
+					case IDENT_COMMAND:
+						return ExpressionType::Identifier;
+					default:
+						break;
+				}
+			}
+			if(m_syntaxOnly && !IsKnownVerifyRoot(id[0]))
+				return ExpressionType::Identifier;
 
 			const auto length = id.length();
 			/*auto result = [&](uint32_t index, bool condition = false)->ExpressionType

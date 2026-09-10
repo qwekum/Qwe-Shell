@@ -415,6 +415,11 @@ namespace Nilesoft
 
 		struct CACHE
 		{
+			// Immutable identity of the configuration generation that produced this
+			// cache.  ContextMenu instances can outlive a reload and must report the
+			// generation they retain rather than the process-global current one.
+			std::wstring config_path;
+			std::wstring runtime_generation;
 			Settings					settings;
 
 			struct {
