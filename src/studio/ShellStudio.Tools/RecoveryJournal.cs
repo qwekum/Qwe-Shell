@@ -244,12 +244,49 @@ public sealed class RecoveryJournal
                 else if (entry.Kind is not "file" and not "directory" and not "registry")
                     throw new InvalidDataException($"The recovery journal contains an unsupported entry kind '{entry.Kind}'.");
             }
+
+            RecoverThumbnailResources(fullJournal, environment, diagnostics);
         }
         catch (Exception ex)
         {
             diagnostics.Add(new Diagnostic("TOOL-JOURNAL-RECOVER", $"Recovery failed: {ex.Message}", Remedy: "Preserve the journal and inspect its manifest before retrying."));
         }
         return diagnostics;
+    }
+
+    private static void RecoverThumbnailResources(
+        string journalDirectory,
+        IToolEnvironment environment,
+        List<Diagnostic> diagnostics)
+    {
+        // FolderThumbnailResources owns its own typed record format and
+        // guarded hash/metadata restore. Dispatch only when that record type
+        // is present; generic journal entries must never guess at resource
+        // payloads or copy protected files themselves.
+        if (!FolderThumbnailResources.HasRecoveryRecords(journalDirectory)) return;
+
+        try
+        {
+            var result = FolderThumbnailResources.RecoverAsync(journalDirectory, environment)
+                .GetAwaiter().GetResult();
+            if (result.Succeeded) return;
+
+            diagnostics.Add(new Diagnostic(
+                "TOOL-THUMBNAIL-RECOVER",
+                $"Protected folder-thumbnail recovery failed: {result.Error ?? "The typed recovery backend did not report a reason."}",
+                Severity: "error",
+                File: result.RecoveryDirectory,
+                Remedy: "Preserve the journal and retry recovery from the reviewed, system-enabled operation host."));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            diagnostics.Add(new Diagnostic(
+                "TOOL-THUMBNAIL-RECOVER",
+                $"Protected folder-thumbnail recovery failed: {ex.Message}",
+                Severity: "error",
+                File: journalDirectory,
+                Remedy: "Preserve the journal and retry recovery from the reviewed, system-enabled operation host."));
+        }
     }
 
     private static void RestoreFileEntry(JournalEntry entry, IToolEnvironment environment, string journalDirectory)
@@ -444,6 +481,13 @@ internal static class PlanHasher
         builder.Append(request.Id).Append('\n');
         foreach (var item in request.Values.OrderBy(x => x.Key, StringComparer.OrdinalIgnoreCase))
             builder.Append(item.Key).Append('=').Append(item.Value).Append('\n');
+        var selection = request.Selection ?? OperationSelection.Empty;
+        builder.Append("selection-context=").Append(selection.Context).Append('\n');
+        builder.Append("selection-parent=").Append(selection.ParentPath).Append('\n');
+        builder.Append("selection-background=").Append(selection.IsBackground).Append('\n');
+        builder.Append("selection-desktop=").Append(selection.IsDesktop).Append('\n');
+        foreach (var path in selection.Paths ?? Array.Empty<string>())
+            builder.Append("selection-path=").Append(path).Append('\n');
         builder.Append(summary).Append('\n');
         foreach (var change in changes) builder.Append(change).Append('\n');
         foreach (var diagnostic in diagnostics) builder.Append(diagnostic.Code).Append(':').Append(diagnostic.Message).Append('\n');
