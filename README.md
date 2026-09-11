@@ -20,7 +20,7 @@ The C++ extension customizes the classic context menu with commands, submenus, m
 - `src/setup/`: WiX installer and custom actions.
 - `templates/` and `docs/`: configuration examples and documentation.
 - `src/studio/`: WPF Studio, shared configuration and operation services, native language service, tests, and build entry point.
-- Three retained donor submodules: `SetFolderType-main/`, `WinSetView-main/`, and `FolderThumbnailFix-main/`. The historical RightClickTools source mapping and all donor qualification limits remain in the [tool parity ledger](docs/studio/tool-parity.md).
+- Two retained donor submodules: `SetFolderType-main/` and `WinSetView-main/`. The historical RightClickTools and FolderThumbnailFix source mappings and all donor qualification limits remain in the [tool parity ledger](docs/studio/tool-parity.md).
 
 ## Build and run
 
