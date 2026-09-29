@@ -1,3 +1,7 @@
+<p align="center">
+  <img src=".github/assets/project-logo.png" alt="Qwe Shell logo" width="160" height="160">
+</p>
+
 [![Ceasefire Now](https://badge.techforpalestine.org/default)](https://techforpalestine.org/learn-more)
 
 [![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
