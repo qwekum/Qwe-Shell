@@ -1,7 +1,3 @@
-<p align="center">
-  <img src=".github/assets/project-logo.png" alt="Qwe Shell logo" width="160" height="160">
-</p>
-
 [![Ceasefire Now](https://badge.techforpalestine.org/default)](https://techforpalestine.org/learn-more)
 
 [![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
@@ -12,7 +8,7 @@ Powerful manager for Windows File Explorer context menu.
 <br>
 
 <p align="center">
- <img src="https://www.nilesoft.org/images/logo-256.png">
+ <img src=".github/assets/project-logo.png" alt="Qwe Shell logo" width="160" height="160">
  <br>
  <br>
 </p>
