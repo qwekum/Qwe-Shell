@@ -3,7 +3,7 @@
 [![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
 [![Nightly](https://img.shields.io/badge/Nightly-nightly.link-purple)](https://nightly.link/moudey/Shell/workflows/build/main)
 
-# [Shell](https://nilesoft.org)
+# [Qwe-Shell](https://nilesoft.org)
 Powerful manager for Windows File Explorer context menu.
 <br>
 
