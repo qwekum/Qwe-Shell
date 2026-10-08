@@ -1,9 +1,7 @@
 [![Ceasefire Now](https://badge.techforpalestine.org/default)](https://techforpalestine.org/learn-more)
 
-[![Build](../../actions/workflows/build.yml/badge.svg)](../../actions/workflows/build.yml)
-[![Nightly](https://img.shields.io/badge/Nightly-nightly.link-purple)](https://nightly.link/moudey/Shell/workflows/build/main)
 
-# [Qwe-Shell](https://nilesoft.org)
+# Qwe-Shell
 Powerful manager for Windows File Explorer context menu.
 <br>
 
@@ -43,14 +41,8 @@ Requirements
 
 Documentation
 ------------------
-Browse the [online documentation here.](https://nilesoft.org/docs)
 
-[<img src="https://devin.ai/assets/deepwiki-badge.png" alt="Ask DeepWiki.com" height="20"/>](https://deepwiki.com/moudey/Shell)
 
-Download
-------------------
-Download the latest version:  
-https://nilesoft.org/download
 
 Screenshots
 ------------------
@@ -69,7 +61,6 @@ Donate
 ------------------
 If you really love Shell and would like to see it continue to improve.
 
-[![Paypal](https://img.shields.io/badge/Donate-PayPal-blue.svg)](https://www.paypal.me/nilesoft)
-[![BuyMeACoffee](https://img.shields.io/badge/Donate-BuyMeACoffee-yellow.svg)](https://www.buymeacoffee.com/moudey)
+[BuyMeACoffee](buymeacoffee.com/qwekumk)
 
 
