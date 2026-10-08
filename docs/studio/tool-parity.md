@@ -2,7 +2,7 @@
 
 This ledger records the combined implementation and its remaining parity gaps.
 The narrower qualification draft intentionally excludes the twelve original
-review fixes; see [publication scope](pr-remediation.md#pr3-scope-and-dependencies).
+review fixes; see [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies).
 Registry and launch behavior in its isolated branch still needs those fixes.
 
 This ledger records the source evidence used to consolidate the four pinned

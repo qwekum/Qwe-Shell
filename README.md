@@ -6,7 +6,7 @@
 
 This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio has a Windows x64 source implementation, including the visual editor and consolidated tool services. The [1.9.20 candidate record](docs/studio/release-candidate-1.9.20.md) distinguishes current remediation evidence from the [historical local verification record](docs/studio/local-verification.md). Full Explorer, installer lifecycle, donor/runtime parity, ARM64 compilation, and human acceptance remain incomplete; this is not a qualified release.
 
-This stacked qualification change excludes the twelve original PR review fixes, which remain local. See [publication scope](docs/studio/pr-remediation.md#pr3-scope-and-dependencies) before treating combined qualification evidence as evidence for this branch.
+This stacked qualification change excludes the twelve original PR review fixes, which remain local. See [publication scope](docs/studio/pr-remediation.md#qualification-draft-scope-and-dependencies) before treating combined qualification evidence as evidence for this branch.
 
 The current remediation target is an unsigned **1.9.20** candidate combining
 the Studio and cloud PR changes with main. Historical checks do not qualify

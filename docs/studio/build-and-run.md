@@ -1,7 +1,7 @@
 # Build and run Shell Studio
 
 This qualification draft is stacked on the original Studio head and excludes
-the twelve original review fixes. The [publication scope](pr-remediation.md#pr3-scope-and-dependencies)
+the twelve original review fixes. The [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies)
 distinguishes its changes from the combined candidate and from PR2's cloud lane.
 The candidate record's historical package results do not qualify this branch.
 
@@ -300,7 +300,7 @@ dotnet run --project .\src\studio\ShellStudio.PreviewWorker.ClientTests\ShellStu
 
 The [candidate record](release-candidate-1.9.20.md) reports counts for the
 combined local overlay. The qualification draft's PR description reports its
-branch-specific checks separately; its [publication scope](pr-remediation.md#pr3-scope-and-dependencies)
+branch-specific checks separately; its [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies)
 excludes the twelve original fixes. See
 the [historical verification record](local-verification.md) for its earlier
 revision, and the [interface design record](design-system.md) for UI review gates.

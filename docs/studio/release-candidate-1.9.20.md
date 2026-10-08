@@ -2,11 +2,11 @@
 
 Status: **combined local candidate record; release acceptance blocked**.
 The twelve original corrections are implemented in that combined local overlay,
-but are intentionally excluded from the separate qualification draft PR3.
-PR3 contains the additional runtime, build, harness and documentation work and
+but are intentionally excluded from the separate [qualification draft](https://github.com/qwekum/Qwe-Shell/pull/4).
+That draft contains the additional runtime, build, harness and documentation work and
 is stacked on the original Studio PR head. Neither PR1 nor PR2 is updated by
-publishing PR3. Results below identify the combined candidate's source and
-package; they do not qualify the narrower PR3 branch or its excluded fixes.
+publishing the qualification draft. Results below identify the combined candidate's source and
+package; they do not qualify the narrower qualification branch or its excluded fixes.
 
 This is a local, uncommitted combined snapshot targeting main. It is not a
 published release or a merged revision. Public distribution and signing are
@@ -138,7 +138,7 @@ are in [PR remediation notes](pr-remediation.md).
 | Installer lifecycle | Build-6 scoped clean install, damaged repair, uninstall and reinstall passed, with seven preserved user-data categories. Old normal-MSI upgrade, equal/newer rejection, registration-failure recovery and failed upgrade recovery remain incomplete |
 | Persistent VM/physical session | Reboot, startup cleanup, legacy upgrade/recovery and physical-session scenarios blocked by unavailable approved VM |
 | Human/UI | Keyboard, Narrator, themes/high contrast, 100/150/200% DPI, monitor transitions, large graphs and direct editing acceptance blocked pending recorded human testing |
-| Publication | The separate PR3 branch and scoped draft publication are authorized. Publishing the combined candidate/original fixes, changing PR1/PR2, retargeting, review publication, merges, Actions, signing and distribution still require separate authorization |
+| Publication | The separate qualification branch and [draft PR4](https://github.com/qwekum/Qwe-Shell/pull/4) are published. Publishing the combined candidate/original fixes, changing PR1/PR2, retargeting, review publication, merges, Actions, signing and distribution still require separate authorization |
 
 ## Backup and rollback
 

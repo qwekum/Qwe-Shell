@@ -1,20 +1,22 @@
 # Prepared PR descriptions
 
-These descriptions are drafts for separately authorized GitHub publication.
-Retargeting, commits, pushes and merge history are not recorded by this file.
-Replace the final source/package identity only with observed evidence from the
+The PR1/PR2 descriptions below are drafts for separately authorized GitHub
+updates. Their retargeting and merge history are not recorded by this file.
+Replace their final source/package identity only with observed evidence from the
 [1.9.20 candidate record](release-candidate-1.9.20.md).
 
-## PR3 scope and dependencies
+## Qualification draft scope and dependencies
+
+The requested third pull request is published as draft [PR4](https://github.com/qwekum/Qwe-Shell/pull/4).
 
 The owner authorized a separate qualification draft containing today's work
 beyond the twelve original findings, including the additional runtime fixes.
 Its review base is PR1's `codex/preserve-studio` at
 `b8ee65cc73cc1d21db76bd1c419dbe5daec3ef2c`; it is not based on merged main.
-PR1 and PR2 remain unchanged preservation drafts. PR3 does not replace PR2's
+PR1 and PR2 remain unchanged preservation drafts. This draft does not replace PR2's
 offline cloud lane and does not contain its staged-index or README-LF fixes.
 
-PR3 includes intermediate parser spans; evidence versions on source-free capture
+It includes intermediate parser spans; evidence versions on source-free capture
 entries; valid dynamic-only submenu construction with actual production tests;
 five donor behavior regressions/corrections; sequential audited builds;
 test prerequisites and worker readiness; finite native-scroll assertions;
@@ -28,7 +30,7 @@ README LF, and cloud index verification. They must reach the appropriate PRs
 and pass independent review before those PRs can be merged safely.
 
 The candidate record's package hashes and tests describe the combined local
-overlay. Branch-specific PR3 checks are reported separately in its PR description;
+overlay. The qualification draft's checks are reported separately in its PR description;
 they cannot inherit unrelated combined checks as proof of this narrower branch.
 Full-plan review remains **revise** for the named omissions and acceptance gates.
 Publication of this draft does not authorize merges, retargeting other PRs,
