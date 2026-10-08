@@ -1,4 +1,5 @@
 #pragma once
+#include "PreviewPolicy.h"
 namespace Nilesoft
 {
 	namespace Shell
@@ -144,6 +145,7 @@ namespace Nilesoft
 			struct CACHE* Cache = nullptr;
 
 			bool Runtime = true;
+			PreviewPolicy* Preview = nullptr;
 			bool Break = false;
 			bool Continue = false;
 			uint32_t invoked = 0;

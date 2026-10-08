@@ -7,14 +7,28 @@ namespace ShellStudio.Core;
 public sealed class SourceFile
 {
     public string Path { get; }
+    public SourceParseRole ParseRole { get; }
     public byte[] OriginalBytes { get; private set; }
     public bool ExistedAtOpen { get; private set; }
     public string OriginalHash => Hash(OriginalBytes);
+    /// <summary>
+    /// Hash of the exact in-memory bytes that would be written by the next
+    /// apply.  Capture provenance must compare against this value so a dirty
+    /// document cannot accidentally accept evidence from an older source.
+    /// </summary>
+    public string CurrentHash => Hash(Bytes());
     public string Text { get; private set; }
     public Encoding Encoding { get; }
     public byte[] Preamble { get; }
     public string NewLine => Text.Contains("\r\n", StringComparison.Ordinal) ? "\r\n" : "\n";
     public SyntaxDocument Syntax { get; private set; }
+    /// <summary>
+    /// Monotonic in-memory revision for this source file.  It changes only
+    /// after a successful text replacement and is useful to reject stale
+    /// semantic or preview results.
+    /// </summary>
+    public long Revision { get; private set; }
+    public event Action<SourceFile>? Changed;
     private readonly ILanguageService language;
     private string originalText;
 
@@ -40,9 +54,11 @@ public sealed class SourceFile
         Utf1 = 10,
     }
 
-    public SourceFile(string path, byte[] bytes, ILanguageService language, bool? existed = null)
+    public SourceFile(string path, byte[] bytes, ILanguageService language, bool? existed = null,
+        SourceParseRole parseRole = SourceParseRole.Configuration)
     {
         Path = System.IO.Path.GetFullPath(path);
+        ParseRole = parseRole;
         OriginalBytes = bytes.ToArray();
         ExistedAtOpen = existed ?? (bytes.Length != 0 || File.Exists(Path));
         this.language = language;
@@ -64,15 +80,16 @@ public sealed class SourceFile
         if (!roundTrip.AsSpan().SequenceEqual(payload))
             throw new InvalidDataException("The configuration encoding cannot be round-tripped without data loss.");
         originalText = Text;
-        Syntax = language.Parse(Text);
+        Syntax = ParseText(Text);
         foreach (var node in AllNodes()) node.Id = NewIdentity();
     }
 
-    public static SourceFile Read(string path, ILanguageService language)
+    public static SourceFile Read(string path, ILanguageService language,
+        SourceParseRole parseRole = SourceParseRole.Configuration)
     {
         var info = new FileInfo(path);
         if (info.Length > 8 * 1024 * 1024) throw new InvalidDataException("Configuration exceeds the editor size limit.");
-        return new(path, File.ReadAllBytes(path), language, true);
+        return new(path, File.ReadAllBytes(path), language, true, parseRole);
     }
 
     public byte[] Bytes() => Text == originalText
@@ -240,10 +257,12 @@ public sealed class SourceFile
             int start = node.Start >= oldEnd ? node.Start + delta : node.Start;
             identities.TryAdd((start, node.Kind), node.Id);
         }
-        var syntax = language.Parse(text);
+        var syntax = ParseText(text);
         Text = text;
         Syntax = syntax;
         foreach (var node in AllNodes()) node.Id = identities.GetValueOrDefault((node.Start, node.Kind)) ?? NewIdentity();
+        Revision++;
+        Changed?.Invoke(this);
     }
 
     private byte[] EncodeText(string text)
@@ -258,13 +277,29 @@ public sealed class SourceFile
         }
     }
 
+    private SyntaxDocument ParseText(string text) => ParseRole == SourceParseRole.Localization
+        ? language.ParseLocalization(text)
+        : language.Parse(text);
+
     private static string NewIdentity() => "studio-" + Guid.NewGuid().ToString("N");
-    public SourceState CaptureState() => new(Text, AllNodes().Select(n => new NodeIdentity(n.Start, n.Kind, n.Id)).ToArray(), OriginalBytes.ToArray(), ExistedAtOpen);
+    public SourceState CaptureState() => new(Text, AllNodes().Select(n => new NodeIdentity(n.Start, n.Kind, n.Id)).ToArray(), OriginalBytes.ToArray(), ExistedAtOpen, ParseRole, originalText);
     public void RestoreState(SourceState state)
     {
+        if (state.ParseRole != ParseRole)
+            throw new InvalidDataException("Cannot restore a source file with a different parser role.");
         SetText(state.Text);
+        OriginalBytes = state.OriginalBytes.ToArray();
+        ExistedAtOpen = state.ExistedAtOpen;
+        originalText = state.OriginalText ?? DecodeOriginalText(state.OriginalBytes);
         var identities = state.Nodes.ToDictionary(n => (n.Start, n.Kind), n => n.Id);
         foreach (var node in AllNodes()) if (identities.TryGetValue((node.Start, node.Kind), out var id)) node.Id = id;
+    }
+
+    private string DecodeOriginalText(byte[] bytes)
+    {
+        if (bytes.Length < Preamble.Length || !bytes.AsSpan().StartsWith(Preamble))
+            throw new InvalidDataException("The saved source state does not match the file encoding.");
+        return Encoding.GetString(bytes.AsSpan(Preamble.Length));
     }
 
     public IEnumerable<SyntaxNode> AllNodes() => Descendants(Syntax.Nodes);
@@ -280,5 +315,12 @@ public sealed class SourceFile
     public string Value(SyntaxProperty property) => Slice(property.ValueStart, property.ValueLength);
 }
 
+public enum SourceParseRole
+{
+    Configuration,
+    Localization,
+}
+
 public sealed record NodeIdentity(int Start, string Kind, string Id);
-public sealed record SourceState(string Text, NodeIdentity[] Nodes, byte[] OriginalBytes, bool ExistedAtOpen);
+public sealed record SourceState(string Text, NodeIdentity[] Nodes, byte[] OriginalBytes, bool ExistedAtOpen,
+    SourceParseRole ParseRole = SourceParseRole.Configuration, string? OriginalText = null);

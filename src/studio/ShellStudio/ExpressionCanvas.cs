@@ -10,12 +10,26 @@ using ShellStudio.Core;
 
 namespace ShellStudio;
 
+/// <summary>
+/// Identifies the expression in the declaration that owns an editor.  The
+/// canvas uses this binding to parse the complete source document on every
+/// draft change, so grammar context and surrounding source remain available.
+/// </summary>
+public sealed record ExpressionSourceBinding(SourceFile File, SyntaxNode Owner, SyntaxProperty? Property = null)
+{
+    public int ValueStart => Property?.ValueStart ?? Owner.Expression?.Start ?? -1;
+    public int ValueLength => Property?.ValueLength ?? Owner.Expression?.Length ?? 0;
+    public string PropertyName => Property?.Name ?? Owner.Name;
+}
+
 /// <summary>Ordered expression tree rendered as movable cards. Layout changes never alter evaluation.</summary>
 public sealed class ExpressionCanvas : UserControl
 {
-    private const int SourceOffset = 11; // UTF-16 length of item(title= in Parse's wrapper.
+    private const int SyntheticSourceOffset = 11; // UTF-16 length of item(title= in the compatibility wrapper.
     private readonly ILanguageService language;
     private readonly Action<string> save;
+    private ExpressionSourceBinding? sourceBinding;
+    private int sourceOffset;
     private string expression;
     private ExpressionNode? root, selected;
     private IReadOnlyList<SyntaxToken> tokens = [];
@@ -33,14 +47,18 @@ public sealed class ExpressionCanvas : UserControl
     private readonly ScrollViewer viewport;
     private readonly Button saveButton, undoButton, redoButton;
     private readonly TextBlock zoomLabel = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 8, 6) };
+    private readonly TextBlock sourceContext = new() { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 6), MaxWidth = 360 };
     private bool updatingNavigation, fitted;
     private readonly Dictionary<string, List<Action>> connectionUpdates = [];
     private sealed record NodeChoice(ExpressionNode Node, string Label) { public override string ToString() => Label; }
 
     public ExpressionCanvas(ILanguageService language, string expression, Action<string> save,
-        IReadOnlyDictionary<string, NodePosition>? layout = null, Action<Dictionary<string, NodePosition>>? saveLayout = null)
+        IReadOnlyDictionary<string, NodePosition>? layout = null, Action<Dictionary<string, NodePosition>>? saveLayout = null,
+        ExpressionSourceBinding? sourceBinding = null)
     {
         this.language = language; this.expression = expression; this.save = save;
+        this.sourceBinding = sourceBinding;
+        sourceOffset = sourceBinding?.ValueStart ?? SyntheticSourceOffset;
         this.saveLayout = saveLayout;
         if (layout is not null) foreach (var item in layout) positions[item.Key] = new Point(item.Value.X, item.Value.Y);
         var grid = new Grid(); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(12) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(320), MinWidth = 280 });
@@ -53,6 +71,15 @@ public sealed class ExpressionCanvas : UserControl
         toolbar.Children.Add(Button("Arrange nodes", () => { positions.Clear(); Draw(); }));
         toolbar.Children.Add(Button("Fit view", FitView));
         toolbar.Children.Add(Button("Zoom −", () => Zoom(1 / 1.2))); toolbar.Children.Add(zoomLabel); toolbar.Children.Add(Button("Zoom +", () => Zoom(1.2)));
+        sourceContext.Text = sourceBinding is null
+            ? "Expression draft · validated in an isolated expression context"
+            : $"Source-bound · {System.IO.Path.GetFileName(sourceBinding.File.Path)} · {sourceBinding.PropertyName}";
+        sourceContext.ToolTip = sourceBinding is null
+            ? "This editor is not attached to a source declaration yet."
+            : sourceBinding.File.Path + "\n" + sourceBinding.PropertyName + " on " + sourceBinding.Owner.Kind;
+        sourceContext.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+        AutomationProperties.SetName(sourceContext, sourceBinding is null ? "Expression draft context" : "Owning source declaration");
+        toolbar.Children.Add(sourceContext);
         AutomationProperties.SetName(nodeNavigation, "Select expression node");
         nodeNavigation.SelectionChanged += (_, _) => { if (!updatingNavigation && nodeNavigation.SelectedItem is NodeChoice choice) SelectNode(choice.Node); };
         toolbar.Children.Add(nodeNavigation);
@@ -140,12 +167,120 @@ public sealed class ExpressionCanvas : UserControl
         if (selected is not null) SelectNode(selected);
         Zoom(1);
     }
+
+    /// <summary>
+    /// Rebinds a native property editor after the source operation has
+    /// created or reparsed its generated rule.  SourceFile preserves node
+    /// identities across an in-place replacement, but the SyntaxNode and
+    /// SyntaxProperty instances held by an open canvas are still snapshots;
+    /// subsequent edits must resolve the current document before mapping.
+    /// </summary>
+    public void RebindSource(ExpressionSourceBinding? binding, string? savedExpression = null)
+    {
+        if (savedExpression is not null) expression = savedExpression;
+        sourceBinding = binding;
+        sourceOffset = binding?.ValueStart ?? SyntheticSourceOffset;
+        sourceContext.Text = binding is null
+            ? "Expression draft · validated in an isolated expression context"
+            : $"Source-bound · {System.IO.Path.GetFileName(binding.File.Path)} · {binding.PropertyName}";
+        sourceContext.ToolTip = binding is null
+            ? "This editor is not attached to a source declaration yet."
+            : binding.File.Path + "\n" + binding.PropertyName + " on " + binding.Owner.Kind;
+        AutomationProperties.SetName(sourceContext, binding is null ? "Expression draft context" : "Owning source declaration");
+        Parse();
+    }
+    private SyntaxDocument ParseSource(string source) => sourceBinding?.File.ParseRole == SourceParseRole.Localization
+        ? language.ParseLocalization(source)
+        : language.Parse(source);
+
+    private bool TryParseExpression(string value, out SyntaxDocument parsed, out ExpressionNode? expressionRoot, out int valueStart)
+    {
+        if (sourceBinding is null)
+        {
+            parsed = language.Parse("item(title=" + value + ")");
+            expressionRoot = parsed.Nodes.FirstOrDefault()?.Properties.FirstOrDefault(p => p.Name == "title")?.Expression;
+            valueStart = SyntheticSourceOffset;
+            return true;
+        }
+
+        // Source bindings point at parser objects from the moment the canvas
+        // was opened.  A prior save can change the value length or replace the
+        // generated rule entirely, so resolve the owner/property from the
+        // current SourceFile before constructing the candidate document.
+        var currentOwner = sourceBinding.File.AllNodes().FirstOrDefault(node =>
+            node.Id.Equals(sourceBinding.Owner.Id, StringComparison.Ordinal) &&
+            node.Kind.Equals(sourceBinding.Owner.Kind, StringComparison.OrdinalIgnoreCase))
+            ?? sourceBinding.File.AllNodes().FirstOrDefault(node =>
+                node.Start == sourceBinding.Owner.Start &&
+                node.Kind.Equals(sourceBinding.Owner.Kind, StringComparison.OrdinalIgnoreCase));
+        if (currentOwner is null)
+        {
+            parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_OWNER_STALE", "The owning declaration could not be resolved in the current document.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+            expressionRoot = null;
+            valueStart = -1;
+            return false;
+        }
+
+        SyntaxProperty? currentProperty = null;
+        if (sourceBinding.Property is not null)
+        {
+            currentProperty = currentOwner.Properties.FirstOrDefault(item =>
+                item.Name.Equals(sourceBinding.Property.Name, StringComparison.OrdinalIgnoreCase));
+            if (currentProperty is null)
+            {
+                parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_PROPERTY_STALE", "The owning declaration no longer contains this expression property.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+                expressionRoot = null;
+                valueStart = -1;
+                return false;
+            }
+        }
+
+        // Refresh the held parser objects for the next save as well as this
+        // parse.  The binding remains tied to the stable node identity while
+        // its spans follow the current source text.
+        sourceBinding = sourceBinding with { Owner = currentOwner, Property = currentProperty };
+        valueStart = currentProperty?.ValueStart ?? currentOwner.Expression?.Start ?? -1;
+        int valueLength = currentProperty?.ValueLength ?? currentOwner.Expression?.Length ?? 0;
+        expressionRoot = null;
+        string source = sourceBinding.File.Text;
+        if (valueStart < 0 || valueLength < 0 || valueStart > source.Length - valueLength)
+        {
+            parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_SOURCE_STALE", "The owning declaration no longer contains the expression span.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+            return false;
+        }
+
+        string candidate = source[..valueStart] + value + source[(valueStart + valueLength)..];
+        parsed = ParseSource(candidate);
+        var owner = SourceFile.Descendants(parsed.Nodes).FirstOrDefault(node =>
+            node.Start == currentOwner.Start &&
+            node.Kind.Equals(currentOwner.Kind, StringComparison.OrdinalIgnoreCase));
+        if (owner is null)
+        {
+            parsed.Diagnostics.Add(new("EXPRESSION_OWNER_MISSING", "The owning declaration could not be located after parsing the edited document.", Remedy: "Close this editor and reopen the expression from the current declaration."));
+            return false;
+        }
+
+        if (sourceBinding.Property is not null)
+        {
+            var property = owner.Properties.FirstOrDefault(item =>
+                item.Name.Equals(currentProperty!.Name, StringComparison.OrdinalIgnoreCase));
+            expressionRoot = property?.Expression;
+            valueStart = property?.ValueStart ?? -1;
+        }
+        else
+        {
+            expressionRoot = owner.Expression;
+            valueStart = owner.Expression?.Start ?? -1;
+        }
+        return expressionRoot is not null && valueStart >= 0;
+    }
+
     private void Parse()
     {
         status.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
-        var parsed = language.Parse("item(title=" + expression + ")");
+        TryParseExpression(expression, out var parsed, out var parsedRoot, out sourceOffset);
         tokens = parsed.Tokens;
-        root = parsed.Nodes.FirstOrDefault()?.Properties.FirstOrDefault(p => p.Name == "title")?.Expression;
+        root = parsedRoot;
         var errors = parsed.Diagnostics.Where(d => d.Severity == "error").ToArray();
         bool oversized = root is not null && ExceedsVisualLimit(root);
         bool unmapped = !oversized && root is not null && ContainsUnknown(root);
@@ -162,7 +297,9 @@ public sealed class ExpressionCanvas : UserControl
             return;
         }
         selected = root; Draw(); UpdateControls();
-        status.Text = "Arrows follow ordered operands and arguments. Moving cards changes layout only. Expressions are never executed here.";
+        status.Text = sourceBinding is null
+            ? "Arrows follow ordered operands and arguments. Moving cards changes layout only. Expressions are never executed here."
+            : "Source declaration parsed with this draft. Arrows follow ordered operands and arguments; moving cards changes layout only. Expressions are never executed here.";
     }
     private static bool ExceedsVisualLimit(ExpressionNode root)
     {
@@ -270,8 +407,8 @@ public sealed class ExpressionCanvas : UserControl
         }
         if (node.Children.Count == 0)
         {
-            bool literal = node.Kind != "interpolationText" && Expressions.TryLiteral(node.Text, out _);
-            Expressions.TryLiteral(node.Text, out var value);
+            string value = "";
+            bool literal = node.Kind != "interpolationText" && Expressions.TryLiteral(node, out value);
             bool environment = node.Kind == "environment";
             var input = new TextBox { Text = environment ? node.Text.Trim('%') : literal ? value : node.Text, Margin = new Thickness(0, 0, 0, 8) };
             inspector.Children.Add(new TextBlock { Text = environment ? "Environment variable name" : node.Kind == "interpolationText" ? "Literal text segment" : literal ? "Text value" : "Value / identifier", Margin = new Thickness(0, 0, 0, 6) });
@@ -279,7 +416,7 @@ public sealed class ExpressionCanvas : UserControl
             inspector.Children.Add(input);
             inspector.Children.Add(Button("Update value", () => Replace(node, environment ? "%" + input.Text + "%" : literal ? Expressions.Quote(input.Text) : input.Text)));
         }
-        var kinds = new ComboBox { ItemsSource = new[] { "Text", "Number", "Boolean", "Variable", "Environment variable", "Function or value", "Member", "Index", "Group", "Binary operator", "Unary operator", "Condition", "Array", "Assignment", "Statement", "For loop", "For each loop", "Interpolation" }, SelectedIndex = 0, Margin = new Thickness(0, 15, 0, 8) };
+        var kinds = new ComboBox { ItemsSource = new[] { "Text", "Number", "Boolean", "Variable", "Environment variable", "Function or value", "Member", "Index", "Group", "Binary operator", "Unary operator", "Condition", "Array", "Assignment", "Statement", "For loop", "For each loop", "While loop", "Interpolation" }, SelectedIndex = 0, Margin = new Thickness(0, 15, 0, 8) };
         inspector.Children.Add(new TextBlock { Text = "Replace this node with", Margin = new Thickness(0, 16, 0, 0) });
         AutomationProperties.SetName(kinds, "Replacement node kind");
         inspector.Children.Add(kinds);
@@ -318,7 +455,7 @@ public sealed class ExpressionCanvas : UserControl
     private void ChangeOperator(ExpressionNode node, string value)
     {
         if (OperatorToken(node) is not { } token) return;
-        int start = token.Start - SourceOffset;
+        int start = token.Start - sourceOffset;
         Change(expression[..start] + value + expression[(start + token.Length)..]);
     }
     private static string BranchLabel(ExpressionNode node, int index) => node.Kind switch
@@ -376,15 +513,26 @@ public sealed class ExpressionCanvas : UserControl
             "Statement" => "{ value = 0 value }",
             "For loop" => "for(i = 0, i < 3, i)",
             "For each loop" => "foreach($value, sel.paths, $value)",
+            "While loop" => "while(true)",
             "Interpolation" => "'Selected: @sel.path'",
             _ => null
         };
         if (result is not null)
         {
             if (target.Kind == "interpolationText")
-                result = kind == "Text" && Expressions.TryLiteral(result, out var literalText) ? literalText : "@(" + result + ")";
+            {
+                string? literalText = kind == "Text" ? DecodeGeneratedLiteral(result) : null;
+                result = literalText is not null ? literalText : "@(" + result + ")";
+            }
             Replace(target, result);
         }
+    }
+    private string? DecodeGeneratedLiteral(string source)
+    {
+        var parsed = language.Parse("item(title=" + source + ")");
+        var expression = parsed.Nodes.FirstOrDefault()?.Properties
+            .FirstOrDefault(property => property.Name.Equals("title", StringComparison.OrdinalIgnoreCase))?.Expression;
+        return Expressions.TryLiteral(expression, out var value) ? value : null;
     }
     private static string? CreateText(Window window)
     {
@@ -450,7 +598,7 @@ public sealed class ExpressionCanvas : UserControl
         }
         else if (node.Kind == "environment" && !(text.StartsWith('%') && text.EndsWith('%')))
             text = "@(" + text + ")";
-        int offset = node.Start - SourceOffset;
+        int offset = node.Start - sourceOffset;
         if (offset < 0 || offset + node.Length > expression.Length) { status.Text = "Source mapping changed. Reopen the expression."; return; }
         Change(expression[..offset] + text + expression[(offset + node.Length)..]);
     }
@@ -460,14 +608,25 @@ public sealed class ExpressionCanvas : UserControl
     {
         if (root is null) return;
         var a = parent.Children[first]; var b = parent.Children[second];
-        int startA = a.Start - SourceOffset, startB = b.Start - SourceOffset;
+        int startA = a.Start - sourceOffset, startB = b.Start - sourceOffset;
         if (startA < 0 || startA + a.Length > startB || startB + b.Length > expression.Length) { status.Text = "These branches cannot be reordered without changing their parent structure."; return; }
         Change(expression[..startA] + b.Text + expression[(startA + a.Length)..startB] + a.Text + expression[(startB + b.Length)..]);
     }
     private void Change(string next)
     {
-        var parsed = language.Parse("item(title=" + next + ")");
-        if (parsed.Diagnostics.Any(d => d.Severity == "error")) { status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush"); status.Text = string.Join("\n", parsed.Diagnostics.Select(d => d.Code + ": " + d.Message)); return; }
+        // Validate the draft in the declaration that owns it.  The synthetic
+        // item(title=...) wrapper used by standalone drafts cannot see the
+        // owning definition's grammar context, bindings, or surrounding
+        // syntax and could accept an edit that the real source rejects.
+        bool valid = TryParseExpression(next, out var parsed, out var parsedRoot, out _);
+        var errors = parsed.Diagnostics.Where(d => d.Severity == "error").ToArray();
+        if (!valid || parsedRoot is null || errors.Length > 0)
+        {
+            status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+            status.Text = string.Join("\n", parsed.Diagnostics.Select(d => d.Code + ": " + d.Message));
+            if (status.Text.Length == 0) status.Text = "EXPRESSION_INVALID: The edited expression could not be mapped back to its owning declaration.";
+            return;
+        }
         undo.Push(expression); redo.Clear(); expression = next; Parse();
     }
 }

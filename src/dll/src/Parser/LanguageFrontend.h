@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -60,6 +61,10 @@ namespace Nilesoft::Shell::StudioLanguage
 		std::string id;
 		std::string kind;
 		std::string text;
+		// Set only when the runtime parser created a true constant string
+		// expression.  This is decoded by the native grammar; interpolated,
+		// variable, environment, and call expressions leave it unset.
+		std::optional<std::string> literalString;
 		int start = 0;
 		int length = 0;
 		std::vector<ExpressionNode> children;
@@ -108,6 +113,11 @@ namespace Nilesoft::Shell::StudioLanguage
 		// matching System.String indices on Windows and the Studio DTO contract.
 		Document Parse();
 
+		// Tokenize is the bounded lexical phase used by native declaration and
+		// property emitters.  It preserves trivia and source spelling, returns no
+		// declaration or expression nodes, and never evaluates or loads anything.
+		Document Tokenize();
+
 	private:
 		struct Cursor;
 		struct ExprResult;
@@ -128,6 +138,7 @@ namespace Nilesoft::Shell::StudioLanguage
 		bool limitDiagnosticAdded_ = false;
 
 		void Lex();
+		void CheckDelimiterNesting();
 		void ParseTopLevel(std::vector<Node>& into, std::size_t endToken = static_cast<std::size_t>(-1));
 		Node ParseDeclaration(std::size_t keywordToken);
 		Node ParseGenericDeclaration(std::size_t keywordToken, std::string kind);

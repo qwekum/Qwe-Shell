@@ -505,6 +505,7 @@ namespace Nilesoft
 		//file attributes
 		constexpr auto IDENT_READONLY = 0xF952C623U;
 		constexpr auto IDENT_TOFILE = 0x1E87C948U;
+		constexpr auto IDENT_TOJSON = 0x1E8A25C2U;
 		constexpr auto IDENT_LNK = 0x0B888CEAU;
 		constexpr auto IDENT_LNK_TARGET = 0x1D90FD6CU;
 		constexpr auto IDENT_LNKTARGET = 0xDD2F0D11U;

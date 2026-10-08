@@ -26,6 +26,7 @@ $packageStudio = Join-Path $packageBin 'studio'
 $packageToolHost = Join-Path $packageStudio 'ToolHost'
 $solution = Join-Path $repoRoot 'src\Shell.sln'
 $languageProject = Join-Path $studioRoot 'native\ShellStudio.Language.vcxproj'
+$previewProject = Join-Path $studioRoot 'native\ShellStudio.PreviewWorker.vcxproj'
 $studioProject = Join-Path $studioRoot 'ShellStudio\ShellStudio.csproj'
 $toolHostProject = Join-Path $studioRoot 'ShellStudio.ToolHost\ShellStudio.ToolHost.csproj'
 $wixProject = Join-Path $repoRoot 'src\setup\wix\setup.wixproj'
@@ -64,16 +65,16 @@ function Invoke-NativeBuild([string]$target, [string]$intDir) {
     if ($LASTEXITCODE -ne 0) { throw "Native $target build failed with exit code $LASTEXITCODE." }
 }
 
-function Invoke-LanguageBuild {
+function Invoke-StudioNativeBuild([string]$project, [string]$name, [string]$outputName) {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) { throw 'Visual Studio vswhere.exe was not found.' }
     $vsPath = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath).Trim()
     if ([string]::IsNullOrWhiteSpace($vsPath)) { throw 'A Visual Studio C++ x64 installation was not found.' }
     $vsDevCmd = Join-Path $vsPath 'Common7\Tools\VsDevCmd.bat'
-    $languageOut = Join-Path $nativeRoot 'studio-language'
-    $languageInt = Join-Path $nativeRoot 'obj\studio-language'
+    $languageOut = Join-Path $nativeRoot $name
+    $languageInt = Join-Path $nativeRoot "obj\$name"
     $languageArguments = @(
-        $languageProject, '/m', "/p:Configuration=$Configuration", '/p:Platform=x64',
+        $project, '/m', "/p:Configuration=$Configuration", '/p:Platform=x64',
         "/p:PlatformToolset=$PlatformToolset", "/p:OutDir=$languageOut\\", "/p:IntDir=$languageInt\\", '/v:minimal'
     )
     $escaped = $languageArguments | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }
@@ -81,9 +82,9 @@ function Invoke-LanguageBuild {
     # Keep build diagnostics visible without allowing MSBuild's output to
     # become function output.  The caller must receive exactly one path.
     & cmd.exe /d /s /c $command 2>&1 | Out-Host
-    if ($LASTEXITCODE -ne 0) { throw "Studio language build failed with exit code $LASTEXITCODE." }
-    $languageDll = Join-Path $languageOut 'ShellStudio.Language.dll'
-    if (-not (Test-Path -LiteralPath $languageDll)) { throw "Studio language output was not produced: $languageDll" }
+    if ($LASTEXITCODE -ne 0) { throw "Studio $name build failed with exit code $LASTEXITCODE." }
+    $languageDll = Join-Path $languageOut $outputName
+    if (-not (Test-Path -LiteralPath $languageDll)) { throw "Studio native output was not produced: $languageDll" }
     return $languageDll
 }
 
@@ -114,11 +115,13 @@ try {
     Invoke-NativeBuild 'dll' (Join-Path $nativeRoot 'obj\dll')
     Invoke-NativeBuild 'exe' (Join-Path $nativeRoot 'obj\exe')
     if ($Architecture -eq 'x64') {
-        $languageDll = Invoke-LanguageBuild
+        $languageDll = Invoke-StudioNativeBuild $languageProject 'studio-language' 'ShellStudio.Language.dll'
+        $previewWorker = Invoke-StudioNativeBuild $previewProject 'preview-worker' 'ShellStudio.PreviewWorker.exe'
         Invoke-Dotnet @('restore', $studioProject, '-r', 'win-x64')
-        Invoke-Dotnet @('publish', $studioProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-o', $studioPublish, "/p:NativeLanguagePath=$languageDll")
+        Invoke-Dotnet @('publish', $studioProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-o', $studioPublish, "/p:NativeLanguagePath=$languageDll", "/p:PreviewWorkerPath=$previewWorker")
         if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.exe'))) { throw 'Self-contained Studio publication did not produce ShellStudio.exe.' }
         if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.Language.dll'))) { throw 'Self-contained Studio publication did not include ShellStudio.Language.dll.' }
+        if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.PreviewWorker.exe'))) { throw 'Studio publication did not include ShellStudio.PreviewWorker.exe.' }
 
         Invoke-Dotnet @('restore', $toolHostProject, '-r', 'win-x64')
         Invoke-Dotnet @('publish', $toolHostProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-o', $toolHostPublish)

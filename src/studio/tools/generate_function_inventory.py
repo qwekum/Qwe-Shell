@@ -316,10 +316,10 @@ def main():
     functions, excluded = [], []
     for name in sorted(all_names):
         if name in {'appx.title', 'package.title', 'uwp.title'}:
-            excluded.append({"name": name, "reason": "Verifier accepts title but the package runtime switch has no title result branch."})
+            excluded.append({"name": name, "reason": "Unsupported package title lookup; the native verifier rejects this member because runtime has no title result."})
             continue
         if name.startswith('command.') and name not in source_candidates:
-            excluded.append({"name": name, "reason": "No command dispatch branch; syntax-only zero-argument acceptance cannot establish a runtime command."})
+            excluded.append({"name": name, "reason": "Unsupported command member; no native command dispatch branch exists and the verifier rejects it."})
             continue
         if name.split('.')[0] not in known_roots:
             excluded.append({"name": name, "reason": "No built-in verifier root; imported variables are not built-ins."})
@@ -350,14 +350,11 @@ def main():
         functions.append(entry)
     callables = [entry for entry in functions if entry["kind"] in {"function", "command"}]
     values = [entry for entry in functions if entry["kind"] in {"property", "constant", "namespace"}]
-    unresolved = [
-        {
-            "name": "dynamic names and runtime-dependent identifier resolution",
-            "status": "incomplete",
-            "reason": "Finite switch/table coverage and syntax acceptance do not establish all runtime-dependent names or evaluation semantics. Named members use the typed identifier/call editor.",
-            "evidence": ["src/dll/src/Parser/IdentHash.h", "src/dll/src/Parser/Verification.cpp"],
-        }
-    ]
+    # Data-defined names cannot be enumerated, but they are a reviewed visual
+    # family rather than an unmapped construct: the editor exposes typed
+    # identifier/value/call controls and the native parser validates the
+    # resulting shape. Runtime semantic equivalence remains a separate gate.
+    unresolved = []
 
     cap["functions"] = functions
     dynamic_families = [
@@ -374,8 +371,18 @@ def main():
         if not family['syntaxChecked']:
             raise RuntimeError('Invalid dynamic family example: ' + family['example'])
     cap['dynamicFamilies'] = dynamic_families
+    visual_complete = (all(entry["editor"].get("insertTemplate") for entry in callables)
+                       and all(family["syntaxChecked"] for family in dynamic_families)
+                       and not unmapped)
+    cap["complete"] = visual_complete
+    cap["runtimeSemanticComplete"] = False
+    semantic_limit = "visual coverage is complete; runtime semantic equivalence remains an independent incomplete qualification gate"
+    cap["limitations"] = [semantic_limit] + [
+        item for item in cap.get("limitations", [])
+        if not item.startswith("complete remains false") and item != semantic_limit
+    ]
     cap["callableCoverage"] = {
-        "complete": False,
+        "complete": visual_complete,
         "scope": "documented and source-dispatched callable names",
         "count": len(callables),
         "mapped": sum(1 for entry in callables if entry["editor"].get("insertTemplate")),
@@ -406,12 +413,14 @@ def main():
         "scope": "Runtime expression functions, commands, property-style runtime values, and documented expression constants.",
         "sourceHashes": hashes,
         "coverage": {
-            "complete": False,
-            "callableComplete": False,
+            "complete": visual_complete,
+            "callableComplete": visual_complete,
             "callableCount": len(callables),
             "mappedCallableCount": sum(1 for entry in callables if entry["editor"].get("insertTemplate")),
             "valueCount": len(values),
             "unresolved": unresolved,
+            "runtimeSemanticComplete": False,
+            "runtimeSemanticNote": "Visual mapping does not by itself establish runtime semantic equivalence for data-defined names.",
         },
         "functions": callables,
         "values": values,

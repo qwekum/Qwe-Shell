@@ -386,7 +386,6 @@ namespace Nilesoft
 					case MENU_INVOKE:
 					case MENU_CHECKED:
 						return check(1, auto_signer);
-
 					case MENU_ARG:
 					case MENU_ARGUMENT:
 					case MENU_VERB:
@@ -476,7 +475,7 @@ namespace Nilesoft
 		{
 			if(id[0] == 0) return ExpressionType::None;
 			// Runtime imports provide names for MUID-style namespaces (titles and
-			// command IDs) and user-defined values may occupy the same spelling as
+			// IDs) and user-defined values may occupy the same spelling as
 			// built-in namespaces.  Studio deliberately does not resolve imports,
 			// so an uncalled two-part reference can remain an unresolved value. Keep
 			// calls and deeper member chains on the normal verifier path so known
@@ -487,7 +486,6 @@ namespace Nilesoft
 				{
 					case IDENT_ID:
 					case IDENT_TITLE:
-					case IDENT_COMMAND:
 						return ExpressionType::Identifier;
 					default:
 						break;
@@ -641,6 +639,8 @@ namespace Nilesoft
 							return check(argc <= 1, 1);
 						case IDENT_TOFILE:
 							return check(argc <= 3, 1);
+						case IDENT_TOJSON:
+							return check(argc == 0, 1);
 						case IDENT_PARENT:
 						case IDENT_LOCATION:
 						{
@@ -660,7 +660,7 @@ namespace Nilesoft
 						}
 						case IDENT_INDEX:
 						case IDENT_I:
-							return check(argc >= 1 || argc <= 2, 1);
+							return check(argc >= 1 && argc <= 2, 1);
 						case IDENT_FILE:
 						{
 							switch(id[2])
@@ -1064,6 +1064,8 @@ namespace Nilesoft
 				{
 					switch(id[1])
 					{
+						case IDENT_EXT:
+							return check(argc == 1, 1);
 						case IDENT_ROOT:
 						case IDENT_NAME:
 						case IDENT_TITLE:
@@ -1379,7 +1381,6 @@ namespace Nilesoft
 						case IDENT_ID:
 						case IDENT_PATH:
 						case IDENT_NAME:
-						case IDENT_TITLE:
 						case IDENT_FAMILY:
 						case IDENT_RUN:
 						case IDENT_LAUNCH:
@@ -2001,7 +2002,7 @@ namespace Nilesoft
 					return error_at(0);
 				}
 				case IDENT_IF:
-					return check(argc >= 1  || argc <= 3);
+					return check(argc >= 1 && argc <= 3);
 				case IDENT_FOR:
 				case IDENT_FOREACH:
 					return check(argc == 3, 0);

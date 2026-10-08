@@ -20,12 +20,14 @@ public sealed class ConfigurationTransactions
         backups = Path.GetFullPath(backupRoot ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QweShell", "Backups"));
     }
 
-    public ApplyResult Apply(IReadOnlyList<FileEdit> edits, CancellationToken cancellationToken = default)
+    public ApplyResult Apply(IReadOnlyList<FileEdit> edits, CancellationToken cancellationToken = default,
+        IReadOnlyDictionary<string, string>? dependencies = null)
     {
         string id = Guid.NewGuid().ToString("N");
         var journal = new TransactionJournal { Id = id };
         var stages = new List<string>();
         var diagnostics = new List<Diagnostic>();
+        var dependencyLeases = new List<FileStream>();
         var directory = Path.Combine(backups, id);
         using var mutex = new Mutex(false, "Local\\QweShell.Apply." + SourceFile.Hash(Encoding.UTF8.GetBytes(root.ToUpperInvariant())));
         bool locked = false, marked = false;
@@ -40,6 +42,25 @@ public sealed class ConfigurationTransactions
                 throw new InvalidDataException("The transaction exceeds its size limit.");
             if (edits.Select(e => Path.GetFullPath(e.Path)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != edits.Count)
                 throw new InvalidDataException("A transaction cannot write the same file twice.");
+
+            if (dependencies is { Count: > 512 }) throw new InvalidDataException("Too many reviewed dependencies.");
+            var editedPaths = new HashSet<string>(edits.Select(e => Path.GetFullPath(e.Path)), StringComparer.OrdinalIgnoreCase);
+            foreach (var dependency in dependencies ?? new Dictionary<string, string>())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ValidateTarget(dependency.Key);
+                if (!ValidHash(dependency.Value) && dependency.Value != "MISSING")
+                    throw new InvalidDataException("Invalid reviewed dependency hash.");
+                CheckHash(dependency.Key, dependency.Value);
+                if (editedPaths.Contains(Path.GetFullPath(dependency.Key))) continue;
+                if (dependency.Value == "MISSING") throw new IOException("A required unchanged dependency is missing: " + dependency.Key);
+                // Windows denies writes and replacement while this lease is held,
+                // keeping unchanged imports bound to the version actually reviewed.
+                var lease = new FileStream(dependency.Key, FileMode.Open, FileAccess.Read, FileShare.Read);
+                dependencyLeases.Add(lease);
+                if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(lease)) != dependency.Value.ToUpperInvariant())
+                    throw new IOException("A dependency changed during review: " + dependency.Key);
+            }
 
             foreach (var edit in edits)
             {
@@ -98,6 +119,7 @@ public sealed class ConfigurationTransactions
         }
         finally
         {
+            foreach (var lease in dependencyLeases) lease.Dispose();
             foreach (var stage in stages)
             {
                 try { if (File.Exists(stage)) File.Delete(stage); }
@@ -153,6 +175,8 @@ public sealed class ConfigurationTransactions
             {
                 ValidateTarget(file.Path);
                 if (!ValidBackupName(file.BackupFile)) throw new InvalidDataException("Invalid backup name.");
+                if (Directory.Exists(file.Path))
+                    throw new IOException("A directory exists at the transaction's file target; automatic rollback is unsafe.");
                 string current = File.Exists(file.Path) ? SourceFile.Hash(File.ReadAllBytes(file.Path)) : "MISSING";
                 if (current == file.OriginalHash) continue;
                 if (current != file.NewHash) throw new IOException("A newer external edit prevents automatic rollback.");

@@ -45,8 +45,20 @@ public static class FolderThumbnailResourcesTests
             var initialSecurity = SecurityDescriptor(target);
             var beforeResources = ResourceSnapshot(target);
             var initial = FolderThumbnailResources.Inspect(target, full, @default);
+            var reviewEnvironment = new WindowsToolEnvironment(new ToolEnvironmentOptions(
+                ToolMutationMode.ReviewOnly, JournalRoot: recovery));
+            try
+            {
+                _ = await FolderThumbnailResources.SetAsync(target, full, initialHash, recovery,
+                    reviewEnvironment, CancellationToken.None);
+                throw new InvalidOperationException("direct resource update bypassed the reviewed mutation boundary");
+            }
+            catch (MutationDeniedException) { }
+            Ensure(HashFile(target) == initialHash, "denied direct resource update changed the target");
+            var mutationEnvironment = new WindowsToolEnvironment(new ToolEnvironmentOptions(
+                ToolMutationMode.AllowSystem, JournalRoot: recovery));
 
-            var setFull = await FolderThumbnailResources.SetAsync(target, full, initialHash, recovery, CancellationToken.None);
+            var setFull = await FolderThumbnailResources.SetAsync(target, full, initialHash, recovery, mutationEnvironment, CancellationToken.None);
             Ensure(setFull.Succeeded, "full-size mask update failed: " + setFull.Error);
             Ensure(setFull.RecoveryPath is not null && File.Exists(setFull.RecoveryPath), "full-size update did not leave a recovery record");
             var afterFull = FolderThumbnailResources.Inspect(target, full, @default);
@@ -60,7 +72,7 @@ public static class FolderThumbnailResourcesTests
             long committedLength = new FileInfo(target).Length;
             File.AppendAllText(target, "external-change");
             string changedHash = HashFile(target);
-            var refusedRecovery = await FolderThumbnailResources.RecoverAsync(recovery);
+            var refusedRecovery = await FolderThumbnailResources.RecoverAsync(recovery, mutationEnvironment);
             Ensure(!refusedRecovery.Succeeded && HashFile(target) == changedHash, "recovery overwrote an externally changed resource");
             using (var unchangedPrefix = new FileStream(target, FileMode.Open, FileAccess.Write, FileShare.None))
                 unchangedPrefix.SetLength(committedLength);
@@ -69,8 +81,6 @@ public static class FolderThumbnailResourcesTests
             // The generic journal must dispatch the typed resource record;
             // direct resource recovery is covered separately above.
             WriteJournalManifest(recovery);
-            var reviewEnvironment = new WindowsToolEnvironment(new ToolEnvironmentOptions(
-                ToolMutationMode.ReviewOnly, JournalRoot: recovery));
             var denied = RecoveryJournal.Recover(recovery, reviewEnvironment);
             Ensure(denied.Any(d => d.Code == "TOOL-THUMBNAIL-RECOVER"),
                 "generic journal recovery bypassed the reviewed mutation boundary");
@@ -88,24 +98,24 @@ public static class FolderThumbnailResourcesTests
             Ensure(FolderThumbnailResources.Inspect(target, full, @default).Style == initial.Style, "full-size recovery changed the original style");
 
             string defaultHash = HashFile(target);
-            var setDefault = await FolderThumbnailResources.SetAsync(target, @default, defaultHash, recoveryDefault, CancellationToken.None);
+            var setDefault = await FolderThumbnailResources.SetAsync(target, @default, defaultHash, recoveryDefault, mutationEnvironment, CancellationToken.None);
             Ensure(setDefault.Succeeded, "default mask update failed: " + setDefault.Error);
             var afterDefault = FolderThumbnailResources.Inspect(target, full, @default);
             Ensure(afterDefault.Error is null && afterDefault.Style == FolderThumbnailResources.DefaultStyle, "default mask was not recognized after update");
-            var restoredDefault = await FolderThumbnailResources.RecoverAsync(recoveryDefault);
+            var restoredDefault = await FolderThumbnailResources.RecoverAsync(recoveryDefault, mutationEnvironment);
             Ensure(restoredDefault.Succeeded, "default recovery failed: " + restoredDefault.Error);
             Ensure(HashFile(target) == initialHash, "default recovery did not restore the original bytes");
 
             string staleHash = HashFile(target);
             File.AppendAllText(target, "stale");
-            var stale = await FolderThumbnailResources.SetAsync(target, full, staleHash, recovery, CancellationToken.None);
+            var stale = await FolderThumbnailResources.SetAsync(target, full, staleHash, recovery, mutationEnvironment, CancellationToken.None);
             Ensure(!stale.Succeeded && HashFile(target) != initialHash, "stale expected hash was not rejected");
 
             CopyResourceBytes(source, target);
             string lockedHash = HashFile(target);
             using (var locked = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                var lockedResult = await FolderThumbnailResources.SetAsync(target, full, lockedHash, recovery, CancellationToken.None);
+                var lockedResult = await FolderThumbnailResources.SetAsync(target, full, lockedHash, recovery, mutationEnvironment, CancellationToken.None);
                 Ensure(!lockedResult.Succeeded, "a target locked against delete was unexpectedly replaced");
                 Ensure(HashFile(target) == lockedHash, "locked target bytes changed after a failed replacement");
             }
@@ -113,7 +123,7 @@ public static class FolderThumbnailResourcesTests
             string canceledHash = HashFile(target);
             using var canceled = new CancellationTokenSource();
             canceled.Cancel();
-            try { await FolderThumbnailResources.SetAsync(target, full, canceledHash, recovery, canceled.Token); }
+            try { await FolderThumbnailResources.SetAsync(target, full, canceledHash, recovery, mutationEnvironment, canceled.Token); }
             catch (OperationCanceledException) { }
             Ensure(HashFile(target) == canceledHash, "canceled update changed the target");
         }

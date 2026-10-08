@@ -1,68 +1,109 @@
-<Window x:Class="ShellStudio.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:core="clr-namespace:ShellStudio.Core;assembly=ShellStudio.Core" Title="Shell Studio" Width="1280" Height="820" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen" Background="{DynamicResource BackgroundBrush}" Foreground="{DynamicResource TextBrush}" FontFamily="Segoe UI" FontSize="13">
-  <Grid Margin="16">
+<Window x:Class="ShellStudio.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:core="clr-namespace:ShellStudio.Core;assembly=ShellStudio.Core" Title="Shell Studio" Width="1480" Height="920" MinWidth="900" MinHeight="600" WindowStartupLocation="CenterScreen" Background="{DynamicResource BackgroundBrush}" Foreground="{DynamicResource TextBrush}" FontFamily="Segoe UI" FontSize="13">
+  <Grid Margin="16,12,16,8" UseLayoutRounding="True">
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
     <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-      <TextBlock Text="Shell Studio" Style="{StaticResource PageTitle}" VerticalAlignment="Center" />
-      <WrapPanel Grid.Column="1" VerticalAlignment="Center"><Button Content="Open configuration" Click="Open_Click" ToolTip="Open configuration (Ctrl+O)" /><Button Content="Capture menu" x:Name="CaptureButton" Click="Capture_Click" ToolTip="Capture a menu from Explorer (F5)" /><Button x:Name="ApplyButton" Content="Review &amp; apply" Click="Apply_Click" Style="{StaticResource PrimaryButton}" ToolTip="Review pending changes (Ctrl+S)" IsEnabled="False" /><Button x:Name="ThemeButton" Content="Light / dark" Click="Theme_Click" Style="{StaticResource QuietButton}" /></WrapPanel>
+      <StackPanel VerticalAlignment="Center"><TextBlock Text="Shell Studio" Style="{StaticResource PageTitle}" /><TextBlock x:Name="WorkspaceSubtitle" Text="Windows context menu editor" Foreground="{DynamicResource MutedBrush}" Margin="0,4,0,0" /></StackPanel>
+      <WrapPanel x:Name="ApplicationCommands" Grid.Column="1" VerticalAlignment="Center">
+        <Button x:Name="OpenConfigurationButton" Content="Open configuration" Click="Open_Click" ToolTip="Open configuration (Ctrl+O)" />
+        <Button x:Name="ApplyButton" Content="Review &amp; apply" Click="Apply_Click" Style="{StaticResource PrimaryButton}" ToolTip="Review pending changes (Ctrl+S)" ToolTipService.ShowOnDisabled="True" IsEnabled="False" />
+        <Button x:Name="ThemeButton" Content="Dark theme" Click="Theme_Click" Style="{StaticResource QuietButton}" ToolTip="Switch to dark theme" />
+      </WrapPanel>
     </Grid>
     <Border Grid.Row="1" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,12" Margin="0,0,0,8">
-      <DockPanel><TextBlock x:Name="PhaseLabel" DockPanel.Dock="Right" Foreground="{DynamicResource AccentBrush}" Text="No menu captured" Margin="16,0,0,0" /><TextBlock x:Name="ContextLabel" Text="Open a configuration or capture a context menu to begin." Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" /></DockPanel>
+      <StackPanel>
+        <DockPanel Margin="0,0,0,8">
+          <Button DockPanel.Dock="Right" Content="Capture menu" x:Name="CaptureButton" Click="Capture_Click" ToolTip="Capture a menu from Explorer (F5)" VerticalAlignment="Top" Margin="12,0,0,0" />
+          <ContentControl x:Name="ContextPickerContent" />
+        </DockPanel>
+        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <TextBlock x:Name="ContextLabel" Text="Open a configuration or capture a context menu to begin." Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" VerticalAlignment="Center" />
+          <TextBlock Grid.Column="1" x:Name="PhaseLabel" Foreground="{DynamicResource AccentBrush}" Text="No menu captured" Margin="16,0,0,0" VerticalAlignment="Center" AutomationProperties.LiveSetting="Polite" />
+        </Grid>
+      </StackPanel>
     </Border>
     <TabControl Grid.Row="2" x:Name="Pages">
-      <TabItem Header="Menu editor">
-        <Grid Margin="0,16,0,12"><Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="360" /><ColumnDefinition Width="12" /><ColumnDefinition Width="320" MinWidth="280" /></Grid.ColumnDefinitions>
-          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-            <WrapPanel Margin="0,0,0,12">
+      <TabItem Header="Menu workspace">
+        <Grid Margin="0,12,0,8"><Grid.ColumnDefinitions><ColumnDefinition Width="*" MinWidth="500" /><ColumnDefinition Width="12" /><ColumnDefinition Width="320" MinWidth="280" /></Grid.ColumnDefinitions>
+          <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions><Grid.ColumnDefinitions><ColumnDefinition Width="312" MinWidth="280" /><ColumnDefinition Width="8" /><ColumnDefinition Width="*" MinWidth="180" /></Grid.ColumnDefinitions>
+            <WrapPanel Grid.ColumnSpan="3" Margin="0,0,0,10">
+              <StackPanel Orientation="Horizontal" Margin="0,0,12,4">
               <Button x:Name="AddCommandButton" Content="Add command" Click="AddCommand_Click" IsEnabled="False" />
-              <Button x:Name="AddMenuButton" Content="Submenu" Click="AddMenu_Click" IsEnabled="False" />
-              <Button x:Name="AddSeparatorButton" Content="Separator" Click="AddSeparator_Click" IsEnabled="False" />
-              <Button x:Name="RemoveButton" Content="Remove" Click="Remove_Click" Style="{StaticResource DestructiveButton}" IsEnabled="False" ToolTip="Remove selected entry (Delete)" />
+              <Button x:Name="AddMenuButton" Content="Submenu" ToolTip="Add a submenu" Click="AddMenu_Click" IsEnabled="False" Style="{StaticResource QuietButton}" />
+              <Button x:Name="AddSeparatorButton" Content="Separator" ToolTip="Add a separator" Click="AddSeparator_Click" IsEnabled="False" Style="{StaticResource QuietButton}" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,0,8,4">
               <Button x:Name="MoveUpButton" Content="↑" AutomationProperties.Name="Move entry up" Click="MoveUp_Click" ToolTip="Move up (Alt+Up)" IsEnabled="False" Style="{StaticResource QuietButton}" />
               <Button x:Name="MoveDownButton" Content="↓" AutomationProperties.Name="Move entry down" Click="MoveDown_Click" ToolTip="Move down (Alt+Down)" IsEnabled="False" Style="{StaticResource QuietButton}" />
-              <StackPanel Orientation="Horizontal"><Button x:Name="UndoButton" Content="Undo" Click="Undo_Click" Style="{StaticResource QuietButton}" IsEnabled="False" />
-              <Button x:Name="RedoButton" Content="Redo" Click="Redo_Click" Style="{StaticResource QuietButton}" IsEnabled="False" /></StackPanel>
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,4"><Button x:Name="UndoButton" Content="Undo" ToolTip="Undo (Ctrl+Z)" Click="Undo_Click" Style="{StaticResource QuietButton}" IsEnabled="False" />
+              <Button x:Name="RedoButton" Content="Redo" ToolTip="Redo (Ctrl+Y)" Click="Redo_Click" Style="{StaticResource QuietButton}" IsEnabled="False" /></StackPanel>
             </WrapPanel>
-            <Border Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1" CornerRadius="4" Padding="8">
-              <Grid><TextBlock x:Name="EmptyMenu" Text="Your menu starts here.&#10;&#10;Open a configuration to edit its entries, or capture a menu from Explorer." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="16" Margin="24" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="390" />
-              <TreeView x:Name="MenuTree" SelectedItemChanged="Menu_Selected" AllowDrop="True" PreviewMouseLeftButtonDown="Menu_MouseDown" PreviewMouseMove="Menu_MouseMove" DragOver="Menu_DragOver" Drop="Menu_Drop" AutomationProperties.Name="Context menu editing surface">
+              <Border Grid.Row="1" Background="{DynamicResource PanelBrush}" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,1,0" Padding="0,0,10,0">
+              <Grid><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions><StackPanel Margin="0,0,0,10"><ComboBox x:Name="MenuViewMode" SelectedIndex="0" SelectionChanged="MenuViewMode_Changed" AutomationProperties.Name="Menu view"><ComboBoxItem Content="Actual menu" /><ComboBoxItem Content="Arrange entries" /></ComboBox><CheckBox x:Name="ShowHiddenRemovedBox" Content="Show hidden/removed entries" Margin="4,8,0,0" AutomationProperties.Name="Show hidden and removed entries" ToolTip="Include entries captured before filtering that are absent from the final menu, with their rule evidence." Checked="ShowHiddenRemoved_Changed" Unchecked="ShowHiddenRemoved_Changed" /><TextBlock x:Name="MenuPreviewState" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Text="Open a configuration or capture a menu" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" FontSize="12" Margin="4,6,0,0" /></StackPanel><TextBox Grid.Row="1" x:Name="MenuSearch" AutomationProperties.Name="Search menu entries" ToolTip="Search menu entries (Ctrl+K). Matching descendants keep their parent groups visible." TextChanged="MenuSearch_Changed" Margin="0,0,0,12" /><TextBlock Grid.Row="1" Text="Search entries  Ctrl+K" Margin="10,0,0,12" VerticalAlignment="Center" IsHitTestVisible="False" Foreground="{DynamicResource MutedBrush}"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=MenuSearch}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock><TextBlock Grid.Row="2" x:Name="EmptyMenu" Text="Your menu starts here.&#10;&#10;Open a configuration to edit its entries, or capture a menu from Explorer." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="13" Margin="12" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="220" />
+              <TreeView Grid.Row="2" x:Name="MenuTree" Visibility="Hidden" SelectedItemChanged="Menu_Selected" AllowDrop="True" PreviewMouseLeftButtonDown="Menu_MouseDown" PreviewMouseMove="Menu_MouseMove" DragOver="Menu_DragOver" Drop="Menu_Drop" AutomationProperties.Name="Context menu editing surface">
                 <TreeView.Resources>
                   <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=TreeViewItem}}" /></Style>
                   <HierarchicalDataTemplate DataType="{x:Type core:MenuEntry}" ItemsSource="{Binding Children}">
                     <Grid AutomationProperties.Name="{Binding DisplayTitle}">
                       <Grid.Style><Style TargetType="Grid"><Style.Triggers><DataTrigger Binding="{Binding Disabled}" Value="True"><Setter Property="Opacity" Value="0.75" /></DataTrigger></Style.Triggers></Style></Grid.Style>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="24" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                       <TextBlock><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Text" Value="⋮" /><Setter Property="Opacity" Value="0.45" /><Style.Triggers><DataTrigger Binding="{Binding Checked}" Value="True"><Setter Property="Text" Value="✓" /><Setter Property="Opacity" Value="1" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock>
-                      <StackPanel Grid.Column="1"><TextBlock Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayTitle}" /><TextBlock Text="Open this submenu during capture to load its entries" FontSize="12"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding ChildrenCaptured}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
-                      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="12,0,2,0"><TextBlock Text="Disabled" FontSize="12" Margin="0,0,8,0"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Disabled}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock><TextBlock Text="{Binding DiagnosticBadge}" FontSize="12" Margin="0,0,8,0" /><TextBlock Text="{Binding Origin}" FontSize="12" /></StackPanel>
+                      <StackPanel Grid.Column="1"><TextBlock Text="{Binding DisplayTitle}" TextTrimming="CharacterEllipsis" ToolTip="{Binding DisplayTitle}" /><TextBlock Text="Automatic submenu discovery is incomplete; see capture diagnostics" FontSize="12"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding ChildrenCaptured}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock></StackPanel>
+                      <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="12,0,2,0"><TextBlock Text="Disabled" FontSize="12" Margin="0,0,8,0"><TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Disabled}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style></TextBlock><TextBlock Text="{Binding DiagnosticBadge}" FontSize="12" Margin="0,0,8,0" /></StackPanel>
                     </Grid>
                   </HierarchicalDataTemplate>
                 </TreeView.Resources>
-              </TreeView></Grid>
+              </TreeView><ContentControl Grid.Row="2" x:Name="MenuPreviewContent" /><ScrollViewer Grid.Row="2" x:Name="CapturePrompt" Margin="12,16" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel>
+                  <TextBlock Text="Bring your menu into view" Style="{StaticResource SectionTitle}" TextWrapping="Wrap" />
+                  <TextBlock x:Name="CaptureInstructions" TextWrapping="Wrap" Margin="0,12,0,12" />
+                  <Expander Header="Menu not appearing?" Margin="0,0,0,20"><TextBlock Text="Confirm that Explorer has loaded the matching Shell build and open its configuration in Studio. Then choose Capture menu and right-click the selected target." TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" Margin="0,8,0,0" /></Expander>
+                  <Border BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,1,0,0" Padding="0,16,0,0"><StackPanel>
+                    <TextBlock Text="Work from your configuration" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <TextBlock Text="Browse and arrange source entries while you wait for a capture." Style="{StaticResource SecondaryText}" Margin="0,6,0,12" />
+                    <Button x:Name="BrowseConfigurationButton" Content="Browse configuration" Click="BrowseConfiguration_Click" IsEnabled="{Binding IsEnabled, ElementName=AddCommandButton}" ContentTemplate="{StaticResource WrappingButtonContent}" HorizontalAlignment="Left" />
+                  </StackPanel></Border>
+                </StackPanel>
+              </ScrollViewer></Grid>
             </Border>
-            <TextBlock Grid.Row="2" x:Name="DragHint" Text="Drag above/below an entry to reorder. Hold Shift while dropping on a submenu to move inside it." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="2,10,0,0" FontSize="12" />
+            <GridSplitter Grid.Row="1" Grid.Column="1" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" AutomationProperties.Name="Resize menu preview" />
+            <ContentControl Grid.Row="1" Grid.Column="2" x:Name="EntryOverviewContent" />
+            <TextBlock Grid.Row="2" Grid.ColumnSpan="3" x:Name="DragHint" Text="Drag above/below an entry to reorder. Hold Shift while dropping on a submenu to move inside it." Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap" Margin="2,10,0,0" FontSize="12" />
           </Grid>
           <GridSplitter x:Name="InspectorSplitter" Grid.Column="1" Width="4" HorizontalAlignment="Center" VerticalAlignment="Stretch" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext" KeyboardIncrement="16" AutomationProperties.Name="Resize entry inspector" />
           <Border Grid.Column="2" Background="{DynamicResource PanelBrush}" Padding="16"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
-            <TextBlock Text="Entry properties" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
-            <TextBlock Text="Rule scope for native and new entries" Foreground="{DynamicResource MutedBrush}" Margin="0,0,0,5" /><ComboBox x:Name="ScopeBox" SelectedIndex="0" AutomationProperties.Name="Rule scope for native and new entries"><ComboBoxItem Content="This context category" /><ComboBoxItem Content="All matching menus" /><ComboBoxItem Content="This exact path" /></ComboBox>
-            <TextBlock x:Name="SelectedTitle" Text="Select an entry" FontSize="16" Margin="0,20,0,8" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <TextBlock Text="Quick edit" Style="{StaticResource SectionTitle}" Margin="0,0,0,16" />
+            <TextBlock Text="Rule scope" Style="{StaticResource FieldLabel}" Margin="0,0,0,5" /><ComboBox x:Name="ScopeBox" SelectedIndex="0" AutomationProperties.Name="Rule scope for native and new entries" ToolTip="Choose where rules for native entries and new commands apply."><ComboBoxItem Content="This context category" /><ComboBoxItem Content="All matching menus" /><ComboBoxItem Content="This exact path" /></ComboBox>
+            <TextBlock x:Name="SelectedTitle" Text="Select an entry" FontSize="16" FontWeight="SemiBold" Margin="0,20,0,8" TextTrimming="CharacterEllipsis" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" />
+            <TextBlock x:Name="InspectorEmptyHint" Text="Select a menu entry to edit its label, command, or visibility. Changes stay in your draft until Review &amp; apply." Style="{StaticResource SecondaryText}" Margin="0,0,0,12" />
             <StackPanel x:Name="PropertyPanel" />
-            <Button x:Name="MoveToButton" Content="Move to submenu…" Click="MoveTo_Click" IsEnabled="False" HorizontalAlignment="Left" Margin="0,16,0,0" />
-            <Button x:Name="ExplainButton" IsEnabled="False" Content="Explain this entry" Click="Explain_Click" Margin="0,15,0,0" HorizontalAlignment="Left" />
-            <Button x:Name="OriginalButton" IsEnabled="False" Content="Inspect original menu" Click="InspectOriginal_Click" Margin="0,8,0,0" HorizontalAlignment="Left" ToolTip="Inspect captured entries before filtering, including entries missing from the final menu" />
-            <TextBlock x:Name="SourceLabel" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,12,0,0" />
+            <StackPanel x:Name="EntryActions" Visibility="Collapsed" Margin="0,16,0,0">
+              <Button x:Name="MoveToButton" Content="Move to submenu…" Click="MoveTo_Click" IsEnabled="False" HorizontalAlignment="Left" />
+              <Button x:Name="RemoveButton" Content="Remove entry" Click="Remove_Click" HorizontalAlignment="Left" Margin="0,8,0,0" Style="{StaticResource DestructiveButton}" IsEnabled="False" ToolTip="Remove selected entry (Delete)" />
+            </StackPanel>
+            <Expander Header="Source &amp; capture details" Margin="0,20,0,0" AutomationProperties.Name="Source and capture details"><StackPanel Margin="0,8,0,0">
+              <Button x:Name="ExplainButton" IsEnabled="False" Content="Explain this entry" Click="Explain_Click" HorizontalAlignment="Left" />
+              <Button x:Name="OriginalButton" IsEnabled="False" Content="Inspect original menu" Click="InspectOriginal_Click" Margin="0,8,0,0" HorizontalAlignment="Left" ToolTip="Inspect captured entries before filtering, including entries missing from the final menu" />
+              <TextBlock x:Name="SourceLabel" TextWrapping="Wrap" Foreground="{DynamicResource MutedBrush}" FontSize="12" Margin="0,12,0,0" />
+            </StackPanel></Expander>
           </StackPanel></ScrollViewer></Border>
         </Grid>
       </TabItem>
-      <TabItem Header="Expression canvas"><ContentControl x:Name="ExpressionContent" Margin="0,16,0,12" /></TabItem>
-      <TabItem Header="Appearance &amp; settings"><ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,16,0,12"><StackPanel x:Name="SettingsPanel" MaxWidth="900" Margin="16"><TextBlock Text="Open a configuration to edit its appearance and settings." Style="{StaticResource SecondaryText}" /></StackPanel></ScrollViewer></TabItem>
-      <TabItem Header="Integrated tools"><ContentControl x:Name="ToolsContent" Margin="0,16,0,12" /></TabItem>
-      <TabItem Header="Templates"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="16" MaxWidth="900">
+      <TabItem Header="Expressions"><ContentControl x:Name="ExpressionContent" Margin="0,16,0,12" /></TabItem>
+      <TabItem Header="Appearance"><ScrollViewer x:Name="SettingsScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,16,0,12"><StackPanel x:Name="SettingsPanel" HorizontalAlignment="Left" MaxWidth="900" Margin="16"><TextBlock Text="Open a configuration to edit its appearance and settings." Style="{StaticResource SecondaryText}" /></StackPanel></ScrollViewer></TabItem>
+      <TabItem Header="Tools"><ContentControl x:Name="ToolsContent" Margin="0,16,0,12" /></TabItem>
+      <TabItem Header="Templates"><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel Margin="16" HorizontalAlignment="Left" MaxWidth="900">
         <TextBlock Text="Templates" Style="{StaticResource PageTitle}" Margin="0,0,0,8" />
         <TextBlock Text="Reuse a menu or appearance configuration across workspaces." Style="{StaticResource SecondaryText}" Margin="0,0,0,24" />
+        <Border x:Name="TemplateWorkspacePrompt" BorderBrush="{DynamicResource DividerBrush}" BorderThickness="0,0,0,1" Padding="0,0,0,16" Margin="0,0,0,20">
+          <StackPanel><TextBlock Text="Open a configuration to use templates" Style="{StaticResource SectionTitle}" />
+            <TextBlock Text="Choose the configuration that will receive the template. You can review all changes before applying them." Style="{StaticResource SecondaryText}" Margin="0,6,0,12" />
+            <Button Content="Open configuration" Click="Open_Click" HorizontalAlignment="Left" />
+          </StackPanel>
+        </Border>
         <TextBlock Text="Start from a template" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
         <TextBlock Text="Browse the included examples or open a saved template. Review its exact changes before loading it into the editor." TextWrapping="Wrap" Margin="0,0,0,12" />
-        <WrapPanel><Button Content="Starter templates" Click="StarterTemplate_Click" /><Button Content="Load template" Click="LoadTemplate_Click" /></WrapPanel>
+        <WrapPanel><Button Content="Starter templates" Click="StarterTemplate_Click" IsEnabled="{Binding IsEnabled, ElementName=AddCommandButton}" /><Button Content="Load template" Click="LoadTemplate_Click" IsEnabled="{Binding IsEnabled, ElementName=AddCommandButton}" /></WrapPanel>
         <Border BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0,1,0,0" Margin="0,24,0,24" />
         <TextBlock Text="Save your work" Style="{StaticResource SectionTitle}" Margin="0,0,0,8" />
         <TextBlock Text="Save the managed customization or a selected submenu, including its reusable assets and canvas layout." TextWrapping="Wrap" Margin="0,0,0,12" />

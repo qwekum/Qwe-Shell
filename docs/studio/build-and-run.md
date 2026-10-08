@@ -5,10 +5,14 @@ repository root in PowerShell. Use a checkout containing `src/studio`; the
 current local implementation must be committed and made available before a
 fresh remote clone can reproduce it.
 
-The application and MSI have passed the [recorded local checks](local-verification.md).
-Live Explorer, installer lifecycle, system-operation parity, and human
-acceptance are still pending. Use a disposable Windows 11 x64 VM for that
-qualification work.
+The current source has passed the [recorded local checks](local-verification.md)
+and compiled through the self-contained Studio and ToolHost publications. The
+package synchronization step stopped before replacing the Explorer-loaded
+`bin\shell.dll`, so the repository's existing application/MSI package predates
+the 2026-09-12 source-backed editing and automatic semantic-capture changes.
+Live Explorer, current-source installer lifecycle, system-operation parity, and
+human acceptance are still pending. Use a disposable Windows 11 x64 VM for
+that qualification work.
 
 ## 1. Install build prerequisites
 
@@ -104,7 +108,8 @@ does not perform the Studio publication/staging sequence needed by the MSI.
 | Path | Purpose |
 | --- | --- |
 | `bin/studio/ShellStudio.exe` | Main application |
-| `bin/studio/ShellStudio.Language.dll` | Shared native syntax service |
+| `bin/studio/ShellStudio.Language.dll` | Shared native syntax and preview service |
+| `bin/studio/ShellStudio.PreviewWorker.exe` | Bounded native preview process |
 | `bin/studio/ToolHost/ShellStudio.ToolHost.exe` | Operation protocol host, not the main UI |
 | `bin/shell.exe` | Native management window and registration controls |
 | `bin/shell.dll` | Explorer extension |
@@ -117,6 +122,10 @@ a portable deployment. Do not store personal configuration in a generated
 build directory: packaging can replace the staged configuration from `src/bin`.
 
 ## 5. Run without installing
+
+For the end-user choice between portable editing and a full registered install,
+including backup, existing-version, and rollback instructions, start with
+[Install and use Shell Studio](using-shell-studio.md).
 
 From the repository root:
 
@@ -138,6 +147,27 @@ templates, and operation previews are available without registering the
 extension. Opening Studio does not activate the fork in Explorer. **Capture
 menu** requires a matching loaded native extension and a configuration that
 corresponds to that runtime.
+
+Studio listens for captures automatically on startup. The default **Actual
+menu** pane waits for an Explorer capture instead of showing unevaluated
+configuration definitions as menu entries. Right-click a target matching the
+context picker; changing the selection hides an incompatible previous capture
+while preserving its editing state. **Arrange entries** retains access to
+configuration definitions before capture. **Stop capture** stops listening;
+**Capture menu** or choosing another context starts it again.
+
+Only one Studio process can listen for a given Windows user/session. Listener
+ownership is established before Studio changes the button to **Stop capture**.
+If another instance owns the endpoint, Studio remains inactive, keeps **Capture
+menu** visible, and reports `CAPTURE_LISTENER`; use the already-open instance or
+close all Studio instances and start one. An active listener is only an armed
+capture state, not evidence that a menu was received.
+
+If Studio automatically opened the adjacent sample configuration, the first
+accepted capture can open Explorer's actual configuration when there are no
+pending edits. An explicitly opened configuration is never switched this way.
+Installing an older upstream Shell build is insufficient: it cannot send the
+Studio capture protocol, even when its context menu looks correct.
 
 The menu editor and Tools page have resizable panes. Use **Move to…** to choose
 a menu destination with the keyboard, or Alt+Up/Down while the menu list has
@@ -161,24 +191,65 @@ register Shell or restart Explorer.
 
 ## Install and use live capture
 
+This fork shares upstream Shell's MSI upgrade identity and default installation
+directory. It is a replacement for normal Shell, not a side-by-side extension.
+The exact final-package older-version upgrade is still unqualified, so follow
+the [existing-Shell decision and backup procedure](using-shell-studio.md#do-i-have-to-uninstall-normal-shell)
+before changing a registration.
+
 1. In the disposable Windows 11 x64 test VM, preserve the existing Shell
-   configuration and take a VM snapshot. Copy the built MSI to the VM.
-2. Double-click `setup-x64.msi`, complete the interactive installer, and accept
-   its elevation prompt. The installer invokes registration; this is a system
-   change and can refresh Explorer. The local build procedure above does not
-   execute this step.
-3. Start **Nilesoft Shell Studio** from the Start Menu, or open **Customize** in
+   configuration and take a VM snapshot. Copy the built MSI to the VM and
+   verify its SHA-256 against [local verification](local-verification.md).
+2. For the safest current route, remove a normal Shell installation only after
+   its configuration/imports/assets are backed up. Then double-click
+   `setup-x64.msi`, complete the interactive installer, and accept its elevation
+   prompt. The package is a locally built, unsigned development artifact; do
+   not accept an unknown-publisher warning unless the hash matches. The
+   installer invokes registration and can refresh Explorer. The build procedure
+   above does not execute this step.
+3. Confirm that no other Studio instance is already open, then start **Nilesoft
+   Shell Studio** from the Start Menu, or open **Customize** in
    the installed `shell.exe`. The default installation folder is
    `%ProgramFiles%\Nilesoft Shell`; use your selected folder if you changed it.
 4. Open the configuration used by that installed Shell runtime. For the default
    installation, this is `shell.nss` in the installation folder.
-5. Select **Capture menu**, then right-click a file, folder, selection, or
-   background in Explorer. Use the Shell/classic menu; Windows 11's separate
-   modern menu is outside this editor's scope. Open lazy submenus while capture
-   is active so their children can be collected.
-6. Select entries to change properties. Drag above/below to reorder; hold Shift
-   while dropping onto a submenu to move inside it. Alt+Up/Down provide keyboard
-   movement. Check the scope selector before creating native-entry rules.
+5. Choose a context category or common file type group in the picker. You can
+   narrow a group to one extension or use **Choose target** for a specific file
+   or folder. **File type groups** opens the editable group names and extension
+   lists in Studio settings. Select **Capture menu**, then right-click the
+   matching file, folder, selection, or background in Explorer. A mismatched
+   capture leaves the current menu and edits intact. Use the Shell/classic menu;
+   Windows 11's separate modern menu is outside this editor's scope. The matching
+   extension reuses the live `construct_popup_entries` popup-construction path
+   to materialize retained semantic submenu definitions into the capture-owned
+   tree; opening, hovering, or scrolling each submenu is unnecessary. Automatic
+   materialization uses a positive read-only allowlist for literals and approved
+   control/math, string, selection, path, color, theme, view, and `this` reads.
+   `cmd` and `args` remain syntax evidence, while conditions are evaluated only
+   through that read-only policy. Capture never invokes commands, assignments,
+   mutating loops, unknown functions, or unsafe providers. Current automatic
+   bounds are depth 64, 4,096 items, 50,000 evaluation steps, and a 100 ms
+   wall-clock budget; trace retention is 64 entries/1,024 characters and
+   structured evidence is 128 rule/property records. Serialization and queue
+   limits also apply. A cycle, unavailable source/provider, or reached bound
+   reports `state`, `childrenCaptured`, `complete`, and diagnostics explicitly;
+   it is never represented as a silently complete hierarchy. See [capture protocol](capture-protocol.md)
+   for the wire-level fields and diagnostics.
+6. Select entries in the menu preview to change properties. Keep the semantic
+   capture and optional `appearance` evidence separate: captured native-rendered
+   pixels may be enriched by opening a popup, but missing or unavailable pixels
+   do not remove semantic descendants. Configuration and edited previews are
+   structural and explicitly labeled. Choose **Arrange entries** to drag
+   above/below to reorder; hold Shift while dropping onto a submenu to move
+   inside it. Alt+Up/Down provide keyboard movement. Check the scope selector
+   before creating native-entry rules. Entry details show source file/node/span,
+   hash and import occurrence when proven, ordered rule outcomes,
+   property effects, and effective settings evidence. `settings.modify` gates
+   existing native-item changes; `settings.new` gates custom definitions. A
+   stale hash, missing occurrence, or ambiguous selector keeps evidence readable
+   but disables direct source editing. The normal property edit creates or
+   updates one durable scoped Studio quick rule; **Open shared rule** is required
+   to change a broader handwritten `modify`/`remove` declaration.
 7. Use **Review & apply** to inspect the exact changes, then apply them. Protected
    configuration writes request elevation for the reviewed operation. New
    definitions go into `imports/studio.nss`; existing source edits preserve
@@ -189,6 +260,10 @@ register Shell or restart Explorer.
 Integrated tools have separate preview/Apply controls. Selecting a tool does
 not execute it. Record system-operation results and restoration behavior in the
 test VM; the fixture tests below do not establish those results.
+
+See [Return to normal Shell](using-shell-studio.md#return-to-normal-shell) before
+removing the fork. Preserve user configuration and restore only data files, not
+binaries from another build.
 
 ## 6. Run the local verification suites
 
@@ -226,9 +301,11 @@ dotnet run --project .\src\studio\ShellStudio.UiTests\ShellStudio.UiTests.csproj
 | NuGet or WiX SDK restore fails | Check feed access/proxy settings and retry the combined build; keep the pinned WiX SDK version. |
 | Native DLL unavailable in Studio/tests | Build the combined package; keep the publication folder intact and use the explicit test DLL path above. |
 | Build output is locked | Close the Studio instance using that output. For an Explorer-loaded DLL, test/install a separate package in the VM rather than overwriting the loaded file. |
-| Capture waits or has no entries | Confirm that the matching extension is loaded for the same user/session, click Capture before opening the classic menu, and open lazy submenus during capture. An upstream/unmodified Shell DLL cannot supply this capture protocol. |
+| `CAPTURE_LISTENER` appears, or Capture never becomes active | Another Studio process owns the single current-user/session endpoint. Use that instance, or close every Studio instance and start exactly one. Do not troubleshoot registration until this collision is cleared. |
+| **Stop capture** is visible but the menu remains empty | The listener is armed but no matching menu has arrived. Confirm that the matching extension is loaded for the same user/session, open the Shell/classic menu only after capture is armed, and match the selected context. Retained submenu definitions are discovered automatically; branches that require unavailable provider state or unsafe evaluation remain explicitly incomplete. An upstream/unmodified Shell DLL cannot supply this protocol. |
 | Configuration differs from the captured runtime | Open the installed runtime's actual configuration and capture again; do not apply a staged sample to an unrelated installation. |
 | Apply reports an external-file conflict | Reopen/reconcile the changed files, review the new diff, and retry. Do not discard the journal or overwrite newer content. |
+| Windows Security displays a virus-protection toast after an Explorer refresh | Check the live Defender component state and Defender Operational log before concluding protection changed. Studio build/capture and Explorer refresh do not change Defender preferences. **Clear shell histories** with **History scope: Defender** is separate and runs only after explicit review and elevation. |
 
 Python is needed only when regenerating the source coverage inventories, not
 for ordinary builds or application use. That contributor workflow is described

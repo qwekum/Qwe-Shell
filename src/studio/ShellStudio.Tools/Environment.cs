@@ -26,6 +26,10 @@ public interface IToolEnvironment
     IToolFeatureFlagService FeatureFlags { get; }
     IToolDefenderHistoryService DefenderHistory { get; }
     bool IsWindows11X64 { get; }
+    // Host paths are explicit so fixture environments cannot accidentally
+    // mutate the developer's profile while exercising imported settings.
+    string? UserProfilePath => null;
+    string? CommonDesktopPath => null;
     string JournalRoot { get; }
     void DemandMutation(string path, bool systemOperation = false);
     void DemandRegistryMutation(string hive);
@@ -256,6 +260,8 @@ public sealed class WindowsToolEnvironment : IToolEnvironment
     public IToolFeatureFlagService FeatureFlags { get; }
     public IToolDefenderHistoryService DefenderHistory { get; }
     public string JournalRoot { get; }
+    public string? UserProfilePath => Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    public string? CommonDesktopPath => Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
     public bool IsWindows11X64 => OperatingSystem.IsWindows() && Environment.Is64BitOperatingSystem && Environment.OSVersion.Version.Build >= 22000;
 
     public void DemandMutation(string path, bool systemOperation = false)

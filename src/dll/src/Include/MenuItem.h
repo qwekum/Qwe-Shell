@@ -201,6 +201,8 @@ namespace Nilesoft
 			std::vector<MenuItemInfo *> items;
 			std::vector<NativeMenu *> native_items;
 			StudioCaptureTrace trace;
+			StudioCaptureEvidence evidence;
+			StudioCaptureCompleteness studio_completeness;
 
 			std::vector<struct menuitem_t *> *sys_items=0;
 
@@ -220,6 +222,9 @@ namespace Nilesoft
 			bool dynamic{};
 			bool destroy{};
 			bool submenu_delete{};
+			// A popup can be empty after a complete, side-effect-free capture. Keep
+			// that state separate from an unopened popup whose child vector is empty.
+			bool studio_children_captured{};
 			int separator{};
 			int tab = -1;
 			int column = 0;

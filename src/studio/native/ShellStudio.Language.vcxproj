@@ -79,7 +79,10 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="ShellStudioLanguage.cpp" />
+    <ClCompile Include="PreviewRenderService.cpp" />
+    <ClCompile Include="PreviewResources.cpp" />
     <ClCompile Include="StudioLanguageRuntime.cpp" />
+    <ClCompile Include="..\..\dll\src\NativeMenuRenderer.cpp" />
     <ClCompile Include="..\..\dll\src\Expression\ArrayExpression.cpp" />
     <ClCompile Include="..\..\dll\src\Expression\Context.cpp" />
     <ClCompile Include="..\..\dll\src\Expression\Expression.cpp" />
@@ -94,6 +97,7 @@
     <ClCompile Include="..\..\shared\System\Log.cpp" />
     <ClCompile Include="..\..\shared\System\Windows\Registry.cpp" />
     <ClCompile Include="..\..\dll\src\Parser\LanguageFrontend.cpp" />
+    <ClCompile Include="..\..\dll\src\Parser\NativeExpressionSyntax.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\dll\src\Parser\LanguageFrontend.h" />

@@ -6,18 +6,24 @@ namespace ShellStudio.Core;
 public interface ILanguageService
 {
     SyntaxDocument Parse(string text);
+    SyntaxDocument ParseLocalization(string text) => Parse(text);
 }
 
 public sealed class NativeLanguage : ILanguageService
 {
-    public SyntaxDocument Parse(string text)
+    public SyntaxDocument Parse(string text) => ParseCore(text, false);
+    public SyntaxDocument ParseLocalization(string text) => ParseCore(text, true);
+
+    private static SyntaxDocument ParseCore(string text, bool localization)
     {
         if (text.Length > 4 * 1024 * 1024)
             return Failure("LANG_SIZE", "Configuration exceeds the 4 MiB editor limit.");
         if (text.Contains('\0')) return Failure("LANG_NUL", "Configuration source contains an embedded NUL character.");
         try
         {
-            var pointer = ParseNative(text, (nuint)text.Length);
+            var pointer = localization
+                ? ParseLocalizationNative(text, (nuint)text.Length)
+                : ParseNative(text, (nuint)text.Length);
             if (pointer == IntPtr.Zero) return Failure("LANG_MEMORY", "The language service could not allocate a result.");
             try
             {
@@ -105,6 +111,9 @@ public sealed class NativeLanguage : ILanguageService
     [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
     [DllImport("ShellStudio.Language.dll", EntryPoint = "shell_studio_parse", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr ParseNative([MarshalAs(UnmanagedType.LPWStr)] string text, nuint length);
+    [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
+    [DllImport("ShellStudio.Language.dll", EntryPoint = "shell_studio_parse_localization", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr ParseLocalizationNative([MarshalAs(UnmanagedType.LPWStr)] string text, nuint length);
     [DefaultDllImportSearchPaths(DllImportSearchPath.AssemblyDirectory | DllImportSearchPath.System32)]
     [DllImport("ShellStudio.Language.dll", EntryPoint = "shell_studio_capabilities", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr CapabilitiesNative();

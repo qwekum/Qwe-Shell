@@ -6,11 +6,46 @@ using ShellStudio.Tools;
 
 var tests = new List<(string Name, Func<Task> Test)>
 {
+    ("thumbnail_native_resource_round_trip", ShellStudio.Tools.Tests.FolderThumbnailResourcesTests.RunAsync),
+    ("thumbnail_noop_refresh_uses_only_user_permission", FolderThumbnailSettingTests.NoOpRefreshDoesNotRequireSystemPermission),
+    ("thumbnail_slow_inspection_can_be_cancelled", FolderThumbnailSettingTests.SlowInspectionCanBeCancelled),
     ("catalog_has_unique_protocol_ids", CatalogHasUniqueIds),
+    ("saved_profile_round_trip_preserves_selection", CompletionGapTests.ProfileRoundTripPreservesSelection),
+    ("nss_profile_command_uses_runtime_selection_binding", CompletionGapTests.NssProfileCommandUsesRuntimeSelectionBinding),
+    ("malformed_profile_collections_are_diagnosed", CompletionGapTests.MalformedProfileCollectionsAreDiagnosed),
+    ("selection_snapshot_round_trip_preserves_context_metadata", CompletionGapTests.SelectionSnapshotRoundTripPreservesContextMetadata),
+    ("selection_snapshot_bounds_are_enforced", CompletionGapTests.SelectionSnapshotBoundsAreEnforced),
+    ("typed_registry_reg_parser_round_trip", CompletionGapTests.RegistryRegParserRoundTrip),
+    ("typed_registry_import_uses_diff_and_recovery", CompletionGapTests.RegistryImportUsesDiffAndRecovery),
+    ("typed_registry_export_writes_reg_file", CompletionGapTests.RegistryExportWritesTypedRegFile),
+    ("user_script_launch_is_non_elevated_and_keeps_selection", CompletionGapTests.UserScriptLaunchIsNonElevatedAndKeepsSelection),
+    ("folder_thumbnail_catalog_contract", FolderThumbnailSettingTests.CatalogContract),
+    ("folder_thumbnail_default_full_default_is_effective", FolderThumbnailSettingTests.DefaultFullDefaultIsEffective),
+    ("folder_thumbnail_noop_avoids_write", FolderThumbnailSettingTests.NoOpAvoidsWrite),
+    ("folder_thumbnail_stale_hash_is_rejected", FolderThumbnailSettingTests.StaleHashIsRejected),
+    ("folder_thumbnail_foreign_paths_are_rejected", FolderThumbnailSettingTests.ForeignRequestPathsAreRejected),
+    ("folder_thumbnail_review_only_blocks", FolderThumbnailSettingTests.ReviewOnlyBlocks),
+    ("folder_thumbnail_user_data_blocks_system_write", FolderThumbnailSettingTests.UserDataBlocksSystemWrite),
+    ("folder_thumbnail_refresh_failure_reports_applied_mask", FolderThumbnailSettingTests.RefreshFailureReportsAppliedMask),
+    ("folder_thumbnail_refresh_false_skips_explorer", FolderThumbnailSettingTests.RefreshFalseSkipsExplorer),
+    ("folder_thumbnail_inspect_error_blocks", FolderThumbnailSettingTests.InspectErrorBlocks),
+    ("folder_thumbnail_unknown_state_warns", FolderThumbnailSettingTests.UnknownStateWarns),
+    ("folder_thumbnail_builtin_assets_match_pinned_hashes", FolderThumbnailSettingTests.BuiltInAssetsMatchPinnedHashes),
     ("desktop_ini_round_trip_preserves_unrelated_entries", DesktopIniRoundTrip),
     ("desktop_ini_remove_uses_forward_section_context", DesktopIniRemoveSectionContext),
     ("recursive_folder_type_is_journaled_and_reports_progress", RecursiveFolderType),
     ("stale_plan_is_rejected", StalePlanRejected),
+    ("views_options_catalog_exposes_donor_settings", ViewsOptionsCatalog),
+    ("views_feature_choices_preserve_unselected_state", ViewsFeatureChoices),
+    ("views_options_preserve_unowned_registry_values", ViewsOptionsPreserveUnownedRegistryValues),
+    ("feature_flag_rollback_failures_are_reported", FeatureFlagRollbackFailuresAreReported),
+    ("views_options_gates_explorer_start", ViewsExplorerStartGate),
+    ("views_options_uses_this_pc_view", ViewsThisPcView),
+    ("views_options_gates_virtual_defaults", ViewsVirtualDefaultsGate),
+    ("winsetview_import_gates_virtual_columns", WinSetViewVirtualColumnsGate),
+    ("winsetview_import_respects_apply_phases", WinSetViewImportApplyPhases),
+    ("virtual_folder_columns_copy_bag_values", VirtualFolderColumnsCopy),
+    ("views_options_writes_donor_search_and_legacy_keys", ViewsOptionsDonorKeys),
     ("views_write_typed_registry_values", ViewsWriteRegistry),
     ("view_restore_rejects_machine_registry_target", ViewRestoreRejectsMachine),
     ("folder_type_view_updates_existing_top_view_children", FolderTypeViewChild),
@@ -135,6 +170,262 @@ static async Task StalePlanRejected()
     File.WriteAllText(Path.Combine(root, "desktop.ini"), "[ViewState]\r\nFolderType=Music\r\n");
     var result = await service.ExecuteAsync(plan);
     Ensure(!result.Success && result.Diagnostics.Any(d => d.Code == "TOOL-PLAN-STALE"), "changed target was not rejected");
+}
+
+static Task ViewsOptionsCatalog()
+{
+    var descriptor = OperationCatalog.All.Single(value => value.Id.Equals("views.options", StringComparison.OrdinalIgnoreCase));
+    var fields = descriptor.Fields.ToDictionary(value => value.Name, StringComparer.OrdinalIgnoreCase);
+    Ensure(fields.ContainsKey("automaticFolderTypeDiscovery") && fields.ContainsKey("alwaysShowIcons"), "folder option fields are missing from the catalog");
+    Ensure(fields.ContainsKey("setVirtualFolders") && fields["thisPcView"].Kind == "integer", "virtual or This PC view fields are missing from the catalog");
+    Ensure(fields.ContainsKey("explorerStart") && fields["explorerStartOption"].Choices.SequenceEqual(["ThisPC", "Home", "Downloads", "Custom"]), "Explorer start choices do not match the donor contract");
+    Ensure(fields["win10Search"].Choices.SequenceEqual(["Unchanged", "Enabled", "Disabled"])
+        && fields["win11Explorer"].Choices.SequenceEqual(["Unchanged", "Enabled", "Disabled"]), "feature settings are not tri-state choices");
+    return Task.CompletedTask;
+}
+
+static async Task ViewsFeatureChoices()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowSystem);
+    environment.FeatureFlagFixture.Seed(FeatureFlagIds.Windows10Search, true, true, true);
+    environment.FeatureFlagFixture.Seed(FeatureFlagIds.Windows11Explorer, true, true, false);
+    var service = new OperationService(environment);
+
+    var unchanged = await service.PreviewAsync(OperationRequest.Create("views.options"));
+    Ensure(!unchanged.RequiresElevation && unchanged.CanExecute, "omitted feature choices caused an elevation requirement");
+    var unchangedResult = await service.ExecuteAsync(unchanged);
+    Ensure(unchangedResult.Success && environment.FeatureFlagFixture.Updates.Count == 0, "omitted feature choices inspected or changed feature state");
+
+    var legacyFalse = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("win10Search", "false"), new("win11Explorer", "false")
+    ]));
+    Ensure(legacyFalse.RequiresElevation && legacyFalse.CanExecute, "legacy feature values were not accepted");
+    var result = await service.ExecuteAsync(legacyFalse);
+    Ensure(result.Success, "legacy feature choices failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    Ensure(environment.FeatureFlagFixture.Updates.Contains((FeatureFlagIds.Windows10Search, false)), "Win10 legacy false did not disable the feature");
+    Ensure(environment.FeatureFlagFixture.Updates.Contains((FeatureFlagIds.Windows11Explorer, true)), "Win11 legacy false did not enable the feature using the donor inverse");
+}
+
+static async Task ViewsExplorerStartGate()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    const string advanced = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    const string startRoot = @"Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}";
+    const string command = startRoot + @"\shell\OpenNewWindow\command";
+    environment.Registry.SetValue("HKCU", advanced, "LaunchTo", 9, RegistryValueKind.DWord);
+    environment.Registry.SetValue("HKCU", command, "", "existing", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", command, "UnmanagedValue", "keep", RegistryValueKind.String);
+    var service = new OperationService(environment);
+
+    var skipped = await service.PreviewAsync(OperationRequest.Create("views.options"));
+    var skippedResult = await service.ExecuteAsync(skipped);
+    Ensure(skippedResult.Success && (int?)environment.Registry.GetValue("HKCU", advanced, "LaunchTo") == 9, "Explorer start state changed while explorerStart was omitted");
+    Ensure((string?)environment.Registry.GetValue("HKCU", startRoot + @"\shell\OpenNewWindow\command", "") == "existing", "custom Explorer start command changed while explorerStart was omitted");
+
+    var downloads = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("explorerStart", "true"), new("explorerStartOption", "Downloads")
+    ]));
+    var downloadsResult = await service.ExecuteAsync(downloads);
+    Ensure(downloadsResult.Success && (int?)environment.Registry.GetValue("HKCU", advanced, "LaunchTo") == 3, "Downloads Explorer start option was not written as LaunchTo=3");
+    Ensure(environment.Registry.GetValue("HKCU", command, "") is null, "non-custom Explorer start left its owned command value behind");
+    Ensure((string?)environment.Registry.GetValue("HKCU", command, "UnmanagedValue") == "keep", "non-custom Explorer start removed an unrelated command value");
+
+    var custom = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("explorerStart", "true"), new("explorerStartOption", "Custom"), new("launchPath", fixture.NewDirectory("custom-start"))
+    ]));
+    var customResult = await service.ExecuteAsync(custom);
+    Ensure(customResult.Success && ((string?)environment.Registry.GetValue("HKCU", command, ""))?.Contains("custom-start", StringComparison.OrdinalIgnoreCase) == true, "custom Explorer start command was not written");
+    Ensure((string?)environment.Registry.GetValue("HKCU", command, "DelegateExecute") == string.Empty, "custom Explorer start DelegateExecute value was not written");
+}
+
+static async Task ViewsOptionsPreserveUnownedRegistryValues()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    const string placesBar = @"Software\Microsoft\Windows\CurrentVersion\Policies\ComDlg32\PlacesBar";
+    const string classicMenu = @"Software\Classes\CLSID\{86CA1AA0-34AA-4E8B-A509-50C905BAE2A2}\InprocServer32";
+    const string copyHandler = @"Software\Classes\AllFileSystemObjects\shellex\ContextMenuHandlers\{C2FBB630-2971-11D1-A18C-00C04FD75D13}";
+    const string moveHandler = @"Software\Classes\AllFileSystemObjects\shellex\ContextMenuHandlers\{C2FBB631-2971-11D1-A18C-00C04FD75D13}";
+    const string classicSearch = @"Software\Classes\CLSID\{1d64637d-31e9-4b06-9124-e83fb178ac6e}\TreatAs";
+    const string command = @"Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\OpenNewWindow\command";
+    const string legacyA = @"Software\Classes\CLSID\{2aa9162e-c906-4dd9-ad0b-3d24a8eef5a0}\InProcServer32";
+    const string legacyB = @"Software\Classes\CLSID\{6480100b-5a83-4d1e-9f69-8ae5a88e9a33}\InProcServer32";
+
+    environment.Registry.SetValue("HKCU", placesBar, "Place0", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", placesBar, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", classicMenu, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", classicMenu, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", copyHandler, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", copyHandler, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", moveHandler, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", moveHandler, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", classicSearch, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", classicSearch, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", command, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", command, "DelegateExecute", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", command, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", legacyA, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", legacyA, "UnmanagedValue", "keep", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", legacyB, "", "owned", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", legacyB, "UnmanagedValue", "keep", RegistryValueKind.String);
+
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("explorerStart", "true"), new("explorerStartOption", "Downloads")
+    ]));
+    var result = await service.ExecuteAsync(plan);
+    Ensure(result.Success, "scoped view-option cleanup failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    foreach (var key in new[] { placesBar, classicMenu, copyHandler, moveHandler, classicSearch, command, legacyA, legacyB })
+    {
+        Ensure((string?)environment.Registry.GetValue("HKCU", key, "UnmanagedValue") == "keep", "unmanaged registry data was removed from " + key);
+    }
+    Ensure(environment.Registry.GetValue("HKCU", placesBar, "Place0") is null, "owned PlacesBar value was not removed");
+    Ensure(environment.Registry.GetValue("HKCU", classicMenu, "") is null, "owned classic-menu value was not removed");
+    Ensure(environment.Registry.GetValue("HKCU", copyHandler, "") is null && environment.Registry.GetValue("HKCU", moveHandler, "") is null, "owned copy/move values were not removed");
+    Ensure(environment.Registry.GetValue("HKCU", classicSearch, "") is null, "owned classic-search value was not removed");
+    Ensure(environment.Registry.GetValue("HKCU", command, "") is null && environment.Registry.GetValue("HKCU", command, "DelegateExecute") is null, "owned Explorer-start values were not removed");
+    Ensure(environment.Registry.GetValue("HKCU", legacyA, "") is null && environment.Registry.GetValue("HKCU", legacyB, "") is null, "owned legacy Explorer values were not removed");
+}
+
+static async Task FeatureFlagRollbackFailuresAreReported()
+{
+    using var fixture = new Fixture();
+    var inner = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowSystem);
+    inner.FeatureFlagFixture.Seed(FeatureFlagIds.Windows10Search, true, true, false);
+    inner.FeatureFlagFixture.Seed(FeatureFlagIds.Windows11Explorer, true, true, true);
+    var environment = new FeatureFlagFailureEnvironment(inner);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("win10Search", "Enabled"), new("win11Explorer", "Disabled")
+    ]));
+    Ensure(plan.CanExecute, "feature failure fixture was blocked during preview");
+    var result = await service.ExecuteAsync(plan);
+    var failure = result.Diagnostics.Single(d => d.Code == "TOOL-EXECUTE-FAILED");
+    Ensure(failure.Message.Contains("simulated feature update failure", StringComparison.Ordinal), "the original feature failure was lost");
+    Ensure(failure.Message.Contains("rollback failed", StringComparison.OrdinalIgnoreCase), "feature rollback failure was not surfaced");
+}
+
+static async Task ViewsThisPcView()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("thisPc", "true"), new("thisPcView", "6"), new("thisPcNoGrouping", "true")
+    ]));
+    Ensure(plan.CanExecute, "This PC view plan was blocked: " + string.Join(" | ", plan.Diagnostics.Select(d => d.Message)));
+    var result = await service.ExecuteAsync(plan);
+    Ensure(result.Success, "This PC view write failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    var key = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\1\Shell\{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+    Ensure((int?)environment.Registry.GetValue("HKCU", key, "LogicalViewMode") == 3, "ThisPCView=6 did not select the donor details view");
+    Ensure((int?)environment.Registry.GetValue("HKCU", key, "Mode") == 1 && (int?)environment.Registry.GetValue("HKCU", key, "IconSize") == 48, "ThisPCView=6 raw view values were not preserved");
+    Ensure((int?)environment.Registry.GetValue("HKCU", key, "GroupView") == 0, "This PC no-grouping option was not applied");
+}
+
+static async Task ViewsVirtualDefaultsGate()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    var service = new OperationService(environment);
+    var virtualKey = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell\{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+    var columnsOnly = await service.PreviewAsync(OperationRequest.Create("views.options", [new("virtualFolderColumns", "true")]));
+    var columnsOnlyResult = await service.ExecuteAsync(columnsOnly);
+    Ensure(columnsOnlyResult.Success && !environment.Registry.KeyExists("HKCU", virtualKey), "virtual-folder columns changed state without setVirtualFolders");
+
+    var enabled = await service.PreviewAsync(OperationRequest.Create("views.options", [new("setVirtualFolders", "true")]));
+    var enabledResult = await service.ExecuteAsync(enabled);
+    Ensure(enabledResult.Success && environment.Registry.KeyExists("HKCU", virtualKey), "setVirtualFolders did not apply virtual-folder defaults");
+}
+
+static async Task WinSetViewVirtualColumnsGate()
+{
+    using var fixture = new Fixture();
+    var path = Path.Combine(fixture.NewDirectory("settings"), "WinSetView.ini");
+    File.WriteAllText(path, "[Options]\r\nApplyViews=1\r\nApplyOptions=0\r\nSetVirtualFolders=0\r\nSetVirtualFolderColumns=1\r\nThisPCoption=0\r\n");
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.import-ini", [new("iniPath", path)]));
+    Ensure(plan.CanExecute, "virtual-folder gate import was blocked: " + string.Join(" | ", plan.Diagnostics.Select(d => d.Message)));
+    var result = await service.ExecuteAsync(plan);
+    var virtualKey = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell\{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+    Ensure(result.Success && !environment.Registry.KeyExists("HKCU", virtualKey), "imported SetVirtualFolderColumns bypassed SetVirtualFolders gate");
+}
+
+static async Task WinSetViewImportApplyPhases()
+{
+    using var fixture = new Fixture();
+    var path = Path.Combine(fixture.NewDirectory("settings"), "WinSetView.ini");
+    File.WriteAllText(path,
+        "[Options]\r\n"
+        + "ApplyViews=0\r\nApplyOptions=1\r\n"
+        + "NoFolderThumbs=1\r\nGeneric=1\r\nSetVirtualFolders=1\r\nThisPCoption=1\r\n"
+        + "SystemTextColor=8 8 8\r\n");
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.import-ini", [new("iniPath", path)]));
+    Ensure(plan.CanExecute, "ApplyOptions-only import was blocked: " + string.Join(" | ", plan.Diagnostics.Select(d => d.Message)));
+    var result = await service.ExecuteAsync(plan);
+    Ensure(result.Success, "ApplyOptions-only import failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    var allFolders = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell";
+    var thisPc = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\1\Shell\{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+    Ensure(!environment.Registry.KeyExists("HKCU", allFolders), "ApplyOptions wrote ApplyViews root defaults");
+    Ensure(!environment.Registry.KeyExists("HKCU", thisPc), "ApplyOptions wrote This PC defaults while ApplyViews was disabled");
+    Ensure((string?)environment.Registry.GetValue("HKCU", @"Control Panel\Colors", "WindowText") == "8 8 8", "ApplyOptions did not apply its own color setting");
+
+    File.WriteAllText(path,
+        "[Options]\r\nApplyViews=1\r\nApplyOptions=0\r\n"
+        + "LegacySpacing=1\r\nNoFullRowSelect=1\r\nSystemTextColor=5 5 5\r\nThisPCoption=1\r\nThisPCView=6\r\nThisPCNG=1\r\n");
+    var secondPlan = await service.PreviewAsync(OperationRequest.Create("views.import-ini", [new("iniPath", path)]));
+    var secondResult = await service.ExecuteAsync(secondPlan);
+    Ensure(secondResult.Success, "ApplyViews-only import failed: " + string.Join(" | ", secondResult.Diagnostics.Select(d => d.Message)));
+    var advanced = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    Ensure((int?)environment.Registry.GetValue("HKCU", advanced, "FullRowSelect") == 0, "ApplyViews did not apply gated full-row setting");
+    Ensure((string?)environment.Registry.GetValue("HKCU", @"Control Panel\Colors", "WindowText") == "5 5 5", "ApplyViews did not apply system text color");
+    Ensure((string?)environment.Registry.GetValue("HKCU", thisPc, "GroupByKey:FMTID") == "{B725F130-47EF-101A-A5F1-02608C9EEBAC}", "imported This PC view omitted the donor group key");
+}
+
+static async Task VirtualFolderColumnsCopy()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    const string guid = "{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+    var source = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\2\Shell\" + guid;
+    environment.Registry.SetValue("HKCU", source, "ColumnList", "prop:+System.ItemNameDisplay", RegistryValueKind.String);
+    environment.Registry.SetValue("HKCU", source, "IconSize", 96, RegistryValueKind.DWord);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("setVirtualFolders", "true"), new("virtualFolderColumns", "true")
+    ]));
+    var result = await service.ExecuteAsync(plan);
+    Ensure(result.Success, "virtual-folder column copy failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    foreach (var variant in new[] { "Shell", "ComDlg", "ComDlgLegacy" })
+    {
+        var destination = "Software\\Classes\\Local Settings\\Software\\Microsoft\\Windows\\Shell\\Bags\\AllFolders\\" + variant + "\\" + guid;
+        Ensure((string?)environment.Registry.GetValue("HKCU", destination, "ColumnList") == "prop:+System.ItemNameDisplay", "virtual-folder columns did not copy to " + variant);
+        Ensure((int?)environment.Registry.GetValue("HKCU", destination, "IconSize") == 96, "virtual-folder values did not copy to " + variant);
+    }
+}
+
+static async Task ViewsOptionsDonorKeys()
+{
+    using var fixture = new Fixture();
+    var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
+    var service = new OperationService(environment);
+    var plan = await service.PreviewAsync(OperationRequest.Create("views.options", [
+        new("searchInternet", "true"), new("searchHighlights", "true"),
+        new("legacySpacing", "false"), new("noFullRowSelect", "true"), new("win10Explorer", "true")
+    ]));
+    var result = await service.ExecuteAsync(plan);
+    Ensure(result.Success, "donor option writes failed: " + string.Join(" | ", result.Diagnostics.Select(d => d.Message)));
+    var policy = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+    Ensure((int?)environment.Registry.GetValue("HKCU", policy, "DisableSearchBoxSuggestions") == 0, "search enablement did not clear the donor policy gate");
+    var advanced = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+    Ensure(environment.Registry.GetValue("HKCU", advanced, "FullRowSelect") is null, "FullRowSelect changed without LegacySpacing");
+    var toolbar = @"Software\Microsoft\Internet Explorer\Toolbar\ShellBrowser";
+    Ensure(environment.Registry.GetValue("HKCU", toolbar, "ITBar7Layout") is byte[] bytes && bytes.Length == 568 && bytes[0] == 0x13,
+        "legacy Explorer toolbar layout did not use the pinned donor bytes");
 }
 
 static async Task ViewsWriteRegistry()
@@ -720,6 +1011,45 @@ static async Task ReviewOnlyBlocks()
 static void Ensure(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
+}
+
+file sealed class FeatureFlagFailureEnvironment(InMemoryToolEnvironment inner) : IToolEnvironment
+{
+    public ToolEnvironmentOptions Options => inner.Options;
+    public IToolFileSystem Files => inner.Files;
+    public IToolRegistry Registry => inner.Registry;
+    public IToolProcessController Processes => inner.Processes;
+    public IToolExplorerController Explorer => inner.Explorer;
+    public IToolShellController Shell => inner.Shell;
+    public IToolResourceEditor Resources => inner.Resources;
+    public IToolAclService Acls => inner.Acls;
+    public IToolPhotoMetadata Metadata => inner.Metadata;
+    public IToolFeatureFlagService FeatureFlags { get; } = new FailingFeatureFlagService(inner.FeatureFlagFixture);
+    public IToolDefenderHistoryService DefenderHistory => inner.DefenderHistory;
+    public bool IsWindows11X64 => inner.IsWindows11X64;
+    public string? UserProfilePath => null;
+    public string? CommonDesktopPath => null;
+    public string JournalRoot => inner.JournalRoot;
+    public void DemandMutation(string path, bool systemOperation = false) => inner.DemandMutation(path, systemOperation);
+    public void DemandRegistryMutation(string hive) => inner.DemandRegistryMutation(hive);
+    public void DemandSessionMutation() => inner.DemandSessionMutation();
+}
+
+file sealed class FailingFeatureFlagService(InMemoryFeatureFlagService inner) : IToolFeatureFlagService
+{
+    public FeatureFlagInspection Inspect(uint featureId) => inner.Inspect(featureId);
+
+    public FeatureFlagMutationResult Set(uint featureId, bool enabled)
+    {
+        var previous = inner.Inspect(featureId);
+        if (featureId == FeatureFlagIds.Windows11Explorer)
+            return new FeatureFlagMutationResult(false, previous, "simulated feature update failure");
+        if (featureId == FeatureFlagIds.Windows10Search && !enabled)
+            return new FeatureFlagMutationResult(false, previous, "simulated feature rollback failure");
+        return inner.Set(featureId, enabled);
+    }
+
+    public FeatureFlagMutationResult Reset(uint featureId) => inner.Reset(featureId);
 }
 
 file sealed class Fixture : IDisposable

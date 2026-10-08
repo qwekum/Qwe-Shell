@@ -5,6 +5,7 @@ front end:
 
 ```text
 char* shell_studio_parse(const wchar_t* utf16Text, size_t utf16Length);
+char* shell_studio_parse_localization(const wchar_t* utf16Text, size_t utf16Length);
 char* shell_studio_capabilities();
 void  shell_studio_free(void* pointer);
 ```
@@ -36,6 +37,12 @@ command, evaluates an expression, or loads Explorer state. Literal and
 runtime-dependent import handling belongs to the managed workspace. A dynamic
 import can be represented by a warning, while the original expression remains
 available for review.
+
+Resolved `import lang` and `import loc` files use the localization entry point,
+which validates with the runtime's localization grammar. Ordinary configuration
+parsing remains unchanged. The workspace derives this role from the shared
+frontend's tokens, retains it through edits and undo/redo, and diagnoses a file
+imported in conflicting roles. Neither entry point evaluates expressions.
 
 The front end bounds source and tree growth before returning a document. It
 also preflights the complete JSON shape, including escaped text, before the
@@ -71,10 +78,15 @@ ternaries contain condition, true branch, then false branch; statements and
 arrays retain source order. The `text` span is always the exact original
 source, including quotes and operators.
 
-The generic node path intentionally retains unknown identifiers and newer
-runtime syntax for safe inspection. It does not promote them to visual
-coverage. `shell_studio_capabilities()` therefore reports `complete: false`
-until every identifier is connected to a reviewed visual control. The current
+The generic node path intentionally retains genuinely unknown syntax for safe
+inspection and reports `GRAPH_UNMAPPED`; it does not promote that syntax to
+visual coverage. Data-defined identifiers are different: localization, image,
+SVG, runtime menu-id, and imported-variable member families use the reviewed
+typed identifier/value/call controls, so their names do not need a finite
+enumeration. `shell_studio_capabilities()` reports visual coverage complete
+only when every source-dispatched callable has an insertion, every dynamic
+family probe parses, and no source hash is unmapped. Runtime semantic
+equivalence remains an independent, explicitly incomplete gate. The current
 catalogue is emitted in
 [`function-coverage.json`](function-coverage.json). Its counts and exclusions
 are machine-readable; every advertised insertion is checked by the exported
@@ -94,10 +106,11 @@ identifier, value/call shape, and ordered argument count, then validates the
 result before adding nodes. The `dynamicFamilies` records distinguish syntax
 checks from runtime symbol resolution. There is no evaluation during insertion.
 
-Known parser/runtime discrepancies are retained as excluded candidates. For
-example, `command.random` has no command dispatch branch, and package aliases'
-`title` member is accepted by verification but has no runtime result branch.
-Neither is offered as a working built-in. Existing source remains inspectable.
+Unsupported candidates remain recorded with reasons. `command.random` has no
+command dispatch branch, and package aliases' `title` member has no runtime
+result branch. The shared verifier now rejects both instead of accepting
+constructs that cannot produce their advertised behavior. Existing source
+remains inspectable with diagnostics.
 
 To refresh the inventory, first build the canonical native DLL from the current
 parser sources, run `python src/studio/tools/generate_function_inventory.py`,
@@ -130,3 +143,41 @@ diagnostics. Resource-limit preflight runs before the recursive shared parser.
 Native unit tests establish lexical and syntax-tree behavior only.
 They do not establish runtime semantic equivalence, Explorer behavior,
 installer behavior, CI, or human visual acceptance.
+
+## Source association and imports
+
+The managed workspace resolves configuration imports against the current
+unsaved document set and retains each import occurrence's identity. A source
+reference can carry the file path, declaration span, node ID, current-file
+hash, and import-occurrence ID. The workspace validates all of those facts
+before enabling an edit; a stale file, changed span, missing occurrence, or
+ambiguous declaration remains inspectable as evidence and produces a
+diagnostic instead of silently rebinding the edit.
+
+Files opened explicitly or left dirty after an import is removed remain
+available for source inspection. They are marked detached and are excluded
+from effective preview evaluation until the root's current import graph
+reaches them again. Configuration, localization, and language import roles
+are retained through source edits and undo/redo; conflicting roles for one
+file are diagnosed. None of these workspace operations evaluates a command.
+
+## Preview evaluation and brokered reads
+
+Native preview uses the runtime parser and expression objects with a
+request-owned capability policy. Pure evaluation remains inside the worker.
+Files, environment values, registry values, and image/font/icon resources are
+available only after the user enables **Preview read scopes** for the open
+workspace. The managed broker snapshots those exact reads by revision; a
+configuration or template cannot enlarge the policy, and network or mutation
+requests remain unavailable.
+
+Broker entries are matched by canonical function identity and the complete
+serialized argument list. One registry key scope supplies `reg.exists(key)`
+and `reg.get(key)`; one named-value scope supplies `reg.exists(key, value)` and
+`reg.get(key, value)`. The documented bare `reg(...)` read alias is normalized
+to `reg.get` at the native broker boundary while retaining the exact arguments,
+so it cannot broaden the granted hive, key, or value. Missing, disabled, stale,
+or mismatched reads return an explicit unavailable result. These preview-read
+rules are separate from automatic context-menu materialization, whose smaller
+positive allowlist and completeness reporting are documented in
+[capture-protocol.md](capture-protocol.md#read-only-materialization-policy-and-bounds).

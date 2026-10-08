@@ -359,7 +359,7 @@ namespace Nilesoft
 			}
 		}
 
-		bool Selections::verify_mode(SelectionMode mode)
+		bool Selections::verify_mode(SelectionMode mode) const
 		{
 			bool result = true;
 			if(Types[FSO_TASKBAR]) 

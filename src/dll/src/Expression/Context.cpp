@@ -146,6 +146,28 @@ namespace Nilesoft
 
 		Object Context::Eval(Expression *e)
 		{
+			if(Preview)
+			{
+				if(!e || !Preview->Enter()) return nullptr;
+				struct DepthExit { PreviewPolicy* policy; ~DepthExit() { --policy->depth; } } exit{Preview};
+				try
+				{
+					auto value = e->Eval(this).move();
+					if(Preview->failed)
+					{
+						if(Preview->unavailable) Preview->unavailable(e);
+						return nullptr;
+					}
+					if(Preview->observed) Preview->observed(e, value);
+					return value.move();
+				}
+				catch(...)
+				{
+					Preview->Fail("PREVIEW_EVALUATION", L"The native expression could not be evaluated in this preview context.");
+					if(Preview->unavailable) Preview->unavailable(e);
+					return nullptr;
+				}
+			}
 			if(e) try 
 			{
 				return e->Eval(this).move();

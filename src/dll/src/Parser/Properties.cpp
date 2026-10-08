@@ -622,6 +622,10 @@ namespace Nilesoft
 				if(menu->is_separator() || menu->is_main()) return true;
 				error(TokenError::OpenParenExpected, prevCol);
 			}
+			// The native parser is the source of truth for declaration spans.  Keep
+			// the insertion point immediately after the opening delimiter so an
+			// empty or partially-invalid property list remains editable.
+			studio_set_property_insert(l->index);
 
 			auto start_column = l->column;
 
@@ -636,20 +640,27 @@ namespace Nilesoft
 					error(TokenError::PropertyUnexpected, l->column);
 
 				start_column = l->column;
+				const auto property_start = l->index;
 				Ident id;
 				parse_property_ident(id);
+				const auto property_name_end = l->index;
 
+				// Both accepted spellings must enter the same command-block parser.
+				if(id[0] == MENU_CMDS) id.set(0, MENU_COMMANDS);
 				id.signer = expect_assign();
+				std::size_t property_value_start = l->index;
 				auto verified = verify(menu, id, id.signer);
 				error_if(verified != TokenError::None, verified, start_column);
 
 				std::unique_ptr<Expression> expr;
+				const Expression* studio_expression = nullptr;
 
 				prevCol = l->column - 1;
 
 				if(id.signer)
 				{
 					skip();
+					property_value_start = l->index;
 					prevCol = l->column - 1;
 					if(id.front(MENU_TYPE))
 					{
@@ -665,11 +676,16 @@ namespace Nilesoft
 						//auto col = l->column;
 					//	auto prarse_as_value = id.front({MENU_WINDOW});
 
-						const auto l = id.length();
+						const auto property_length = id.length();
 						expr.reset(parse_property(id, false));
+						studio_expression = expr.get();
 						//	return error(TokenError::PropertyValue, col);
-						if(l == id.length() && !expr)
+						if(property_length == id.length() && !expr)
+						{
+							studio_add_property(property_start, property_name_end,
+								property_value_start, l->index, studio_expression);
 							continue;
+						}
 					}
 				}
 
@@ -689,6 +705,9 @@ namespace Nilesoft
 					switch(id[0])
 					{
 						case MENU_TYPE:
+							break;
+						case MENU_ID:
+							menu->explicit_id = expr.release();
 							break;
 						case MENU_CONDITION:
 						case MENU_WHERE:
@@ -788,6 +807,12 @@ namespace Nilesoft
 						}
 					}
 				}
+
+				// Keep the native expression object alive through this call.  Several
+				// switch arms transfer it into the menu, while the source-backed
+				// projector only borrows the pointer for the DTO copy.
+				studio_add_property(property_start, property_name_end,
+					property_value_start, l->index, studio_expression);
 				menu->properties++;
 			}
 
@@ -854,9 +879,12 @@ namespace Nilesoft
 		{
 			auto start_item = l->column;
 			error_if(!expect('('), TokenError::OpenParenExpected, prevCol);
+			studio_set_property_insert(l->index);
 
+			const Expression* studio_expression = nullptr;
 			auto _parse_expression = [&](auto_expr& dst, bool skip = false) {
 				dst = parse_expression();
+				studio_expression = dst.get();
 				if(skip) dst.reset();
 				item->properties += dst != nullptr;
 			};
@@ -870,9 +898,22 @@ namespace Nilesoft
 				if(l->tok == ')') break;
 
 				start_column = l->column;
+				const auto property_start = l->index;
 				Ident id;
 				parse_property_ident(id);
+				const auto property_name_end = l->index;
+				if(action == IDENT_REMOVE && id[0] == MENU_TEXT || action == IDENT_REMOVE && id[0] == MENU_TITLE ||
+					action == IDENT_REMOVE && id[0] == MENU_TIP || action == IDENT_REMOVE && id[0] == MENU_SUB ||
+					action == IDENT_REMOVE && id[0] == IDENT_MENU || action == IDENT_REMOVE && id[0] == IDENT_MOVE ||
+					action == IDENT_REMOVE && id[0] == MENU_PARENT || action == IDENT_REMOVE && id[0] == MENU_POS ||
+					action == IDENT_REMOVE && id[0] == MENU_POSITION || action == IDENT_REMOVE && id[0] == MENU_SEP ||
+					action == IDENT_REMOVE && id[0] == MENU_SEPARATOR || action == IDENT_REMOVE && id[0] == MENU_ICON ||
+					action == IDENT_REMOVE && id[0] == MENU_IMAGE || action == IDENT_REMOVE && id[0] == MENU_KEYS ||
+					action == IDENT_REMOVE && id[0] == MENU_CHECKED || action == IDENT_REMOVE && id[0] == MENU_INVOKE)
+					return error(TokenError::PropertyUnexpected, start_column);
 				id.signer = expect_assign(!id.equals(0, { MENU_SEP, MENU_SEPARATOR }));
+				const auto property_value_start = l->index;
+				studio_expression = nullptr;
 
 				prevCol = l->column;
 
@@ -941,6 +982,7 @@ namespace Nilesoft
 							item->separator =new NumberExpression(IDENT_BOTH);
 							item->properties++;
 						}
+						else error(TokenError::PropertyUnexpected, start_column);
 						break;
 					case MENU_ICON:
 					case MENU_IMAGE:
@@ -970,9 +1012,11 @@ namespace Nilesoft
 							item->properties++;
 						}
 						break;
-					default:
+				default:
 						return error(TokenError::PropertyUndefined, start_column);
 				}
+				studio_add_property(property_start, property_name_end,
+					property_value_start, l->index, studio_expression);
 			}
 
 			if(!item->has_clsid)

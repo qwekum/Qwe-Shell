@@ -226,7 +226,7 @@ namespace Nilesoft
 
 			static std::wstring_view GetRoot(const std::wstring_view &path)
 			{
-				if(path[1] == ':' && path[2] == '\\')
+				if(path.size() >= 3 && path[1] == ':' && path[2] == '\\')
 					return path.substr(0, 3);
 				return std::move(std::wstring_view());
 			}
@@ -592,12 +592,13 @@ namespace Nilesoft
 				auto p = FindLastSepatartor(path);
 				p = p == path.npos ? 0 : p + 1;
 
-				string name = path.substr(p);
+				// Return a view into the caller's path, never a temporary string.
+				auto name = path.substr(p);
 
-				p = name.last_index_of(L'.', false);
+				p = name.find_last_of(L'.');
 				if(p > 0 && p < name.npos)
 				{
-					return name.substr(p).move();
+					return name.substr(p);
 				}
 				return {};
 			}
@@ -714,7 +715,7 @@ namespace Nilesoft
 
 			static bool IsCLSID(const std::wstring_view &path)
 			{
-				if(path.length() >= 40 /*&& path.Length() == 40*/) //40
+				if(path.length() < 3 || path.length() >= 40 /*&& path.Length() == 40*/) //40
 					return false;
 				return ((path[0] == L':' && path[1] == L':' && path[2] == L'{'));
 			}

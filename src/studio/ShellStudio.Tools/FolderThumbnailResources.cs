@@ -116,25 +116,17 @@ public static class FolderThumbnailResources
         byte[] iconBytes,
         string expectedHash,
         string recoveryDirectory,
+        IToolEnvironment environment,
         CancellationToken cancellationToken)
-        => Task.Run(() => SetCore(resourcePath, iconBytes, expectedHash, recoveryDirectory, cancellationToken), cancellationToken);
+    {
+        ArgumentNullException.ThrowIfNull(environment);
+        return Task.Run(() => SetCore(resourcePath, iconBytes, expectedHash, recoveryDirectory, environment, cancellationToken), cancellationToken);
+    }
 
     /// <summary>
     /// Recovers a committed or interrupted operation only when the target still
     /// has the exact recorded post-mutation hash.  Unknown current content is
     /// treated as an external edit and is never overwritten.
-    /// </summary>
-    public static Task<RecoveryResult> RecoverAsync(
-        string recoveryDirectory,
-        CancellationToken cancellationToken = default)
-        => Task.Run(() => RecoverCore(recoveryDirectory, environment: null, cancellationToken: cancellationToken), cancellationToken);
-
-    /// <summary>
-    /// Recovers a resource through the same reviewed mutation boundary used
-    /// by the tool host.  The legacy overload above remains useful for the
-    /// standalone resource tests, while journal recovery must provide the
-    /// environment so a protected target cannot bypass review-only or
-    /// AllowSystem checks.
     /// </summary>
     public static Task<RecoveryResult> RecoverAsync(
         string recoveryDirectory,
@@ -159,6 +151,7 @@ public static class FolderThumbnailResources
         byte[] iconBytes,
         string expectedHash,
         string recoveryDirectory,
+        IToolEnvironment environment,
         CancellationToken cancellationToken)
     {
         string path = "";
@@ -179,6 +172,7 @@ public static class FolderThumbnailResources
             EnsureWindowsX64();
             path = Path.GetFullPath(resourcePath);
             protectedTarget = IsProtectedSystemResource(path);
+            environment.DemandMutation(path, systemOperation: protectedTarget);
             recovery = PrepareRecoveryDirectory(recoveryDirectory);
             EnsureSameVolume(path, recovery);
             if (protectedTarget) privileges = PrivilegeScope.Acquire();
@@ -303,7 +297,7 @@ public static class FolderThumbnailResources
 
     private static RecoveryResult RecoverCore(
         string recoveryDirectory,
-        IToolEnvironment? environment,
+        IToolEnvironment environment,
         CancellationToken cancellationToken)
     {
         string recovery;
@@ -334,7 +328,7 @@ public static class FolderThumbnailResources
                 EnsureSameVolume(record.ResourcePath, recovery);
                 EnsureNoReparseAncestors(record.ResourcePath);
                 bool protectedTarget = IsProtectedSystemResource(record.ResourcePath);
-                environment?.DemandMutation(record.ResourcePath, systemOperation: protectedTarget);
+                environment.DemandMutation(record.ResourcePath, systemOperation: protectedTarget);
                 if (protectedTarget && privileges is null)
                     privileges = PrivilegeScope.Acquire();
                 ValidateExpectedHash(record.ExpectedHash);
@@ -1079,7 +1073,8 @@ public static class FolderThumbnailResources
             if (handle == 0) return;
             nint current = handle;
             handle = 0;
-            if (!EndUpdateResource(current, true)) { }
+            if (!EndUpdateResource(current, true))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Discarding the resource update failed.");
         }
     }
 

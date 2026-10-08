@@ -2,10 +2,10 @@
   "version": 1,
   "scope": "Runtime menu properties and declarative SETTING trees; function inventory is separate.",
   "sourceHashes": {
-    "Properties.cpp": "466C0BA4E26CA23513BB16E0E05DC34A83326CC1A01A040DC715A7E05296D1B1",
-    "Verification.cpp": "5195914D7166D2E633222741D9A7B2FBC3DA74AE888DE7CBE9CBF91FE9F7E1D7",
-    "Parser.cpp": "02923C47CB9A512EC5650F3827D23374AE32338532B5FDEA2EC1F47964A0F1CD",
-    "IdentHash.h": "9F8E4A116C63A28E26C4EFDF38A5786D18BF883CA688E3425CB4997168AE527A"
+    "Properties.cpp": "1D17D16722378E803F5BF8074B4D189AD8F3503D92CD965DB11A9796D7AF93E2",
+    "Verification.cpp": "ADB55158A1E0D81A78BAA30ADDF83ECA9D646C536BFA4BEB5038A3E967BADB33",
+    "Parser.cpp": "C5A0A074C391FBC5B98EC1492F5A55527BE29BC99CB7058B1D0ADF1BA74FEF4D",
+    "IdentHash.h": "B750572E02E5E6487D48456ED57C0844731CC0A9C66E76F15455E4B2DE875F14"
   },
   "properties": [
     {
@@ -116,8 +116,7 @@
       "name": "checked",
       "contexts": {
         "item": "optional",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -130,8 +129,7 @@
       },
       "allowedOn": [
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -635,8 +633,7 @@
         "root": "optional",
         "menu": "optional",
         "item": "optional",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -651,8 +648,7 @@
         "root",
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -816,8 +812,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -831,8 +826,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -840,8 +834,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -855,8 +848,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -865,8 +857,7 @@
         "root": "optional",
         "menu": "optional",
         "item": "optional",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -881,8 +872,7 @@
         "root",
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1046,8 +1036,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1061,8 +1050,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1070,8 +1058,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1085,8 +1072,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1113,8 +1099,7 @@
       "contexts": {
         "item": "optional",
         "command": "optional",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1129,16 +1114,14 @@
       "allowedOn": [
         "item",
         "command",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
       "name": "keys",
       "contexts": {
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1151,8 +1134,7 @@
       },
       "allowedOn": [
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1179,8 +1161,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1194,8 +1175,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1229,8 +1209,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1244,8 +1223,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1253,8 +1231,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1268,8 +1245,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1298,8 +1274,7 @@
         "menu": "required",
         "item": "required",
         "separator": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1315,8 +1290,7 @@
         "menu",
         "item",
         "separator",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1326,8 +1300,7 @@
         "menu": "required",
         "item": "required",
         "separator": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1343,8 +1316,7 @@
         "menu",
         "item",
         "separator",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1378,8 +1350,7 @@
       "contexts": {
         "menu": "optional",
         "item": "optional",
-        "modify": "optional",
-        "remove": "optional"
+        "modify": "optional"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1393,8 +1364,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1402,8 +1372,7 @@
       "contexts": {
         "menu": "optional",
         "item": "optional",
-        "modify": "optional",
-        "remove": "optional"
+        "modify": "optional"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1417,8 +1386,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1426,8 +1394,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1441,8 +1408,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1450,8 +1416,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1465,8 +1430,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1474,8 +1438,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1489,8 +1452,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1498,8 +1460,7 @@
       "contexts": {
         "menu": "required",
         "item": "required",
-        "modify": "required",
-        "remove": "required"
+        "modify": "required"
       },
       "visualKind": "expression",
       "expression": true,
@@ -1513,8 +1474,7 @@
       "allowedOn": [
         "menu",
         "item",
-        "modify",
-        "remove"
+        "modify"
       ]
     },
     {
@@ -1701,7 +1661,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 992
+        "line": 1341
       }
     },
     {
@@ -1717,7 +1677,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 993
+        "line": 1342
       }
     },
     {
@@ -1733,7 +1693,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 994
+        "line": 1343
       }
     },
     {
@@ -1749,7 +1709,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 995
+        "line": 1344
       }
     },
     {
@@ -1765,7 +1725,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 996
+        "line": 1345
       }
     },
     {
@@ -1781,7 +1741,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 997
+        "line": 1346
       }
     },
     {
@@ -1797,7 +1757,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 998
+        "line": 1347
       }
     },
     {
@@ -1813,7 +1773,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 999
+        "line": 1348
       }
     },
     {
@@ -1829,7 +1789,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1000
+        "line": 1349
       }
     },
     {
@@ -1845,7 +1805,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1001
+        "line": 1350
       }
     },
     {
@@ -1861,7 +1821,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 956
+        "line": 1305
       }
     },
     {
@@ -1877,7 +1837,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 957
+        "line": 1306
       }
     },
     {
@@ -1893,7 +1853,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 958
+        "line": 1307
       }
     },
     {
@@ -1909,7 +1869,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 959
+        "line": 1308
       }
     },
     {
@@ -1925,7 +1885,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 960
+        "line": 1309
       }
     },
     {
@@ -1941,7 +1901,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 963
+        "line": 1312
       }
     },
     {
@@ -1957,7 +1917,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 964
+        "line": 1313
       }
     },
     {
@@ -1973,7 +1933,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 965
+        "line": 1314
       }
     },
     {
@@ -1989,7 +1949,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 966
+        "line": 1315
       }
     },
     {
@@ -2005,7 +1965,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 967
+        "line": 1316
       }
     },
     {
@@ -2021,7 +1981,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 827
+        "line": 1176
       }
     },
     {
@@ -2037,7 +1997,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 828
+        "line": 1177
       }
     },
     {
@@ -2053,7 +2013,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 829
+        "line": 1178
       }
     },
     {
@@ -2069,7 +2029,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 830
+        "line": 1179
       }
     },
     {
@@ -2085,7 +2045,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 832
+        "line": 1181
       }
     },
     {
@@ -2101,7 +2061,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 833
+        "line": 1182
       }
     },
     {
@@ -2117,7 +2077,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 835
+        "line": 1184
       }
     },
     {
@@ -2133,7 +2093,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 837
+        "line": 1186
       }
     },
     {
@@ -2149,7 +2109,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 838
+        "line": 1187
       }
     },
     {
@@ -2165,7 +2125,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 839
+        "line": 1188
       }
     },
     {
@@ -2181,7 +2141,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 841
+        "line": 1190
       }
     },
     {
@@ -2197,7 +2157,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 842
+        "line": 1191
       }
     },
     {
@@ -2213,7 +2173,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 845
+        "line": 1194
       }
     },
     {
@@ -2229,7 +2189,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 846
+        "line": 1195
       }
     },
     {
@@ -2245,7 +2205,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 847
+        "line": 1196
       }
     },
     {
@@ -2261,7 +2221,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 849
+        "line": 1198
       }
     },
     {
@@ -2277,7 +2237,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 850
+        "line": 1199
       }
     },
     {
@@ -2293,7 +2253,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 853
+        "line": 1202
       }
     },
     {
@@ -2309,7 +2269,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 854
+        "line": 1203
       }
     },
     {
@@ -2325,7 +2285,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 855
+        "line": 1204
       }
     },
     {
@@ -2341,7 +2301,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 856
+        "line": 1205
       }
     },
     {
@@ -2357,7 +2317,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 857
+        "line": 1206
       }
     },
     {
@@ -2373,7 +2333,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 858
+        "line": 1207
       }
     },
     {
@@ -2389,7 +2349,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 859
+        "line": 1208
       }
     },
     {
@@ -2405,7 +2365,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 860
+        "line": 1209
       }
     },
     {
@@ -2421,7 +2381,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 862
+        "line": 1211
       }
     },
     {
@@ -2437,7 +2397,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 863
+        "line": 1212
       }
     },
     {
@@ -2453,7 +2413,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 864
+        "line": 1213
       }
     },
     {
@@ -2469,7 +2429,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 865
+        "line": 1214
       }
     },
     {
@@ -2485,7 +2445,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 866
+        "line": 1215
       }
     },
     {
@@ -2501,7 +2461,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 870
+        "line": 1219
       }
     },
     {
@@ -2517,7 +2477,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 871
+        "line": 1220
       }
     },
     {
@@ -2533,7 +2493,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 872
+        "line": 1221
       }
     },
     {
@@ -2549,7 +2509,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 873
+        "line": 1222
       }
     },
     {
@@ -2565,7 +2525,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 874
+        "line": 1223
       }
     },
     {
@@ -2581,7 +2541,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 875
+        "line": 1224
       }
     },
     {
@@ -2597,7 +2557,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 878
+        "line": 1227
       }
     },
     {
@@ -2613,7 +2573,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 879
+        "line": 1228
       }
     },
     {
@@ -2629,7 +2589,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 880
+        "line": 1229
       }
     },
     {
@@ -2645,7 +2605,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 881
+        "line": 1230
       }
     },
     {
@@ -2661,7 +2621,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 882
+        "line": 1231
       }
     },
     {
@@ -2677,7 +2637,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 883
+        "line": 1232
       }
     },
     {
@@ -2693,7 +2653,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 884
+        "line": 1233
       }
     },
     {
@@ -2709,7 +2669,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 885
+        "line": 1234
       }
     },
     {
@@ -2725,7 +2685,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 886
+        "line": 1235
       }
     },
     {
@@ -2741,7 +2701,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 887
+        "line": 1236
       }
     },
     {
@@ -2757,7 +2717,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 888
+        "line": 1237
       }
     },
     {
@@ -2773,7 +2733,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 892
+        "line": 1241
       }
     },
     {
@@ -2789,7 +2749,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 893
+        "line": 1242
       }
     },
     {
@@ -2805,7 +2765,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 894
+        "line": 1243
       }
     },
     {
@@ -2821,7 +2781,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 895
+        "line": 1244
       }
     },
     {
@@ -2837,7 +2797,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 896
+        "line": 1245
       }
     },
     {
@@ -2853,7 +2813,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 897
+        "line": 1246
       }
     },
     {
@@ -2869,7 +2829,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 898
+        "line": 1247
       }
     },
     {
@@ -2885,7 +2845,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 899
+        "line": 1248
       }
     },
     {
@@ -2901,7 +2861,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 900
+        "line": 1249
       }
     },
     {
@@ -2917,7 +2877,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 904
+        "line": 1253
       }
     },
     {
@@ -2933,7 +2893,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 905
+        "line": 1254
       }
     },
     {
@@ -2949,7 +2909,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 906
+        "line": 1255
       }
     },
     {
@@ -2965,7 +2925,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 908
+        "line": 1257
       }
     },
     {
@@ -2981,7 +2941,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 909
+        "line": 1258
       }
     },
     {
@@ -2997,7 +2957,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 911
+        "line": 1260
       }
     },
     {
@@ -3013,7 +2973,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 912
+        "line": 1261
       }
     },
     {
@@ -3029,7 +2989,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 913
+        "line": 1262
       }
     },
     {
@@ -3045,7 +3005,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 915
+        "line": 1264
       }
     },
     {
@@ -3061,7 +3021,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 916
+        "line": 1265
       }
     },
     {
@@ -3077,7 +3037,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 919
+        "line": 1268
       }
     },
     {
@@ -3093,7 +3053,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 920
+        "line": 1269
       }
     },
     {
@@ -3109,7 +3069,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 921
+        "line": 1270
       }
     },
     {
@@ -3125,7 +3085,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 923
+        "line": 1272
       }
     },
     {
@@ -3141,7 +3101,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 924
+        "line": 1273
       }
     },
     {
@@ -3157,7 +3117,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 927
+        "line": 1276
       }
     },
     {
@@ -3173,7 +3133,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 928
+        "line": 1277
       }
     },
     {
@@ -3189,7 +3149,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 929
+        "line": 1278
       }
     },
     {
@@ -3205,7 +3165,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 931
+        "line": 1280
       }
     },
     {
@@ -3221,7 +3181,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 932
+        "line": 1281
       }
     },
     {
@@ -3237,7 +3197,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 948
+        "line": 1297
       }
     },
     {
@@ -3253,7 +3213,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 949
+        "line": 1298
       }
     },
     {
@@ -3269,7 +3229,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 950
+        "line": 1299
       }
     },
     {
@@ -3285,7 +3245,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 951
+        "line": 1300
       }
     },
     {
@@ -3301,7 +3261,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 952
+        "line": 1301
       }
     },
     {
@@ -3317,7 +3277,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 937
+        "line": 1286
       }
     },
     {
@@ -3333,7 +3293,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 938
+        "line": 1287
       }
     },
     {
@@ -3349,7 +3309,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 939
+        "line": 1288
       }
     },
     {
@@ -3365,7 +3325,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 940
+        "line": 1289
       }
     },
     {
@@ -3381,7 +3341,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 941
+        "line": 1290
       }
     },
     {
@@ -3397,7 +3357,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 942
+        "line": 1291
       }
     },
     {
@@ -3413,7 +3373,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 943
+        "line": 1292
       }
     },
     {
@@ -3429,7 +3389,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 944
+        "line": 1293
       }
     },
     {
@@ -3445,7 +3405,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 945
+        "line": 1294
       }
     },
     {
@@ -3461,7 +3421,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 971
+        "line": 1320
       }
     },
     {
@@ -3477,7 +3437,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 972
+        "line": 1321
       }
     },
     {
@@ -3493,7 +3453,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 973
+        "line": 1322
       }
     },
     {
@@ -3509,7 +3469,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 974
+        "line": 1323
       }
     },
     {
@@ -3525,7 +3485,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 975
+        "line": 1324
       }
     },
     {
@@ -3541,7 +3501,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 976
+        "line": 1325
       }
     },
     {
@@ -3557,7 +3517,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 977
+        "line": 1326
       }
     },
     {
@@ -3573,7 +3533,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 978
+        "line": 1327
       }
     },
     {
@@ -3589,7 +3549,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 979
+        "line": 1328
       }
     },
     {
@@ -3605,7 +3565,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 980
+        "line": 1329
       }
     },
     {
@@ -3621,7 +3581,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 981
+        "line": 1330
       }
     },
     {
@@ -3637,7 +3597,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 982
+        "line": 1331
       }
     },
     {
@@ -3653,7 +3613,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 983
+        "line": 1332
       }
     },
     {
@@ -3669,7 +3629,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 984
+        "line": 1333
       }
     },
     {
@@ -3685,7 +3645,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 985
+        "line": 1334
       }
     },
     {
@@ -3701,7 +3661,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 986
+        "line": 1335
       }
     },
     {
@@ -3717,7 +3677,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 987
+        "line": 1336
       }
     },
     {
@@ -3733,7 +3693,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 988
+        "line": 1337
       }
     },
     {
@@ -3749,7 +3709,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1065
+        "line": 1416
       }
     },
     {
@@ -3765,7 +3725,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1066
+        "line": 1417
       }
     },
     {
@@ -3781,7 +3741,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1067
+        "line": 1418
       }
     },
     {
@@ -3797,7 +3757,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1068
+        "line": 1419
       }
     },
     {
@@ -3813,7 +3773,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1069
+        "line": 1420
       }
     },
     {
@@ -3829,7 +3789,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1070
+        "line": 1421
       }
     },
     {
@@ -3845,7 +3805,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1072
+        "line": 1423
       }
     },
     {
@@ -3861,7 +3821,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1073
+        "line": 1424
       }
     },
     {
@@ -3877,7 +3837,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1074
+        "line": 1425
       }
     },
     {
@@ -3893,7 +3853,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1075
+        "line": 1426
       }
     },
     {
@@ -3909,7 +3869,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1044
+        "line": 1395
       }
     },
     {
@@ -3925,7 +3885,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1045
+        "line": 1396
       }
     },
     {
@@ -3941,7 +3901,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1046
+        "line": 1397
       }
     },
     {
@@ -3957,7 +3917,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1047
+        "line": 1398
       }
     },
     {
@@ -3973,7 +3933,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1048
+        "line": 1399
       }
     },
     {
@@ -3989,7 +3949,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1049
+        "line": 1400
       }
     },
     {
@@ -4005,7 +3965,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1050
+        "line": 1401
       }
     },
     {
@@ -4021,7 +3981,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1051
+        "line": 1402
       }
     },
     {
@@ -4037,7 +3997,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1052
+        "line": 1403
       }
     },
     {
@@ -4053,7 +4013,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1053
+        "line": 1404
       }
     },
     {
@@ -4069,7 +4029,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1054
+        "line": 1405
       }
     },
     {
@@ -4085,7 +4045,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1055
+        "line": 1406
       }
     },
     {
@@ -4101,7 +4061,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1056
+        "line": 1407
       }
     },
     {
@@ -4117,7 +4077,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1057
+        "line": 1408
       }
     },
     {
@@ -4133,7 +4093,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1058
+        "line": 1409
       }
     },
     {
@@ -4149,7 +4109,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1059
+        "line": 1410
       }
     },
     {
@@ -4165,7 +4125,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1060
+        "line": 1411
       }
     },
     {
@@ -4181,7 +4141,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1061
+        "line": 1412
       }
     },
     {
@@ -4197,7 +4157,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1023
+        "line": 1374
       }
     },
     {
@@ -4213,7 +4173,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1024
+        "line": 1375
       }
     },
     {
@@ -4229,7 +4189,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1025
+        "line": 1376
       }
     },
     {
@@ -4245,7 +4205,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1026
+        "line": 1377
       }
     },
     {
@@ -4261,7 +4221,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1027
+        "line": 1378
       }
     },
     {
@@ -4277,7 +4237,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1028
+        "line": 1379
       }
     },
     {
@@ -4293,7 +4253,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1029
+        "line": 1380
       }
     },
     {
@@ -4309,7 +4269,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1030
+        "line": 1381
       }
     },
     {
@@ -4325,7 +4285,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1031
+        "line": 1382
       }
     },
     {
@@ -4341,7 +4301,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1032
+        "line": 1383
       }
     },
     {
@@ -4357,7 +4317,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1033
+        "line": 1384
       }
     },
     {
@@ -4373,7 +4333,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1034
+        "line": 1385
       }
     },
     {
@@ -4389,7 +4349,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1035
+        "line": 1386
       }
     },
     {
@@ -4405,7 +4365,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1039
+        "line": 1390
       }
     },
     {
@@ -4421,7 +4381,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1040
+        "line": 1391
       }
     },
     {
@@ -4437,7 +4397,7 @@
       },
       "source": {
         "file": "src/dll/src/Parser/Parser.cpp",
-        "line": 1041
+        "line": 1392
       }
     }
   ],
@@ -4445,7 +4405,7 @@
     "MENU_ID is accepted by verify(menu) but has no parse_properties/parse_properties_command handler; it is not offered as a working property.",
     "MENU_CMDS is accepted by verify(menu) but parse_properties dispatch checks only MENU_COMMANDS; cmds is not offered as a working alias.",
     "The root context records internal NativeMenuType::Main verification, not an independently authored root declaration; the current parse_config entry point creates menu/item/separator nodes.",
-    "Modify/remove parse their own property switch rather than verify(menu). Removal parses but discards styling/movement values.",
+    "Modify/remove parse their own property switch rather than verify(menu). Removal accepts selectors and visibility only; styling and movement properties are diagnosed instead of discarded.",
     "Modify without CLSID requires a find/where selector and at least two effective properties; remove inserts visibility automatically.",
     "Property identifiers accept dotted and hyphenated separators through parse_property_ident; the inventory uses dotted canonical forms.",
     "Settings records come directly from SETTING initializers and preserve aliases pointing to the same runtime field. Expression does not imply evaluation during editing.",

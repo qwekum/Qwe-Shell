@@ -2,7 +2,10 @@
 
 The root README contains the approved product scope. This directory describes the implementation and its evidence. A successful build or local test run does not establish the Windows Explorer, installer, system-operation, or human acceptance gates in that scope.
 
-Start with [Build and run](build-and-run.md) for complete prerequisites and commands. See [the local verification record](local-verification.md) for the built artifact hashes and check results.
+Start with [Install and use](using-shell-studio.md) when the goal is to run the
+application or replace an existing normal Shell installation. [Build and run](build-and-run.md)
+contains contributor prerequisites and commands. See [the local verification
+record](local-verification.md) for built artifact hashes and check results.
 
 See the [current roadmap](roadmap.md) for delivery status and the
 [Sandbox integration record](sandbox-integration.md) for real guest installer
@@ -10,9 +13,9 @@ checks and their remaining qualification boundaries.
 
 ## Working with a configuration
 
-Open a root `.nss` configuration in Studio. The configuration view shows custom definitions without evaluating their commands or runtime conditions. Read-only import resolution loads supported deterministic paths and reports unresolved imports. Capture menu requests the actual classic menu from the matching native extension; open dynamic submenus during capture to include their children.
+Open a root `.nss` configuration in Studio. The configuration view shows custom definitions without evaluating their commands or runtime conditions. Read-only import resolution loads supported deterministic paths and reports unresolved imports. **Capture menu** requests the actual classic menu from the matching native extension. Once capture is armed, the extension reuses the live `construct_popup_entries` popup-construction path to materialize retained semantic submenu definitions into a bounded tree; opening, hovering, or scrolling every submenu is unnecessary. Automatic materialization uses a positive allowlist of read-only literal, control/math, string, selection, path, color, theme, view, and `this` reads. `cmd` and `args` remain syntax evidence: commands, assignments, mutating loops, unknown or unsupported functions, and unsafe providers are never executed and leave an explicit incomplete branch. An observed nested popup can add native-rendered appearance evidence without determining semantic child availability. Run one Studio instance per Windows user/session. A second instance cannot own the single capture endpoint and reports `CAPTURE_LISTENER` instead of presenting a false active state.
 
-Select a menu entry to edit its properties. Drag above or below an entry to reorder, or hold Shift while dropping on a submenu to move inside it. Alt+Up and Alt+Down provide keyboard movement. The scope selector controls generated native-entry matching rules. Removing a native entry creates a hide rule; removing a custom entry deletes its source definition. Ambiguous destinations, duplicate native matches, and unsupported moves produce diagnostics.
+Select a menu entry to edit its properties. Drag above or below an entry to reorder, or hold Shift while dropping on a submenu to move inside it. Alt+Up and Alt+Down provide keyboard movement. The scope selector controls generated native-entry matching rules. Removing a native entry creates a hide rule; removing a custom entry deletes its source definition. Entry details expose source, rule-outcome, property-effect, and effective-settings evidence when it was published. `settings.modify` gates changes to existing entries and `settings.new` gates custom definitions. Ordinary property controls create or update one durable scoped quick rule; **Open shared rule** is required before changing a broader handwritten rule. Ambiguous destinations, duplicate native matches, and unsupported moves produce diagnostics.
 
 Property expressions open an ordered tree on the Expression canvas. Card movement and zoom affect layout only. Edits are parsed without executing expressions. Save expression updates the workspace; Review & apply remains a separate action. Appearance & settings exposes configuration declarations and their value canvases.
 
@@ -34,6 +37,11 @@ Templates contain configuration, assets, metadata, and optional canvas layouts. 
 | Native capture and initializer sources | Classic-menu snapshots, provenance, transaction exclusion, generation reload |
 
 See [capture protocol](capture-protocol.md), [language coverage](language-coverage.md), and [tool parity](tool-parity.md) for their contracts and qualification boundaries.
+
+Ordinary build, launch, capture, and Explorer-refresh paths do not disable
+Microsoft Defender. The Defender Protection-history operation is a separate,
+explicitly reviewed system tool; its scope and qualification limits are recorded
+in [tool parity](tool-parity.md#deliberate-gaps-and-qualification-boundaries).
 
 ## Local checks
 

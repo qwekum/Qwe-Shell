@@ -115,7 +115,8 @@ int main()
 	assert(DocumentToJson(bounded).find("\"code\":\"LANG_LIMIT\"") != std::string::npos);
 
 	const auto capabilities = Nilesoft::Shell::StudioLanguage::CapabilitiesJson();
-	assert(capabilities.find("\"complete\":false") != std::string::npos);
+	assert(capabilities.find("\"complete\":true") != std::string::npos);
+	assert(capabilities.find("\"runtimeSemanticComplete\":false") != std::string::npos);
 	assert(capabilities.find("\"name\":\"menu\"") != std::string::npos);
 	std::cout << "ShellStudio.Language native tests passed\n";
 	return 0;

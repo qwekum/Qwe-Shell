@@ -140,12 +140,40 @@ public sealed class RecoveryJournal
         var backupName = $"registry-{_entries.Count:000000}.json";
         var backupPath = Path.Combine(_directory!, backupName);
         var count = 0;
-        var payload = CaptureRegistryTree(hive, keyPath, depth: 0, ref count);
+        // Callers intentionally read the root before entering this method.
+        // Prove that snapshot is still current, then use that exact snapshot
+        // as the journal's root rather than silently replacing it with a
+        // second read that could race an external writer.
+        var payload = CaptureRegistryTree(hive, keyPath, depth: 0, ref count, values);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(payload, Protocol.Json);
         _environment.Files.WriteAllBytes(backupPath, bytes);
-        _entries.Add(new JournalEntry($"{hive}\\{keyPath}", "registry", backupPath, null, null));
+        var hashBefore = RegistryFingerprint(payload);
+        _entries.Add(new JournalEntry($"{hive}\\{keyPath}", "registry", backupPath, hashBefore, null));
         WriteManifest(null, "changed");
         return backupPath;
+    }
+
+    /// <summary>
+    /// Capture the complete registry state after the associated mutation. The
+    /// post-mutation fingerprint is required for safe rollback: recovery must
+    /// refuse to overwrite an externally changed key tree.
+    /// </summary>
+    public string RecordRegistry(string hive, string keyPath)
+    {
+        EnsureStarted();
+        var fullPath = $"{hive}\\{keyPath}";
+        var index = _entries.FindIndex(e => e.Kind == "registry"
+            && e.Path.Equals(fullPath, StringComparison.OrdinalIgnoreCase)
+            && e.HashAfter is null);
+        if (index < 0)
+            throw new InvalidOperationException($"No pending registry journal entry exists for {fullPath}.");
+
+        var count = 0;
+        var current = CaptureRegistryTree(hive, keyPath, depth: 0, ref count);
+        var hashAfter = RegistryFingerprint(current);
+        _entries[index] = _entries[index] with { HashAfter = hashAfter };
+        WriteManifest(null, "changed");
+        return hashAfter;
     }
 
     public void Complete(bool success, IEnumerable<Diagnostic>? diagnostics = null)
@@ -239,7 +267,7 @@ public sealed class RecoveryJournal
                 }
                 else if (entry.Kind == "registry" && entry.BackupPath is not null)
                 {
-                    RestoreRegistryFile(entry.BackupPath, environment);
+                    RestoreRegistryFile(entry.BackupPath, environment, entry.HashBefore, entry.HashAfter);
                 }
                 else if (entry.Kind is not "file" and not "directory" and not "registry")
                     throw new InvalidDataException($"The recovery journal contains an unsupported entry kind '{entry.Kind}'.");
@@ -386,19 +414,32 @@ public sealed class RecoveryJournal
     private void RestoreRegistry(JournalEntry entry)
     {
         if (entry.BackupPath is null) return;
-        RestoreRegistryFile(entry.BackupPath, _environment);
+        RestoreRegistryFile(entry.BackupPath, _environment, entry.HashBefore, entry.HashAfter);
     }
 
-    private RegistryBackup CaptureRegistryTree(string hive, string keyPath, int depth, ref int count)
+    private RegistryBackup CaptureRegistryTree(
+        string hive,
+        string keyPath,
+        int depth,
+        ref int count,
+        IReadOnlyDictionary<string, RegistryValue>? suppliedRootValues = null)
     {
         if (depth > _environment.Options.MaxDepth)
             throw new InvalidOperationException("Registry backup exceeded the configured depth limit.");
         if (++count > _environment.Options.MaxItems)
             throw new InvalidOperationException("Registry backup exceeded the configured item limit.");
+        var exists = _environment.Registry.KeyExists(hive, keyPath);
+        var values = suppliedRootValues is not null
+            ? CloneAndVerifyRegistryValues(hive, keyPath, suppliedRootValues)
+            : exists ? CloneRegistryValues(_environment.Registry.Read(hive, keyPath))
+            : new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase);
+        if (!exists && values.Count > 0)
+            throw new IOException($"The registry snapshot for {hive}\\{keyPath} contains values but the key is missing.");
+
         var children = new List<RegistryBackup>();
         foreach (var child in _environment.Registry.EnumerateSubKeys(hive, keyPath).OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
             children.Add(CaptureRegistryTree(hive, keyPath + "\\" + child, depth + 1, ref count));
-        return new RegistryBackup(hive, keyPath, _environment.Registry.Read(hive, keyPath), children.ToArray());
+        return new RegistryBackup(hive, keyPath, values, children.ToArray(), exists);
     }
 
     private static void RestoreFileMetadata(JournalEntry entry, IToolEnvironment environment)
@@ -424,21 +465,155 @@ public sealed class RecoveryJournal
             environment.Files.SetAttributes(entry.Path, entry.AttributesBefore.Value);
     }
 
-    private static void RestoreRegistryFile(string path, IToolEnvironment environment)
+    private static void RestoreRegistryFile(
+        string path,
+        IToolEnvironment environment,
+        string? expectedBeforeHash,
+        string? expectedAfterHash)
     {
         var backup = JsonSerializer.Deserialize<RegistryBackup>(environment.Files.ReadAllBytes(path), Protocol.Json)
             ?? throw new InvalidDataException("Registry backup is invalid.");
+        if (!IsHash(expectedBeforeHash) || !IsHash(expectedAfterHash))
+            throw new InvalidDataException($"The recovery journal has no complete registry fingerprint for {backup.Hive}\\{backup.KeyPath}; refusing automatic recovery.");
+        if (!RegistryFingerprint(backup).Equals(expectedBeforeHash, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"The registry backup fingerprint does not match the journal for {backup.Hive}\\{backup.KeyPath}.");
+
         environment.DemandRegistryMutation(backup.Hive);
-        environment.Registry.DeleteTree(backup.Hive, backup.KeyPath);
-        RestoreRegistryTree(backup, environment);
+        var count = 0;
+        var current = CaptureRegistryTree(backup.Hive, backup.KeyPath, 0, ref count, environment);
+        if (!RegistryFingerprint(current).Equals(expectedAfterHash, StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"The registry target changed after the journal was written: {backup.Hive}\\{backup.KeyPath}");
+
+        RestoreRegistryTree(backup, current, environment);
+        count = 0;
+        var restored = CaptureRegistryTree(backup.Hive, backup.KeyPath, 0, ref count, environment);
+        if (!RegistryFingerprint(restored).Equals(expectedBeforeHash, StringComparison.OrdinalIgnoreCase))
+            throw new IOException($"The registry target changed during recovery: {backup.Hive}\\{backup.KeyPath}");
     }
 
-    private static void RestoreRegistryTree(RegistryBackup backup, IToolEnvironment environment)
+    private static RegistryBackup CaptureRegistryTree(
+        string hive,
+        string keyPath,
+        int depth,
+        ref int count,
+        IToolEnvironment environment)
     {
+        if (depth > environment.Options.MaxDepth)
+            throw new InvalidOperationException("Registry recovery exceeded the configured depth limit.");
+        if (++count > environment.Options.MaxItems)
+            throw new InvalidOperationException("Registry recovery exceeded the configured item limit.");
+        var exists = environment.Registry.KeyExists(hive, keyPath);
+        var values = exists
+            ? CloneRegistryValues(environment.Registry.Read(hive, keyPath))
+            : new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase);
+        var children = new List<RegistryBackup>();
+        foreach (var child in environment.Registry.EnumerateSubKeys(hive, keyPath).OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            children.Add(CaptureRegistryTree(hive, keyPath + "\\" + child, depth + 1, ref count, environment));
+        return new RegistryBackup(hive, keyPath, values, children.ToArray(), exists);
+    }
+
+    private static void RestoreRegistryTree(RegistryBackup backup, RegistryBackup current, IToolEnvironment environment)
+    {
+        if (!backup.Exists)
+        {
+            if (current.Exists) environment.Registry.DeleteTree(backup.Hive, backup.KeyPath);
+            return;
+        }
+
+        if (!current.Exists && backup.Values.Count == 0 && (backup.Children?.Length ?? 0) == 0)
+            return;
+
+        foreach (var value in current.Values.Values)
+        {
+            if (!backup.Values.ContainsKey(value.Name))
+                environment.Registry.DeleteValue(backup.Hive, backup.KeyPath, value.Name);
+        }
         foreach (var value in backup.Values.Values)
-            environment.Registry.SetValue(backup.Hive, backup.KeyPath, value.Name, RegistryJsonValue.ToObject(value.Value), value.Kind);
+            environment.Registry.SetValue(backup.Hive, backup.KeyPath, value.Name, RegistryObject(value), value.Kind);
+
+        var backupChildren = (backup.Children ?? []).ToDictionary(child => child.KeyPath, StringComparer.OrdinalIgnoreCase);
+        foreach (var child in current.Children ?? [])
+        {
+            if (!backupChildren.ContainsKey(child.KeyPath))
+                environment.Registry.DeleteTree(child.Hive, child.KeyPath);
+        }
+        var currentChildren = (current.Children ?? []).ToDictionary(child => child.KeyPath, StringComparer.OrdinalIgnoreCase);
         foreach (var child in backup.Children ?? [])
-            RestoreRegistryTree(child, environment);
+            RestoreRegistryTree(child, currentChildren.TryGetValue(child.KeyPath, out var existing) ? existing : new RegistryBackup(child.Hive, child.KeyPath, new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase), [], false), environment);
+    }
+
+    private static object? RegistryObject(RegistryValue value)
+    {
+        if (value.Value is JsonElement element && element.ValueKind == JsonValueKind.Array)
+        {
+            if (value.Kind == Microsoft.Win32.RegistryValueKind.MultiString)
+                return element.EnumerateArray().Select(item => item.GetString() ?? string.Empty).ToArray();
+            if (value.Kind == Microsoft.Win32.RegistryValueKind.Binary)
+                return element.EnumerateArray().Select(item => (byte)item.GetInt32()).ToArray();
+        }
+        return RegistryJsonValue.ToObject(value.Value);
+    }
+
+    private Dictionary<string, RegistryValue> CloneAndVerifyRegistryValues(
+        string hive,
+        string keyPath,
+        IReadOnlyDictionary<string, RegistryValue> supplied)
+    {
+        var observed = _environment.Registry.Read(hive, keyPath);
+        if (!RegistryValuesEquivalent(supplied, observed))
+            throw new IOException($"The registry key changed between its pre-read snapshot and journal capture: {hive}\\{keyPath}");
+        return CloneRegistryValues(supplied);
+    }
+
+    private static Dictionary<string, RegistryValue> CloneRegistryValues(IReadOnlyDictionary<string, RegistryValue> values)
+        => values.Values.ToDictionary(value => value.Name, value => value with { Value = CloneRegistryValue(value.Value) }, StringComparer.OrdinalIgnoreCase);
+
+    private static object? CloneRegistryValue(object? value) => value switch
+    {
+        byte[] bytes => bytes.ToArray(),
+        string[] strings => strings.ToArray(),
+        object[] objects => objects.Select(CloneRegistryValue).ToArray(),
+        _ => value
+    };
+
+    private static bool RegistryValuesEquivalent(IReadOnlyDictionary<string, RegistryValue> left, IReadOnlyDictionary<string, RegistryValue> right)
+    {
+        if (left.Count != right.Count) return false;
+        foreach (var (name, value) in left)
+        {
+            if (!right.TryGetValue(name, out var other) || value.Kind != other.Kind || !RegistryValueObjectsEqual(value.Value, other.Value))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool RegistryValueObjectsEqual(object? left, object? right)
+    {
+        if (ReferenceEquals(left, right)) return true;
+        if (left is byte[] leftBytes && right is byte[] rightBytes) return leftBytes.SequenceEqual(rightBytes);
+        if (left is string[] leftStrings && right is string[] rightStrings) return leftStrings.SequenceEqual(rightStrings, StringComparer.Ordinal);
+        if (left is object[] leftObjects && right is object[] rightObjects)
+            return leftObjects.Length == rightObjects.Length && leftObjects.Zip(rightObjects).All(pair => RegistryValueObjectsEqual(pair.First, pair.Second));
+        return Equals(left, right);
+    }
+
+    private static string RegistryFingerprint(RegistryBackup backup)
+    {
+        var builder = new StringBuilder();
+        AppendRegistryFingerprint(builder, backup);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(builder.ToString()))).ToLowerInvariant();
+    }
+
+    private static void AppendRegistryFingerprint(StringBuilder builder, RegistryBackup backup)
+    {
+        builder.Append(backup.Hive).Append('\0').Append(backup.KeyPath).Append('\0').Append(backup.Exists).Append('\0');
+        foreach (var value in backup.Values.Values.OrderBy(value => value.Name, StringComparer.OrdinalIgnoreCase))
+        {
+            builder.Append(value.Name).Append('\0').Append((int)value.Kind).Append('\0');
+            builder.Append(JsonSerializer.Serialize(value.Value, Protocol.Json)).Append('\0');
+        }
+        foreach (var child in (backup.Children ?? []).OrderBy(child => child.KeyPath, StringComparer.OrdinalIgnoreCase))
+            AppendRegistryFingerprint(builder, child);
     }
 
     private void WriteManifest(OperationPlan? plan, string state, IEnumerable<Diagnostic>? diagnostics = null)
@@ -469,7 +644,8 @@ public sealed class RecoveryJournal
         string Hive,
         string KeyPath,
         IReadOnlyDictionary<string, RegistryValue> Values,
-        RegistryBackup[]? Children = null);
+        RegistryBackup[]? Children = null,
+        bool Exists = true);
     private sealed record JournalManifest(int Version, string State, DateTimeOffset UpdatedUtc, OperationRequest Request, JournalEntry[] Entries, List<Diagnostic> Diagnostics);
 }
 

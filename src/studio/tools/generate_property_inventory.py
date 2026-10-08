@@ -131,10 +131,11 @@ def menu_properties() -> list[dict]:
         add(prefix + ".enabled " + prefix + ".disabled", "root menu item", "forbidden", kind="flag")
         add(" ".join(prefix + "." + suffix for suffix in ("inherit", "parent", "cmd", "none", "null", "nil")), "menu item", "forbidden", kind="flag")
         add(prefix + ".sel " + prefix + ".select", "menu item")
-    add("where condition find vis visibility sel mode text title tip sub menu move parent pos position keys checked invoke image icon image.sel image.select icon.sel icon.select", "modify remove", source="Properties.cpp:853-999")
+    add("where condition find vis visibility sel mode", "modify remove", source="Properties.cpp:853-999")
+    add("text title tip sub menu move parent pos position keys checked invoke image icon image.sel image.select icon.sel icon.select", "modify", source="Properties.cpp:853-999")
     add("path location in", "modify remove", source="Properties.cpp:898-902")
     add("clsid", "modify remove", kind="classIdSelector", value='"{00000000-0000-0000-0000-000000000000}"', source="Properties.cpp:808-851,891-897")
-    add("sep separator", "modify remove", "optional", source="Properties.cpp:930-941")
+    add("sep separator", "modify", "optional", source="Properties.cpp:930-941")
     for record in result.values():
         record["allowedOn"] = list(record["contexts"])
     return sorted(result.values(), key=lambda item: item["name"])
@@ -153,7 +154,7 @@ def main() -> None:
             "MENU_ID is accepted by verify(menu) but has no parse_properties/parse_properties_command handler; it is not offered as a working property.",
             "MENU_CMDS is accepted by verify(menu) but parse_properties dispatch checks only MENU_COMMANDS; cmds is not offered as a working alias.",
             "The root context records internal NativeMenuType::Main verification, not an independently authored root declaration; the current parse_config entry point creates menu/item/separator nodes.",
-            "Modify/remove parse their own property switch rather than verify(menu). Removal parses but discards styling/movement values.",
+            "Modify/remove parse their own property switch rather than verify(menu). Removal accepts selectors and visibility only; styling and movement properties are diagnosed instead of discarded.",
             "Modify without CLSID requires a find/where selector and at least two effective properties; remove inserts visibility automatically.",
             "Property identifiers accept dotted and hyphenated separators through parse_property_ident; the inventory uses dotted canonical forms.",
             "Settings records come directly from SETTING initializers and preserve aliases pointing to the same runtime field. Expression does not imply evaluation during editing.",

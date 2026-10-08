@@ -315,7 +315,7 @@ namespace Nilesoft
 			bool is_taskbar() const;
 			bool is_desktop_window() const;
 
-			bool verify_mode(SelectionMode mode);
+			bool verify_mode(SelectionMode mode) const;
 			bool verify_types(const FileSystemObjects &fso) const;
 			
 			void QuerySelectionMode();

@@ -7,15 +7,20 @@ all mutations through a reviewed `OperationPlan`, a bounded environment seam,
 and a recovery journal.
 
 Build and launch instructions are in [build-and-run.md](build-and-run.md).
-The [local verification record](local-verification.md) includes 34 managed tool
-fixture checks and four task-owned native resource checks. The rows marked
-Windows-only still require the disposable-VM acceptance matrix.
+The [local verification record](local-verification.md) records the current
+tool fixture/provider result and the separate 69-check tool matrix from the
+2026-09-11 integrated package checkpoint, including a copied-resource round
+trip and protected thumbnail-setting checks in a disposable Windows Sandbox.
+The rows marked Windows-only still require the disposable-VM acceptance matrix.
+Native menu capture, source associations, and semantic preview are tracked by
+the [capture protocol](capture-protocol.md), rather than counted as
+tool-operation parity.
 
 ## Pinned donor evidence
 
 | Donor | Pinned commit | Source evidence | Consolidated operation IDs |
 | --- | --- | --- | --- |
-| FolderThumbnailFix | `7f845506` (2026-01-04) | `Program.cs:43-94,193-284` checks Windows 11, restarts Explorer, clears thumbnail databases, and replaces resource icon group 6/1033 through Resource Hacker. | `folder.thumbnail.inspect`, `folder.thumbnail.apply`, `folder.thumbnail.restore`, `explorer.refresh` |
+| FolderThumbnailFix | `7f845506` (2026-01-04) | `Program.cs:43-94,193-284` checks Windows 11, restarts Explorer, clears thumbnail databases, and replaces resource icon group 6/1033 through Resource Hacker. | `folder.thumbnail.set`, `explorer.refresh`; legacy manual resource operations remain protocol-compatible but hidden in the GUI |
 | SetFolderType | `cdde0ee` (2026-02-05) | `Program.cs:349-429` recursively writes `[ViewState] FolderType` in `desktop.ini`, preserves other entries, and optionally removes the file. | `folder.type.inspect`, `folder.type.set`, `folder.type.remove`, `folder.type.discover` |
 | RightClickTools | `f68de3f` (2026-09-02) | `Program.cs:250-482,1009-1211,1318-1401,1582-1598,1854-2050,3341-3382` covers shell histories, PATH, ownership, ADS, visibility, Explorer restart, launches, shortcut conversion, photo dates, and the privileged Defender startup task. | `shell.history.clear`, `files.unblock`, `security.take-ownership`, `environment.path`, `shell.visibility`, `explorer.refresh`, `shortcut.convert-url`, `metadata.photo-date`, `launch.*` |
 | WinSetView | `fc4051c` (2026-08-30) | `src/WinSetView.ps1:102-160,407-638,495-525,649-890` covers Explorer options, FolderTypes, global/virtual/dialog bags, per-type TopViews, columns, grouping, sorting, icon sizes, reset, backup flow, and feature IDs `18755234`/`40729001`. | `views.inspect`, `views.apply`, `views.options`, `views.backup`, `views.restore`, `views.import-ini`, `views.reset` |
@@ -24,14 +29,27 @@ The exact source-to-operation mapping is intentionally kept here instead of
 embedding donor names in the GUI contract.  The runtime contract is the
 stable catalog in `src/studio/ShellStudio.Tools/OperationCatalog.cs`.
 
+The retired donor source snapshots used for this ledger are preserved locally
+under `Sandbox/20260911-donor-recovery/RightClickTools` and
+`Sandbox/20260911-donor-recovery/FolderThumbnailFix`. The retained donor
+submodules are `SetFolderType-main` and `WinSetView-main`. The exact recovered
+file inventory, commit IDs, byte lengths, and SHA-256 values are recorded in
+`Sandbox/20260911-donor-recovery/manifest.json`; the recovery directory is
+local evidence and is excluded from the publication tree.
+
 ## Implemented behavior
 
 - `desktop.ini` edits preserve the detected BOM, encoding, newline style,
   unrelated entries, and existing attributes. Recursive walks have depth,
   item, reparse-point, and cancellation bounds.
-- Folder thumbnails use `BeginUpdateResource`, `UpdateResource`, and
-  `EndUpdateResource` with a managed ICO parser. A journal stores the original
-  resource bytes and hash before the update.
+- Folder thumbnails expose one Full size / Default setting with fixed-target,
+  read-only state inspection and two attributed built-in mask assets. Resource
+  APIs patch a staged copy, temporarily removing and exactly restoring its MUI
+  configuration record. A privileged native POSIX rename publishes the copy
+  without taking ownership or changing the original inode's DACL. The journal
+  preserves original bytes, owner, group, DACL, attributes, creation/write times,
+  and guarded pre/post hashes. Default patches the current Windows resource;
+  it does not restore an obsolete whole-file backup after a Windows update.
 - URL files become COM `IShellLinkW` links through `IPersistFile`; no
   `WScript.Shell` automation or donor launcher is required.
 - Registry changes use the 64-bit view and are snapshotted before writes.
@@ -59,6 +77,9 @@ stable catalog in `src/studio/ShellStudio.Tools/OperationCatalog.cs`.
   Service history, Quarantine, and `mpenginedb.db*` locations, then removes
   itself. The preview requires `AllowSystem` and states whether a manual or
   requested reboot is needed; task and UAC failures are returned explicitly.
+  This operation does not disable Defender services or change real-time-
+  protection preferences. It is not invoked by Studio startup, menu capture,
+  shutdown, or Explorer refresh.
 - ACL, resource, Explorer, shell, process, metadata, registry, and file
   effects are interfaces. Fixtures use temporary files and in-memory stores;
   the implementation does not mutate the active desktop during build or test.
@@ -83,13 +104,14 @@ provider is implemented but cannot be established by the local fixture run.
 | Source behavior | Catalog/backend | State | Fixture check |
 | --- | --- | --- | --- |
 | Windows 11 build gate | `IToolEnvironment.IsWindows11X64` | Implemented | Windows-only |
-| Inspect resource bytes and hash | `folder.thumbnail.inspect` | Implemented | Windows-only resource seam |
-| Replace icon group 6/1033 | `folder.thumbnail.apply` | Implemented with native resource API | Windows-only resource seam |
-| Restore prior resource | `folder.thumbnail.restore` and journal | Implemented | `photo_date_journal_restores_file_metadata` covers journal protocol |
+| Inspect mask style and resource hash | `folder.thumbnail.set` preview and GUI state read | Implemented | `folder_thumbnail_inspect_error_blocks`, offscreen state/draft checks, Sandbox |
+| Replace icon group 6/1033 | `folder.thumbnail.set` | Implemented with staged MUI-preserving resource update and protected atomic rename | `thumbnail_native_resource_round_trip`, protected Sandbox Full/Default/repeat/locked cases |
+| Return to half-covered thumbnails | `folder.thumbnail.set` Default | Patches the current resource with the built-in half-cover mask | `folder_thumbnail_default_full_default_is_effective`, Sandbox |
+| Recover exact prior resource | Protected resource journal/backend; legacy `folder.thumbnail.restore` remains for generic resource journals | Hash-guarded typed recovery is dispatched by the generic recovery journal while preserving review/elevation boundaries | `thumbnail_native_resource_round_trip` (including generic dispatch), copied-resource checks, and protected Sandbox recovery checks |
 | Close Explorer and restart | `explorer.refresh` | Implemented through exact current-session shell ownership, scoped window-close requests, journal-aware cache reset, and an absolute `%WINDIR%\\explorer.exe` restart | Windows-only |
 | Reset thumbnail cache | `explorer.refresh.resetThumbs` | Implemented as a journaled provider option | `explorer_refresh_forwards_cache_options_and_reports_failure` (option forwarding); Windows-only cache files |
 | `/install` and `/remove` shell registration | Combined MSI and native `shell.exe` | Studio uses the shared Shell installation instead of registering a donor launcher | MSI database inspection; live installer behavior pending |
-| Donor bundled Resource Hacker | No dependency | Replaced by native `BeginUpdateResource` path | Windows-only |
+| Donor bundled Resource Hacker | No dependency | Replaced by native resource APIs and staged MUI preservation | Copied-resource and protected Sandbox checks |
 
 ### SetFolderType (`cdde0ee`)
 
@@ -184,7 +206,8 @@ provider is implemented but cannot be established by the local fixture run.
 | View backup | `views.backup` | Implemented as versioned JSON and journaled output | Windows-only registry |
 | View restore | `views.restore` | Implemented with HKCU allow-list and schema/size bounds | `view_restore_rejects_machine_registry_target` |
 | View reset | `views.reset` | Implemented with journal | Windows-only registry |
-| Arbitrary `.reg` import/export and custom script | No managed operation | Deliberately unsupported | No fixture check |
+| Typed `.reg` import/export | `registry.import-reg` / `registry.export-reg` | Implemented with parsed values, bounded trees, exact diff review, privilege-scoped writes, and journaled recovery | `typed_registry_reg_parser_round_trip`, `typed_registry_import_uses_diff_and_recovery`, `typed_registry_export_writes_reg_file` |
+| Explicit user script | `launch.user-script` | Implemented for one selected `.ps1`, `.cmd`, `.bat`, `.js`, `.vbs`, or `.wsf` file with a typed JSON argument vector in the calling user session; unavailable to the elevated host | `user_script_launch_is_non_elevated_and_keeps_selection` plus ToolHost policy checks |
 | `ViVeTool.exe` packaging | Native feature service | Deliberately not bundled | `vive_feature_flags_use_native_service_seam` |
 
 ## Deliberate gaps and qualification boundaries
@@ -200,8 +223,9 @@ provider is implemented but cannot be established by the local fixture run.
 - Configured cleanup folders and full Temp deletion are supported through the
   typed path fields with root-preserving versus root-removing semantics. The
   active journal is excluded and every discovered file/directory is bounded and
-  journaled. WinSetView INI import remains bounded and typed; arbitrary registry
-  exports, custom scripts, and unknown INI keys remain unsupported.
+  journaled. WinSetView INI import and `.reg` import/export remain bounded and
+  typed. Unknown INI/registry syntax and implicit or elevated script execution
+  remain unsupported; only an explicit user-selected script may launch.
 - Window capture remains a visible Studio UI operation. The headless host
   previews it and returns a diagnostic instead of claiming clipboard or human
   presentation acceptance.
@@ -218,8 +242,10 @@ provider is implemented but cannot be established by the local fixture run.
 
 ## Attribution and redistribution
 
-The donor repositories are retained in this checkout as pinned source
-evidence. Their repository licenses apply to their own code and must be
+SetFolderType and WinSetView remain pinned source submodules. RightClickTools
+and FolderThumbnailFix were retired from the checkout after consolidation;
+their pinned source mappings and license notices remain. Their repository
+licenses apply to their own code and must be
 checked before copying implementation text. FolderThumbnailFix documents
 Resource Hacker as an included third-party component, but this checkout does
 not contain a redistributable Resource Hacker binary or a license grant for
@@ -236,6 +262,7 @@ Catch2, Boost, and Detours notices remain provenance material unless the
 corresponding native code is actually reused.
 
 No donor binary, donor PowerShell `ExecutionPolicy Bypass` command,
-`taskkill /im explorer.exe`, global cursor replacement, or arbitrary launcher
-is part of the managed backend. Defender cleanup uses the separately reviewed,
-fixed `MyTasks\\DWDH` provider described above.
+`taskkill /im explorer.exe`, global cursor replacement, or unreviewed command
+string is part of the managed backend. Explicit user-script launch remains in
+the unelevated caller with a typed argument vector. Defender cleanup uses the
+separately reviewed, fixed `MyTasks\\DWDH` provider described above.

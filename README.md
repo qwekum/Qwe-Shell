@@ -1,10 +1,15 @@
 # Qwe Shell and Shell Studio
 
-This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio now has a Windows x64 implementation and a locally built MSI, including the visual editor and consolidated tool services. The [local verification record](docs/studio/local-verification.md) records the checks and their limits. Explorer, installer lifecycle, runtime parity, and human acceptance remain pending; this is not a qualified release.
+This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio now has a Windows x64 source implementation, including the visual editor and consolidated tool services. The most recently built MSI predates the 2026-09-12 source-backed editing and automatic semantic-capture changes. The [local verification record](docs/studio/local-verification.md) records the current checks, historical package hashes, and their limits. Explorer, installer lifecycle, runtime parity, and human acceptance remain pending; this is not a qualified release.
 
-See [Build and run Shell Studio](docs/studio/build-and-run.md) for prerequisites, complete build/run instructions, live capture setup, verification, and troubleshooting. The approved plan below remains the acceptance contract.
+See [Install and use Shell Studio](docs/studio/using-shell-studio.md) for the
+end-user workflow, existing-Shell replacement guidance, backup, and rollback.
+[Build and run Shell Studio](docs/studio/build-and-run.md) covers contributor
+prerequisites, builds, outputs, and verification. The approved plan below
+remains the acceptance contract.
 
 The [Studio interface design](docs/studio/design-system.md) records the shared visual system, independent review gates, and the limits of local UI verification.
+The [workspace redesign record](docs/studio/redesign-2026-09-10.md) covers the menu preview, source-backed entry details, context picker, and configurable file type groups.
 
 ## Recommended companion: Microsoft PowerToys
 
@@ -33,9 +38,63 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\studio\build.ps1
 
 The combined build produces `bin/setup-x64.msi`, `bin/shell.exe`, `bin/shell.dll`, and the self-contained Studio application in `bin/studio/`. It restores the pinned `WixToolset.Sdk/5.0.2` through NuGet; a globally installed `wix.exe` is not required. `src/setup/build.cmd x64` delegates to this same pipeline.
 
+Running the portable Studio does not replace an installed Shell. Full live
+capture requires this fork's matching registered extension; normal Shell and
+this fork are replacements, not side-by-side registrations. Back up the normal
+Shell configuration and follow the [installation decision guide](docs/studio/using-shell-studio.md#do-i-have-to-uninstall-normal-shell)
+before installing the unsigned development MSI.
+
 The default toolset is `v145`, tested with Visual Studio 18. Use `-PlatformToolset v143` when building with an installed v143 toolset. The combined pipeline supports Release; the native solution has no Debug configuration. Use `-SkipInstaller` to omit the MSI. Existing x86/ARM64 native builds remain separate and do not include Studio.
 
 Opening Studio allows configuration inspection and editing. Actual menu capture requires the matching native extension to be installed and loaded in Explorer; see the [installation and capture steps](docs/studio/build-and-run.md#install-and-use-live-capture). Building or opening Studio does not register the extension.
+
+Run only one Studio instance for a Windows user/session. The capture endpoint has
+one listener: if another Studio already owns it, current source keeps the button
+at **Capture menu** and reports `CAPTURE_LISTENER` with instructions to use or
+close the other instance. **Stop capture** means that this Studio owns an active
+listener; it does not by itself mean that a matching Explorer menu has arrived.
+See [capture troubleshooting](docs/studio/using-shell-studio.md#capture-troubleshooting)
+for the exact checks and the remaining live-Explorer qualification boundary.
+The current source has passed 58 offscreen WPF checks, 66 Core/exported-parser
+checks, and the native capture and preview suites. A Release/x64 build compiled
+and published Studio and ToolHost, then stopped before replacing the
+Explorer-loaded `bin\shell.dll`; no current-source MSI was produced. Rebuild the
+combined package in an isolated environment before testing or distributing an
+installer expected to contain these changes.
+
+Building, opening, capturing with, or closing Studio does not disable Microsoft
+Defender or change its real-time-protection preferences. A Windows Security
+toast appearing after an Explorer refresh is not evidence that protection
+changed; verify the actual Defender component state before treating it as a
+protection transition.
+The separate **Clear shell histories** integrated tool, when its **History
+scope** is set to **Defender**, is an explicit, reviewed, elevated operation. It
+schedules removal of Defender history, quarantine, and engine-database data at
+startup, but does not disable real-time protection. It must not be confused with
+ordinary Studio capture or Explorer refresh behavior.
+
+## Native-renderer Sandbox harness
+
+The disposable Windows Sandbox harness starts the real portable Studio window and capture client as `WDAGUtilityAccount`. It requires native-renderer v2 pixels with valid premultiplication and provenance, a hit target for every captured root row, and Studio's bitmap display mode. The `submenu` and `matrix` modes additionally open a captured fixture submenu; `matrix` checks Unicode, mnemonic, checked, disabled, separator, and icon state. The `scroll` mode imports the same fixture's 90-row `Renderer scroll` submenu and requires a nonempty proper subset of visible child mappings, with every mapping inside the bitmap's content viewport and outside its top and bottom scroll gutters. These checks are local evidence and do not establish human acceptance, installer behavior, or desktop blur parity.
+
+Build the portable application first, then publish the harness into a task-owned ignored folder:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\src\studio\build.ps1 -SkipInstaller
+dotnet publish src/studio/ShellStudio.SandboxTests/ShellStudio.SandboxTests.csproj -c Release -o Sandbox/<run>/input/harness
+```
+
+Stage an exact copy of `bin/` under `Sandbox/<run>/input/app/`, a manifest containing repository-independent relative paths and SHA-256 hashes, and copies of `guest.ps1`, `renderer-fixture.nss`, and `run-case.ps1` under the corresponding `input/` locations. Map `input` read-only to `C:\QweShellInput` and `evidence` writable to `C:\QweShellEvidence` in a networking-disabled `.wsb`. Start one task-owned guest, then run `guest.ps1 Prepare -Mode scroll` (or `matrix`) and `guest.ps1 Register` with `wsb exec --run-as ExistingLogin` before capture. The fixture is imported only into that disposable guest after package hashes are checked.
+
+Run each case with a fresh evidence name and the owned Sandbox ID:
+
+```powershell
+& Sandbox/<run>/run-case.ps1 -SandboxId <owned-guid> -RunName dpi144-1 -ExpectedDpi 144
+& Sandbox/<run>/run-case.ps1 -SandboxId <owned-guid> -RunName dpi144-matrix -Mode matrix -ExpectedDpi 144
+& Sandbox/<run>/run-case.ps1 -SandboxId <owned-guid> -RunName dpi144-scroll -Mode scroll -ExpectedDpi 144
+```
+
+Retain the result JSON, semantic snapshots, PNGs, manifests, and ownership records, and stop only the task-owned guest after review. Screenshots and local harness results remain evidence for their exact staged package and guest; they do not qualify Explorer, installation lifecycle, CI, or release behavior.
 
 ## Upstream and attribution
 
@@ -51,7 +110,7 @@ The main editing surface will show the **actual Shell/classic context menu for t
 
 The primary workflow will be:
 
-1. Choose **Capture menu**, then right-click the relevant file, selection, folder, background, desktop, or other Shell-supported context.
+1. Select a context category or file type group, optionally narrow it to an extension or concrete target, then choose **Capture menu** and right-click the matching file, selection, folder, background, desktop, or other Shell-supported context. File type groups can be edited in **Appearance & settings**.
 2. Edit the captured menu directly: drag to reorder, move entries into or out of submenus, and add, remove, or edit entries.
 3. Select an entry to inspect its properties and visibility conditions. Open the node canvas for advanced expressions.
 4. Review diagnostics and the proposed configuration changes.
@@ -75,7 +134,10 @@ Windows 11’s separate modern menu is outside this plan. Existing native x86/AR
 
 - Add opt-in capture hooks to Shell’s existing native menu enumeration and construction paths. Capture original entries before filtering/modification and the final displayed menu.
 - Transfer immutable snapshots through bounded, versioned, current-user/session IPC. Do not expose native handles or block Explorer while waiting for the editor.
-- Include context, hierarchy, state, available Shell identifiers, matching information, and configuration provenance. Capture lazily populated submenus when opened and mark uncaptured content.
+- Include context, hierarchy, state, available Shell identifiers, matching information, and source-linked configuration evidence. Reuse Shell's `construct_popup_entries` popup-construction path to automatically materialize retained semantic submenu definitions into a bounded, request-owned tree; opening, hovering, or scrolling a submenu is not required. A later observed popup can add rendered appearance evidence without being required for semantic descendants.
+- Evaluate automatic materialization through a positive read-only allowlist: literals and approved control/math, string, selection, path, color, theme, view, and `this` reads. Treat `cmd` and `args` as source syntax and never invoke them; reject assignments, mutating loops, unknown or unsupported functions, and unsafe provider evaluation with an explicit incomplete branch.
+- Publish explicit completeness state and bounds for depth, items, evaluation, time, trace/evidence, serialization, and queue work. Cycles, unavailable source or provider state, and any reached limit are diagnostics and never silently complete a hierarchy.
+- Include ordered rule, property-effect, and effective-settings evidence. `settings.modify` gates changes to existing entries and `settings.new` gates custom definitions. A missing import occurrence, stale hash, or ambiguous match remains readable but unavailable for source editing; scoped quick edits use durable rule IDs while handwritten rules remain shared source.
 - Use stable Shell identifiers where available. Otherwise generate context-constrained title/path matching rules and show their potential ambiguity; never persist transient Windows command IDs.
 - Convert drag operations into persistent configuration edits. Extend rule handling where necessary to express deterministic ordering and nesting while preserving existing rule behavior.
 - Distinguish **hide an existing system entry** from **delete a custom definition**. Removing an entry must not silently uninstall its application.
@@ -92,7 +154,7 @@ The current parser is tied to extension state and evaluates import expressions. 
 - Provide node representations for all accepted expression constructs, including functions, operators, arrays, interpolation, assignments, statements, conditions, and loops.
 - Preserve evaluation order, variable scope, short-circuiting, and side effects. Graph layout must not introduce repeated evaluation or implicit caching.
 - Represent loops and ordered statements explicitly; arbitrary graph cycles are invalid.
-- Opening, editing, validating, or previewing a document must not execute its commands. Resolve imports using a restricted read-only evaluation policy; show unresolved runtime-dependent imports explicitly.
+- Opening, editing, validating, or previewing a document must not execute its commands. Parse source without side effects and resolve imports only through the restricted read-only policy; show unresolved runtime-dependent imports explicitly. Automatic capture uses its separate positive read-only allowlist and fails closed when an expression is outside it.
 - Maintain a coverage inventory connecting every supported property/function/construct to its visual representation and tests. A raw-code placeholder does not satisfy “everything visual.”
 
 #### Configuration preservation and application

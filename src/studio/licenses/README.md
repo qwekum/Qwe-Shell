@@ -1,6 +1,6 @@
 # Studio attribution and notices
 
-This directory contains the source notices that must accompany a Studio publication. The four donor notices are exact copies of the `LICENSE` file at the pinned submodule commit recorded below. The pinned donor checkouts remain in the repository as source evidence; no donor executable or binary-only helper is packaged by Studio.
+This directory contains the source notices that must accompany a Studio publication. The four donor notices are exact copies of the `LICENSE` file at the pinned commit recorded below. `SetFolderType-main` and `WinSetView-main` remain as pinned source submodules; the retired RightClickTools and FolderThumbnailFix source snapshots are preserved locally under `Sandbox/20260911-donor-recovery/`, with their exact file inventory and hashes in `manifest.json`. No donor executable or binary-only helper is packaged by Studio.
 
 | Donor | Repository | Pinned commit | License copyright | Notice file |
 |---|---|---|---|---|

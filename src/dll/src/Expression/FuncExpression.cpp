@@ -2,6 +2,7 @@
 #include "Resource.h"
 #include "Expression\Constants.h"
 #include "Expression\Variable.h"
+#include "Include/SelectionSnapshot.h"
 
 #include <propsys.h>
 #include <propvarutil.h>
@@ -67,7 +68,38 @@ namespace Nilesoft
 			if(Id.length(0) || Id.zero())
 				return _result.move();
 
-			cache = Initializer::instance->cache;
+			// The caller owns the cache. A preview must never dereference the
+			// Explorer singleton, even for an otherwise pure function.
+			cache = context->Cache;
+			if(context->Preview)
+			{
+				auto policy = context->Preview;
+				if(policy->failed) return nullptr;
+				const bool mutatesExpressionScope = Id[0] == IDENT_FOR ||
+					Id[0] == IDENT_FOREACH ||
+					(Id[0] == IDENT_VAR && Arguments.size() >= 2);
+				if(mutatesExpressionScope && !policy->allowAssignments)
+				{
+					policy->Fail("PREVIEW_SIDE_EFFECT",
+						L"This expression requires request-owned variable state.");
+					return nullptr;
+				}
+				Object supplied;
+				const auto dispatch = policy->dispatch
+					? policy->dispatch(*this, *context, supplied)
+					: PreviewPolicy::Dispatch::Unavailable;
+				if(dispatch == PreviewPolicy::Dispatch::Unavailable)
+				{
+					policy->Fail("PREVIEW_UNAVAILABLE", L"This function requires an unavailable value or a capability not granted to preview.");
+					return nullptr;
+				}
+				if(dispatch == PreviewPolicy::Dispatch::Supplied)
+				{
+					_result = supplied.move();
+					if(Child) _result = context->Eval(Child).move();
+					return policy->failed ? Object(nullptr) : _result.move();
+				}
+			}
 
 			auto argc = Arguments.size();
 
@@ -2123,6 +2155,15 @@ namespace Nilesoft
 		{
 			auto sel = context->Selections;
 			auto argc = Arguments.size();
+			if(Id[1] == IDENT_TOJSON)
+			{
+				std::wstring snapshot;
+				if(sel && SelectionSnapshot::TryWrite(*sel, snapshot))
+					_result = string(snapshot.c_str()).move();
+				else
+					Logger::Warning(L"Unable to write 'sel.tojson' selection snapshot.");
+				return;
+			}
 
 			auto array_index = size_t(-1);
 
@@ -2989,6 +3030,9 @@ namespace Nilesoft
 
 			switch(Id[1])
 			{
+				case IDENT_EXT:
+					_result = Path::Extension(arg0);
+					break;
 				case IDENT_CURDIR:
 				case IDENT_CURRENTDIRECTORY:
 				{

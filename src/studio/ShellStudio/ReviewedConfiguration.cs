@@ -12,16 +12,19 @@ namespace ShellStudio;
 internal static class ReviewedConfiguration
 {
     private const int MaximumBytes = 48 * 1024 * 1024;
-    private sealed record Request(int Version, string UserSid, string Root, string[] AllowedPaths, List<FileEdit> Edits);
+    private sealed record Request(int Version, string UserSid, string Root, string[] AllowedPaths, List<FileEdit> Edits,
+        Dictionary<string, string> Dependencies);
 
-    public static async Task<ApplyResult> ApplyAsync(string root, IEnumerable<string> allowed, List<FileEdit> edits)
+    public static async Task<ApplyResult> ApplyAsync(string root, IEnumerable<string> allowed, List<FileEdit> edits,
+        IReadOnlyDictionary<string, string>? dependencies = null)
     {
         string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QweShell", "ReviewedOperations");
         ConfigurationTransactions.RejectReparsePoints(directory);
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".configuration.json");
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(new Request(Protocol.Version,
-            WindowsIdentity.GetCurrent().User!.Value, root, allowed.ToArray(), edits), Protocol.Json);
+            WindowsIdentity.GetCurrent().User!.Value, root, allowed.ToArray(), edits,
+            new Dictionary<string, string>(dependencies ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase)), Protocol.Json);
         if (bytes.Length > MaximumBytes) throw new InvalidDataException("The reviewed configuration exceeds the elevation limit.");
         await File.WriteAllBytesAsync(path, bytes);
         try
@@ -79,11 +82,11 @@ internal static class ReviewedConfiguration
                 var request = JsonSerializer.Deserialize<Request>(bytes, Protocol.Json) ?? throw new InvalidDataException("Empty configuration request.");
                 if (request.Version != Protocol.Version || request.UserSid != WindowsIdentity.GetCurrent().User?.Value)
                     throw new InvalidDataException("Configuration writes must use the same user's administrator token.");
-                if (request.AllowedPaths.Length > 512 || request.Edits.Count > 256)
+                if (request.AllowedPaths.Length > 512 || request.Edits.Count > 256 || request.Dependencies is null || request.Dependencies.Count > 512)
                     throw new InvalidDataException("The reviewed workspace exceeds its file limit.");
                 // This entry point performs only the reviewed transaction. It does not load a workspace,
                 // resolve imports, evaluate configuration, launch commands, or accept a script.
-                var result = new ConfigurationTransactions(request.Root, request.AllowedPaths).Apply(request.Edits);
+                var result = new ConfigurationTransactions(request.Root, request.AllowedPaths).Apply(request.Edits, dependencies: request.Dependencies);
                 if (!result.Success) throw new IOException(string.Join("\n", result.Diagnostics.Select(d => d.Code + ": " + d.Message)) + "\nBackups: " + result.BackupDirectory);
                 Environment.ExitCode = 0; window.Close();
             }

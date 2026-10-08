@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.Json;
 using ShellStudio.Core;
+using ShellStudio;
 
 int passed = 0, failed = 0;
 var temporaryRoot = Path.Combine(Path.GetTempPath(), "ShellStudio-tests-" + Guid.NewGuid().ToString("N"));
@@ -82,6 +83,99 @@ try
         MenuEditing.BindCaptureSources(workspace, snapshot);
         Equal(workspace.Files[path].Syntax.Nodes[0].Id, entry.SourceNodeId);
     });
+    Test("rule evidence binds native source offsets across parser identities", () =>
+    {
+        string path = Path.Combine(NewDirectory(), "shell.nss");
+        const string source = "modify(where=true)\n";
+        File.WriteAllText(path, source);
+        var workspace = new Workspace(path, new RuleParsing());
+        var file = workspace.Files[path];
+        var node = file.Syntax.Nodes.Single();
+        var entry = new MenuEntry
+        {
+            Id = "captured-item", Title = "Open", MatchTitle = "Open", Origin = "system",
+            RuleOutcomes =
+            [new RuleOutcome
+            {
+                RuleId = "static.title",
+                Outcome = "matched",
+                Source = new SourceReference
+                {
+                    File = path, Start = node.Start, End = node.Start + node.Length,
+                    NodeId = "n0", Hash = file.CurrentHash,
+                },
+            }],
+        };
+        var snapshot = new MenuSnapshot { Phase = "captured", Entries = [entry] };
+        var association = MenuEditing.FindMatchingRules(workspace, snapshot, entry).Single();
+        Equal("matched", association.Outcome);
+        True(association.IsValid, "A native positional source ID was rejected despite matching bytes and span: " +
+            string.Join(";", association.Diagnostics.Select(d => d.Code + ":" + d.Message)) +
+            " source=" + JsonSerializer.Serialize(association.Source, Protocol.Json) +
+            " current=" + file.CurrentHash);
+    });
+    Test("rule evidence without a file hash cannot authorize an association", () =>
+    {
+        string path = Path.Combine(NewDirectory(), "shell.nss");
+        File.WriteAllText(path, "modify(title=\"Changed\")\n");
+        var workspace = new Workspace(path, new RuleParsing());
+        var node = workspace.Files[path].Syntax.Nodes.Single();
+        var entry = new MenuEntry
+        {
+            Id = "captured-item", Title = "Open", MatchTitle = "Open", Origin = "system",
+            RuleOutcomes = [new()
+            {
+                RuleId = "static.title", Outcome = "matched",
+                Source = new SourceReference { File = path, Start = node.Start, End = node.Start + node.Length, NodeId = node.Id },
+            }],
+        };
+        var snapshot = new MenuSnapshot { Phase = "captured", Entries = [entry] };
+        var associations = MenuEditing.FindMatchingRules(workspace, snapshot, entry);
+        Equal(1, associations.Count);
+        True(!associations[0].IsValid && associations[0].File is null,
+            "Incomplete source evidence was treated as an editable rule association.");
+    });
+    Test("existing native edits use only settings.modify gates", () =>
+    {
+        using var modifyItems = JsonDocument.Parse("{\"enabled\":true,\"title\":false,\"visibility\":true}");
+        using var newItems = JsonDocument.Parse("{\"enabled\":false,\"image\":false,\"keys\":false}");
+        var titleSource = new SourceReference { File = "shell.nss", Start = 12, End = 33, Hash = new string('a', 64) };
+        var snapshot = new MenuSnapshot
+        {
+            EffectiveSettings = new()
+            {
+                ModifyItems = modifyItems.RootElement.Clone(),
+                ModifyProperties = newItems.RootElement.Clone(),
+                SettingSources =
+                [
+                    new() { Property = "modifyItems.enabled", Value = "true" },
+                    new() { Property = "settings.modify.title", Value = "false", Source = titleSource },
+                    new() { Property = "modifyProperties.enabled", Value = "false" },
+                ],
+            },
+        };
+        var titleGates = MenuEditing.FindSettingGates(snapshot, "title");
+        Equal(2, titleGates.Count);
+        True(titleGates.Any(gate => gate.Property == "settings.modify.title" && gate.Enabled == false && ReferenceEquals(gate.Source, titleSource)),
+            "The qualified settings.modify.title source was not associated with its gate.");
+        True(!MenuEditing.IsPropertyEditAllowed(snapshot, "title"), "A disabled title gate allowed an inert native edit.");
+        True(MenuEditing.IsPropertyEditAllowed(snapshot, "vis"), "settings.new evidence incorrectly blocked native visibility.");
+        True(MenuEditing.IsPropertyEditAllowed(snapshot, "tip"), "settings.new evidence incorrectly blocked an ungated native property.");
+
+        using var globallyDisabled = JsonDocument.Parse("{\"enabled\":false,\"visibility\":true}");
+        snapshot.EffectiveSettings.ModifyItems = globallyDisabled.RootElement.Clone();
+        True(!MenuEditing.IsPropertyEditAllowed(snapshot, "vis") && !MenuEditing.IsPropertyEditAllowed(snapshot, "checked"),
+            "settings.modify.enabled did not block all existing-item changes.");
+
+        string path = Path.Combine(NewDirectory(), "shell.nss");
+        File.WriteAllText(path, "// configuration\n");
+        var workspace = new Workspace(path, new RuleParsing());
+        var entry = new MenuEntry { Id = "native", Title = "Open", MatchTitle = "Open", Origin = "system" };
+        Throws<InvalidDataException>(() => MenuEditing.SetNativeProperties(workspace, snapshot, entry,
+            RuleScope.Category, new() { ["checked"] = "true" }));
+        True(!workspace.Files.ContainsKey(workspace.ManagedPath),
+            "A disabled native property created an inert managed rule.");
+    });
     Test("invalid explicitly UTF8 source is rejected instead of lossy transcoding", () =>
         Throws<DecoderFallbackException>(() => new SourceFile(Path.Combine(temporaryRoot, "bad.nss"), [0xef, 0xbb, 0xbf, 0xff, 0x61], new NoParsing())));
     Test("UTF32 is rejected explicitly", () =>
@@ -95,6 +189,139 @@ try
         Equal(original, value);
         True(!Expressions.TryLiteral("'@command.run()'", out _), "Interpolated expression was resolved.");
         True(!Expressions.TryLiteral("'a' + io.delete('x')", out _), "Expression was treated as a literal.");
+    });
+    Test("managed semantic fallback accepts only native literal metadata", () =>
+    {
+        string path = Path.Combine(NewDirectory(), "semantic.nss");
+        File.WriteAllText(path, "");
+        var workspace = new Workspace(path, new NoParsing());
+        var file = workspace.Files[Path.GetFullPath(path)];
+
+        var literal = new ExpressionNode { Kind = "literal", Text = "'source'", LiteralString = "decoded", Start = 0, Length = 8 };
+        True(workspace.TryResolveSourceString(file, literal, out var value), "Native literal metadata was not accepted.");
+        Equal("decoded", value);
+
+        foreach (var expression in new[]
+        {
+            new ExpressionNode { Kind = "identifier", Text = "name", LiteralString = null },
+            new ExpressionNode { Kind = "binary", Text = "'a' + 'b'", LiteralString = null },
+            new ExpressionNode { Kind = "group", Text = "('a')", LiteralString = null },
+            new ExpressionNode { Kind = "member", Text = "loc.caption", LiteralString = null },
+        })
+        {
+            True(!workspace.TryResolveSourceString(file, expression, out value),
+                "Managed semantic fallback evaluated " + expression.Kind + ".");
+            Equal("", value);
+        }
+    });
+    Test("unresolved bindings shadow prior values and report diagnostics", () =>
+    {
+        string path = Path.Combine(NewDirectory(), "bindings.nss");
+        File.WriteAllText(path, "$answer='literal'\n$answer=runtime\nimport answer\n");
+        var resolver = new BindingResolver();
+        var workspace = new Workspace(path, new BindingLanguage(), resolver);
+
+        var import = resolver.Requests.Single(request => request.Query == SourceSemanticQuery.ImportPath);
+        True(!import.VisibleBindings.ContainsKey("answer"), "An unresolved assignment leaked its previous binding.");
+        True(workspace.Diagnostics.Any(d => d.Code == "SEMANTIC_UNAVAILABLE" && d.File == Path.GetFullPath(path)),
+            "The unresolved variable assignment did not produce a diagnostic.");
+        Equal(ImportResolutionStatus.Unresolved, workspace.ImportOccurrences.Single().Status);
+    });
+    Test("configuration labels and imports resolve through native semantic context", () =>
+    {
+        string directory = NewDirectory();
+        string root = Path.Combine(directory, "shell.nss");
+        string languageDirectory = Path.Combine(directory, "imports", "lang");
+        Directory.CreateDirectory(languageDirectory);
+        string languageFile = Path.Combine(languageDirectory, "en.nss");
+        string runtimeLanguageFile = Path.Combine(languageDirectory, "fr-FR.nss");
+        const string rootText = "$loc_path='imports/lang/'\n" +
+            "import /* localization */ lang\t'imports/lang/en.nss'\n" +
+            "menu(title=loc.pin_unpin) {}\n" +
+            "menu(title=title.terminal) {}\n" +
+            "import lang if(path.exists(loc_path + sys.lang + \".nss\"), loc_path + sys.lang + \".nss\", loc_path + \"en.nss\")\n";
+        File.WriteAllText(root, rootText);
+        File.WriteAllText(languageFile, "pin_unpin=\"Pin/Unpin\"\n");
+        File.WriteAllText(runtimeLanguageFile, "pin_unpin=\"Runtime language\"\n");
+
+        var workspace = new Workspace(root, new NativeLanguage());
+        using var native = AttachNativeResolver(workspace);
+        True(workspace.Files.ContainsKey(Path.GetFullPath(languageFile)), "Native-decoded literal import did not load the language file.");
+        var loadedLanguage = workspace.Files[Path.GetFullPath(languageFile)];
+        Equal(SourceParseRole.Localization, loadedLanguage.ParseRole);
+        workspace.OpenAdditionalFile(languageFile);
+        True(!workspace.ImportDiagnostics.Any(d => d.Code == "IMPORT_ROLE_CONFLICT"), "Inspecting a loaded localization file changed its role.");
+        True(!loadedLanguage.Syntax.Diagnostics.Any(d => d.Severity == "error"),
+            "An explicit localization import was parsed as a normal configuration: " +
+            string.Join(";", loadedLanguage.Syntax.Diagnostics.Select(d => d.Code + "@" + d.Start)));
+        True(!workspace.Files.ContainsKey(Path.GetFullPath(runtimeLanguageFile)), "Runtime language selection was evaluated during source inspection.");
+        var dynamicImport = workspace.Files[Path.GetFullPath(root)].Syntax.Nodes.Single(node => node.Kind == "import" && node.Start == rootText.IndexOf("import lang if", StringComparison.Ordinal));
+        var dynamicWarnings = workspace.Diagnostics.Where(d => d.Start == dynamicImport.Start && d.Length == dynamicImport.Length && (d.Code is "IMPORT_DYNAMIC" or "LANG_IMPORT_DYNAMIC")).ToArray();
+        Equal(1, dynamicWarnings.Length);
+        Equal("LANG_IMPORT_DYNAMIC", dynamicWarnings[0].Code);
+
+        var entries = MenuEditing.FromConfiguration(workspace).Entries;
+        Equal(2, entries.Count);
+        Equal("ƒ loc.pin_unpin", entries[0].Title);
+        Equal("Pin/Unpin", entries[0].DisplayTitle);
+        Equal("ƒ title.terminal", entries[1].Title);
+        Equal("ƒ title.terminal", entries[1].DisplayTitle);
+
+        workspace.Checkpoint();
+        loadedLanguage.SetText("pin_unpin=\"Changed\"\n");
+        True(!loadedLanguage.Syntax.Diagnostics.Any(d => d.Severity == "error"), "Editing a localization file changed its parser role.");
+        workspace.Undo();
+        Equal(SourceParseRole.Localization, workspace.Files[Path.GetFullPath(languageFile)].ParseRole);
+        True(!workspace.Files[Path.GetFullPath(languageFile)].Syntax.Diagnostics.Any(d => d.Severity == "error"), "Undo changed a localization file's parser role.");
+        workspace.Redo();
+        Equal(SourceParseRole.Localization, workspace.Files[Path.GetFullPath(languageFile)].ParseRole);
+        True(!workspace.Files[Path.GetFullPath(languageFile)].Syntax.Diagnostics.Any(d => d.Severity == "error"), "Redo changed a localization file's parser role.");
+        True(workspace.Files[root].Bytes().SequenceEqual(Encoding.UTF8.GetBytes(rootText)), "Source inspection changed source bytes.");
+    });
+    if (args.Contains("--native")) Test("normal and localization imports cannot assign two parser roles to one file", () =>
+    {
+        string directory = NewDirectory();
+        string root = Path.Combine(directory, "shell.nss");
+        string imported = Path.Combine(directory, "shared.nss");
+        File.WriteAllText(root, "import 'shared.nss'\nimport lang 'shared.nss'\n");
+        File.WriteAllText(imported, "label=\"Shared\"\n");
+        var workspace = new Workspace(root, new NativeLanguage());
+        True(workspace.Diagnostics.Any(d => d.Code == "IMPORT_ROLE_CONFLICT"),
+            "A file reached through normal and localization imports was not diagnosed.");
+        True(workspace.Diagnostics.Any(d => d.Code == "PARSER_63"),
+            "The normal configuration parse was silently replaced by localization parsing.");
+    });
+    Test("nested literal imports keep block scope and preserve source preview properties", () =>
+    {
+        string directory = NewDirectory();
+        string root = Path.Combine(directory, "shell.nss");
+        string nested = Path.Combine(directory, "nested.nss");
+        string settings = Path.Combine(directory, "settings.nss");
+        const string rootText = "import 'settings.nss'\n" +
+            "menu(title='Root') {\n" +
+            "    $menu_file = 'nested.nss'\n" +
+            "    import 'nested.nss'\n" +
+            "    item(title='Checked' keys='Ctrl+K' checked=2 vis=disable)\n" +
+            "}\n" +
+            "import menu_file\n";
+        File.WriteAllText(root, rootText);
+        File.WriteAllText(nested, "item(title='Imported')\n");
+        File.WriteAllText(settings, "settings { showdelay = 250 }\n");
+
+        var workspace = new Workspace(root, new NativeLanguage());
+        using var native = AttachNativeResolver(workspace);
+        True(workspace.Files.ContainsKey(Path.GetFullPath(nested)), "Nested menu import was not discovered.");
+        True(workspace.Files.ContainsKey(Path.GetFullPath(settings)), "Nested settings import was not discovered.");
+        True(workspace.Diagnostics.Any(d => d.Code == "IMPORT_DYNAMIC" && d.File == Path.GetFullPath(root)),
+            "A menu-local literal leaked into the later top-level import.");
+
+        var rootFile = workspace.Files[Path.GetFullPath(root)];
+        var entries = MenuEditing.FromConfiguration(workspace).Entries;
+        var checkedEntry = MenuEditing.Descendants(entries).Single(entry => entry.Title == "Checked");
+        Equal("Ctrl+K", checkedEntry.Keys);
+        True(checkedEntry.Checked && checkedEntry.Radio && !checkedEntry.IsDefault && checkedEntry.Disabled,
+            "Known source property literals were not reflected in the configuration preview.");
+        True(rootFile.Bytes().SequenceEqual(Encoding.UTF8.GetBytes(rootText)), "Nested import inspection changed source bytes.");
     });
     Test("successful multi-file apply retains originals", () =>
     {
@@ -121,19 +348,50 @@ try
         Equal("root before", File.ReadAllText(root)); Equal("second before", File.ReadAllText(second));
         True(!tx.RecoveryPending, "Successful rollback left a runtime exclusion marker.");
     });
-    Test("redo retains the original external-change baseline", () =>
+    if (args.Contains("--native")) Test("native redo restores the managed import closure and baseline", () =>
     {
-        string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"); File.WriteAllText(root, "item(a)");
-        var workspace = new Workspace(root, new ItemParsing());
+        string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"); File.WriteAllText(root, "item(title='Root')");
+        var workspace = new Workspace(root, new NativeLanguage());
         Directory.CreateDirectory(Path.GetDirectoryName(workspace.ManagedPath)!);
-        File.WriteAllText(workspace.ManagedPath, "item(b)");
-        workspace.Append("item(c)");
+        File.WriteAllText(workspace.ManagedPath, "item(title='Existing')");
+        workspace.Append("item(title='Added')");
+        True(workspace.Files.ContainsKey(workspace.ManagedPath), "Append did not retain the managed source in the workspace.");
+        True(workspace.ImportOccurrences.Any(occurrence => occurrence.Status == ImportResolutionStatus.Resolved &&
+            string.Equals(occurrence.ResolvedPath, workspace.ManagedPath, StringComparison.OrdinalIgnoreCase)),
+            "Append did not resolve the managed import occurrence.");
         string expected = workspace.Files[workspace.ManagedPath].OriginalHash;
-        workspace.Undo(); File.WriteAllText(workspace.ManagedPath, "external change"); workspace.Redo();
+        workspace.Undo();
+        True(!workspace.ImportOccurrences.Any(occurrence => occurrence.Status == ImportResolutionStatus.Resolved &&
+            string.Equals(occurrence.ResolvedPath, workspace.ManagedPath, StringComparison.OrdinalIgnoreCase)),
+            "Undo retained a removed managed import occurrence.");
+        File.WriteAllText(workspace.ManagedPath, "external change");
+        workspace.Redo();
+        True(workspace.Files.ContainsKey(workspace.ManagedPath), "Redo lost imports/studio.nss from the workspace state.");
+        True(workspace.ImportOccurrences.Any(occurrence => occurrence.Status == ImportResolutionStatus.Resolved &&
+            string.Equals(occurrence.ResolvedPath, workspace.ManagedPath, StringComparison.OrdinalIgnoreCase)),
+            "Redo did not rebuild the managed import occurrence.");
         Equal(expected, workspace.Files[workspace.ManagedPath].OriginalHash);
         var result = new ConfigurationTransactions(root, workspace.Files.Keys, Path.Combine(dir, "backups")).Apply(workspace.Edits());
         True(!result.Success, "Redo replaced the external conflict baseline.");
         Equal("external change", File.ReadAllText(workspace.ManagedPath));
+    });
+    if (args.Contains("--native")) Test("native undo removes a newly authored managed draft", () =>
+    {
+        string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"); File.WriteAllText(root, "item(title='Root')");
+        var workspace = new Workspace(root, new NativeLanguage());
+        workspace.Append("item(title='Draft')");
+        string managedPath = workspace.ManagedPath;
+        True(workspace.Files.ContainsKey(managedPath) && workspace.Files[managedPath].IsDirty,
+            "Append did not create a dirty managed draft.");
+
+        workspace.Undo();
+
+        True(!workspace.Files.ContainsKey(managedPath), "Undo retained a newly created managed draft file.");
+        True(!workspace.IsDirty, "Undo left the workspace dirty after removing the draft edit.");
+        True(!workspace.DetachedFiles.Contains(managedPath), "Undo detached the newly created managed draft.");
+        True(!workspace.ImportOccurrences.Any(occurrence =>
+            string.Equals(occurrence.ResolvedPath, managedPath, StringComparison.OrdinalIgnoreCase)),
+            "Undo retained the managed import occurrence for the removed draft.");
     });
     Test("external edits abort without overwriting", () =>
     {
@@ -228,6 +486,85 @@ try
         string rule = MenuEditing.Match(new() { Context = "folder", Paths = [@"C:\Folder"] }, entry, RuleScope.Category);
         True(rule.Contains("type=\"dir\"", StringComparison.Ordinal) && rule.Contains("this.id==id.copy", StringComparison.Ordinal), "Rule lost its context or stable identity.");
     });
+    Test("context picker defaults normalize and validate bounded groups", () =>
+    {
+        var defaults = FileTypeGroups.Defaults();
+        True(new[] { "archives", "executables", "text", "scripts", "images", "documents", "video", "audio" }.All(id => defaults.Any(group => group.Id == id)), "A common file type group is missing.");
+        StudioUserSettingsStore.Validate(new() { FileTypeGroups = defaults });
+        Equal("archives", defaults[0].Id);
+        True(defaults[0].Extensions.Contains(".zip", StringComparer.OrdinalIgnoreCase), "Archive defaults lost .zip.");
+        True(FileTypeGroups.NormalizeExtensions(" TXT, .Md txt ").SequenceEqual([".txt", ".md"]), "Extension normalization was not case-insensitive or de-duplicated.");
+
+        var valid = new StudioUserSettings
+        {
+            FileTypeGroups = [new() { Id = "documents", Label = "Documents", Extensions = [".TXT", ".md"] }]
+        };
+        StudioUserSettingsStore.Validate(valid);
+        Throws<InvalidDataException>(() => StudioUserSettingsStore.Validate(new()
+        {
+            FileTypeGroups = [
+                new() { Id = "one", Label = "Same", Extensions = [".txt"] },
+                new() { Id = "two", Label = "same", Extensions = [".md"] }
+            ]
+        }));
+        Throws<InvalidDataException>(() => StudioUserSettingsStore.Validate(new()
+        {
+            FileTypeGroups = [new() { Id = "bad", Label = "Bad\nLabel", Extensions = [".txt"] }]
+        }));
+        Throws<InvalidDataException>(() => FileTypeGroups.NormalizeExtensions("*.*"));
+    });
+    Test("file type settings round trip and invalid writes preserve prior preferences", () =>
+    {
+        string settingsPath = Path.Combine(NewDirectory(), "settings.json");
+        var preferences = new StudioUserSettings { FileTypeGroups = [new() { Id = "code", Label = "Code files", Extensions = [".cs", ".cpp"] }] };
+        StudioUserSettingsStore.Save(settingsPath, preferences);
+        var loaded = StudioUserSettingsStore.Load(settingsPath);
+        Equal("Code files", loaded.FileTypeGroups.Single().Label);
+        True(loaded.FileTypeGroups.Single().Extensions.SequenceEqual([".cs", ".cpp"]), "Saved extensions changed on reload.");
+        byte[] before = File.ReadAllBytes(settingsPath);
+        preferences.FileTypeGroups[0].Extensions = [];
+        Throws<InvalidDataException>(() => StudioUserSettingsStore.Save(settingsPath, preferences));
+        True(before.SequenceEqual(File.ReadAllBytes(settingsPath)), "Invalid settings replaced saved preferences.");
+    });
+    Test("capture context filters compare canonical metadata and recorded targets", () =>
+    {
+        string missingText = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N") + ".txt");
+        string missingMarkdown = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N") + ".md");
+        string missingExtensionless = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N"));
+        True(!File.Exists(missingText) && !File.Exists(missingMarkdown) && !File.Exists(missingExtensionless), "Recorded-path fixture unexpectedly exists.");
+
+        var group = new CaptureContextFilter { Category = "FILE", Extensions = [".TXT", ".md"] };
+        True(group.Matches(new MenuSnapshot { ContextCategory = "file", Paths = [missingText, missingMarkdown] }), "A mixed selection inside one configured group was rejected.");
+        True(!new CaptureContextFilter { Category = "", Extensions = [".txt"] }.Matches(new MenuSnapshot { ContextCategory = "dir", Paths = [missingText] }), "An extension filter matched a non-file native category.");
+
+        var folder = new MenuSnapshot { ContextCategory = "dir", Paths = [Path.Combine(temporaryRoot, "recorded-folder")] };
+        True(new CaptureContextFilter { Category = "dir" }.Matches(folder), "Canonical folder category did not match.");
+        True(!new CaptureContextFilter { Category = "desktop" }.Matches(folder), "Folder category was confused with desktop.");
+        True(new CaptureContextFilter { Category = "desktop" }.Matches(new MenuSnapshot { ContextCategory = "desktop" }), "Canonical desktop category did not match.");
+
+        var extensionless = new MenuSnapshot { ContextCategory = "file", Paths = [missingExtensionless] };
+        True(new CaptureContextFilter { Category = "file" }.Matches(extensionless), "Category-only file filter rejected an extensionless recorded target.");
+        True(!new CaptureContextFilter { Category = "file", Extensions = [".txt"] }.Matches(extensionless), "An extension filter accepted an extensionless target.");
+
+        var exact = new CaptureContextFilter { Category = "file", ExactPath = missingText.ToUpperInvariant() };
+        True(exact.Matches(new MenuSnapshot { ContextCategory = "file", Paths = [missingText] }), "Exact paths were not compared case-insensitively.");
+        True(!new CaptureContextFilter { Category = "file", ExactPath = Path.GetFileName(missingText) }.Matches(new MenuSnapshot { ContextCategory = "file", Paths = [missingText] }), "A relative exact path was accepted.");
+    });
+    Test("category rules preserve mixed extensions and exact extensionless paths", () =>
+    {
+        var entry = new MenuEntry { Id = "copy", Title = "Copy", StableId = "id.copy" };
+        string textPath = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N") + ".txt");
+        string markdownPath = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N") + ".md");
+        string extensionlessPath = Path.Combine(temporaryRoot, "recorded-" + Guid.NewGuid().ToString("N"));
+        var mixed = new MenuSnapshot { ContextCategory = "file", Paths = [textPath, markdownPath], Entries = [entry] };
+        string mixedRule = MenuEditing.Match(mixed, entry, RuleScope.Category);
+        True(mixedRule.Contains("path.ext(sel.path)==\".txt\" || path.ext(sel.path)==\".md\"", StringComparison.Ordinal), "Mixed category scope did not retain each captured extension.");
+        Throws<InvalidDataException>(() => MenuEditing.Match(new MenuSnapshot { ContextCategory = "file", Paths = [], Entries = [entry] }, entry, RuleScope.Category));
+        Throws<InvalidDataException>(() => MenuEditing.Match(new MenuSnapshot { ContextCategory = "file", Paths = [extensionlessPath], Entries = [entry] }, entry, RuleScope.Category));
+
+        string exactRule = MenuEditing.Match(new MenuSnapshot { ContextCategory = "file", Paths = [extensionlessPath], Entries = [entry] }, entry, RuleScope.ExactPath);
+        True(exactRule.Contains("sel.path==", StringComparison.Ordinal) && !exactRule.Contains("path.ext(sel.path)", StringComparison.Ordinal), "Exact-path scope did not remain usable for an extensionless file.");
+    });
     Test("capture MUIDs map to runtime identity and bare numbers do not", () =>
     {
         var entry = new MenuEntry { Title = "Copy", StableId = "shell.muid:abcd" };
@@ -235,6 +572,56 @@ try
         True(MenuEditing.Match(snapshot, entry, RuleScope.Category).Contains("this.id==0xabcd", StringComparison.Ordinal), "Native stable identity was not translated.");
         entry.StableId = "1234";
         True(!MenuEditing.Match(snapshot, entry, RuleScope.Category).Contains("this.id", StringComparison.Ordinal), "An untyped numeric command ID was persisted.");
+    });
+    Test("structured capture evidence is optional, versioned, and preserves removal facts", () =>
+    {
+        using var enabled = JsonDocument.Parse("true");
+        var source = new SourceReference { File = "imports/studio.nss", Start = 4, End = 24, NodeId = "node-1", Hash = new string('a', 64) };
+        var snapshot = new MenuSnapshot
+        {
+            EvidenceVersion = 1,
+            Source = source,
+            RuleOutcomes = [
+                new() { RuleId = "rule-1", Outcome = "matched", Source = source },
+                new() { RuleId = "rule-2", Outcome = "removed", Reason = "hidden by a later rule", Source = source },
+            ],
+            PropertyEffects = [new() { Property = "vis", Effect = "removed", Source = source }],
+            EffectiveSettings = new() { ModifyItems = enabled.RootElement.Clone(), SettingSources = [new() { Property = "modifyItems", Value = "true", Source = source }] },
+            Completeness = new() { State = "observed", ChildrenCaptured = true, Complete = true, EvaluationLimit = 128 },
+            Entries = [new MenuEntry { Id = "entry-1", Title = "Open", Unknown = new() { ["futureProperty"] = JsonDocument.Parse("{\"value\":7}").RootElement.Clone() } }],
+        };
+        string json = JsonSerializer.Serialize(snapshot, Protocol.Json);
+        True(json.Contains("\"evidenceVersion\": 1", StringComparison.Ordinal), "Evidence version was not serialized.");
+        True(json.Contains("\"outcome\": \"removed\"", StringComparison.Ordinal), "Removed rule evidence was not serialized.");
+        True(json.Contains("\"effect\": \"removed\"", StringComparison.Ordinal), "Removed property evidence was not serialized.");
+        True(json.Contains("\"state\": \"observed\"", StringComparison.Ordinal), "Completeness state was not serialized.");
+        var reopened = JsonSerializer.Deserialize<MenuSnapshot>(json, Protocol.Json)!;
+        Equal(2, reopened.RuleOutcomes!.Count);
+        Equal("removed", reopened.RuleOutcomes[1].Outcome);
+        Equal("removed", reopened.PropertyEffects![0].Effect);
+        Equal("observed", reopened.Completeness!.State);
+        True(reopened.Entries[0].Unknown!.ContainsKey("futureProperty"), "Unknown entry properties were discarded.");
+
+        var legacy = JsonSerializer.Deserialize<MenuSnapshot>("{\"version\":1,\"captureId\":\"legacy\",\"phase\":\"captured\",\"entries\":[]}", Protocol.Json)!;
+        True(legacy.EvidenceVersion is null && legacy.RuleOutcomes is null && legacy.Completeness is null, "Legacy captures acquired synthetic evidence.");
+
+        const string nativeStyle = "{\"version\":1,\"captureId\":\"native\",\"phase\":\"captured\",\"evidenceVersion\":1," +
+            "\"completeness\":{\"state\":\"observed\",\"childrenCaptured\":true,\"complete\":false," +
+            "\"depthLimit\":32,\"itemLimit\":4096,\"messageLimit\":128,\"providerLimit\":4,\"evaluationLimit\":512," +
+            "\"diagnostics\":[{\"code\":\"CAPTURE_INCOMPLETE\",\"message\":\"submenu limit reached\",\"severity\":\"warning\"," +
+            "\"file\":\"shell.nss\",\"start\":3,\"length\":7,\"nodeId\":\"n3\",\"remedy\":\"Recapture the submenu.\",\"importChain\":[\"shell.nss\"]}]},\"entries\":[]}";
+        var nativeCapture = JsonSerializer.Deserialize<MenuSnapshot>(nativeStyle, Protocol.Json)!;
+        Equal(32, nativeCapture.Completeness!.DepthLimit);
+        Equal(4096, nativeCapture.Completeness.ItemLimit);
+        Equal(128, nativeCapture.Completeness.MessageLimit);
+        Equal(4, nativeCapture.Completeness.ProviderLimit);
+        Equal(512, nativeCapture.Completeness.EvaluationLimit);
+        var completenessDiagnostic = nativeCapture.Completeness.Diagnostics.Single();
+        Equal("CAPTURE_INCOMPLETE", completenessDiagnostic.Code);
+        Equal("warning", completenessDiagnostic.Severity);
+        Equal("shell.nss", completenessDiagnostic.File);
+        Equal("Recapture the submenu.", completenessDiagnostic.Remedy);
+        Equal("shell.nss", completenessDiagnostic.ImportChain!.Single());
     });
     if (args.Contains("--native")) Test("native ANSI detection preserves bytes and rejects unrepresentable edits atomically", () =>
     {
@@ -309,7 +696,7 @@ try
         var target = new MenuEntry { Id = "target", Kind = "menu", Title = "New child", MatchTitle = "old child", ParentPath = "old parent" };
         var parent = new MenuEntry { Id = "parent", Kind = "menu", Title = "New &parent", MatchTitle = "old parent", Children = [target] };
         var item = new MenuEntry { Id = "item", Title = "Copy", StableId = "id.copy" };
-        var snapshot = new MenuSnapshot { Context = "file", Entries = [parent, item] };
+        var snapshot = new MenuSnapshot { Context = "file", Paths = [Path.Combine(temporaryRoot, "example.txt")], Entries = [parent, item] };
         MenuEditing.Move(workspace, snapshot, item, target, 0, RuleScope.Category);
         True(workspace.Files[workspace.ManagedPath].Text.Contains("menu=\"New parent/New child\"", StringComparison.Ordinal), "Destination retained a stale title or parent path.");
         True(MenuEditing.Match(snapshot, target, RuleScope.Category).Contains("old child", StringComparison.Ordinal), "Destination change damaged the original matcher.");
@@ -361,6 +748,8 @@ try
                     "menu" => "menu(title=\"Inventory\" " + insertion + ") {}",
                     "item" => "item(title=\"Inventory\" " + insertion + ")",
                     "separator" => "separator(" + insertion + ")",
+                    "remove" when name is "where" or "condition" or "find" => "remove(" + insertion + ")",
+                    "remove" => "remove(where=false " + insertion + ")",
                     _ => context + "(where=false title=\"\" " + insertion + ")"
                 });
             }
@@ -524,6 +913,406 @@ try
             True(rules[0].Properties.Any(p => p.Name == "title") && rules[0].Properties.Any(p => p.Name == "pos"), "A later edit discarded an earlier property.");
             True(!workspace.Diagnostics.Any(d => d.Severity == "error"), file.Text + " | " + string.Join(";", workspace.Diagnostics.Select(d => d.Code + "@" + d.Start + ":" + d.Message)));
         });
+        Test("native first generated edit undo removes managed draft and import", () =>
+        {
+            string directory = NewDirectory(), path = Path.Combine(directory, "shell.nss");
+            File.WriteAllText(path, "item(title=\"Root\")\n");
+            var workspace = new Workspace(path, new NativeLanguage());
+            var entry = new MenuEntry { Id = "first-generated", Title = "Open", MatchTitle = "open", Origin = "system" };
+            var snapshot = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [entry] };
+
+            MenuEditing.Rename(workspace, snapshot, entry, "Renamed", RuleScope.Category);
+            True(workspace.Files.ContainsKey(workspace.ManagedPath), "The generated edit did not materialize managed source.");
+            True(workspace.Files[path].Text.Contains("imports/studio.nss", StringComparison.Ordinal), "The generated edit did not add the managed import.");
+            workspace.Undo();
+
+            True(!workspace.Files.ContainsKey(workspace.ManagedPath), "Undo retained an empty managed draft created by the generated edit.");
+            True(!workspace.Files[path].Text.Contains("imports/studio.nss", StringComparison.Ordinal), "Undo retained the generated managed import.");
+            True(!workspace.ImportOccurrences.Any(occurrence =>
+                string.Equals(occurrence.ResolvedPath, workspace.ManagedPath, StringComparison.OrdinalIgnoreCase)),
+                "Undo retained a managed import occurrence for the removed generated edit.");
+        });
+        Test("native generated rule marker survives recapture and reopen", () =>
+        {
+            string directory = NewDirectory(), path = Path.Combine(directory, "shell.nss");
+            File.WriteAllText(path, "// configuration\n");
+            var workspace = new Workspace(path, new NativeLanguage());
+            var entry = new MenuEntry { Id = "first-capture", Title = "Open", MatchTitle = "open", Origin = "system" };
+            var snapshot = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [entry] };
+            MenuEditing.Rename(workspace, snapshot, entry, "Renamed once", RuleScope.Category);
+            string marker = entry.GeneratedRuleMarker ?? throw new Exception("Generated edit did not retain a durable marker.");
+            string managedPath = workspace.ManagedPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(managedPath)!);
+            File.WriteAllBytes(path, workspace.Files[path].Bytes());
+            File.WriteAllBytes(managedPath, workspace.Files[managedPath].Bytes());
+
+            var reopened = new Workspace(path, new NativeLanguage());
+            var recapturedEntry = new MenuEntry { Id = "second-capture", Title = "Open", MatchTitle = "open", Origin = "system" };
+            var recaptured = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [recapturedEntry] };
+            MenuEditing.BindCaptureSources(reopened, recaptured);
+            Equal(marker, recapturedEntry.GeneratedRuleMarker);
+            MenuEditing.Rename(reopened, recaptured, recapturedEntry, "Renamed twice", RuleScope.Category);
+            var rules = reopened.Files[managedPath].AllNodes().Where(node => node.Kind.Equals("modify", StringComparison.OrdinalIgnoreCase)).ToArray();
+            Equal(1, rules.Length);
+            True(reopened.Files[managedPath].Text.Contains("Renamed twice", StringComparison.Ordinal), "Recapture edit did not update the marked rule.");
+        });
+        Test("native duplicate and stale generated markers fail closed", () =>
+        {
+            string directory = NewDirectory(), path = Path.Combine(directory, "shell.nss");
+            File.WriteAllText(path, "// configuration\n");
+            var workspace = new Workspace(path, new NativeLanguage());
+            var entry = new MenuEntry { Id = "capture", Title = "Open", MatchTitle = "open", Origin = "system" };
+            var snapshot = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [entry] };
+            MenuEditing.Rename(workspace, snapshot, entry, "Renamed", RuleScope.Category);
+            string marker = entry.GeneratedRuleMarker!;
+            var managed = workspace.Files[workspace.ManagedPath];
+            managed.SetText(managed.Text + "\n// " + MenuEditing.GeneratedRuleMarkerPrefix + marker + "\nmodify(where=(this.name==\"open\") title=\"Duplicate\")\n");
+            var ambiguousEntry = new MenuEntry { Id = "ambiguous", Title = "Open", MatchTitle = "open", Origin = "system" };
+            var ambiguous = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [ambiguousEntry] };
+            MenuEditing.BindCaptureSources(workspace, ambiguous);
+            True(ambiguousEntry.GeneratedRuleMarker is null && ambiguous.Diagnostics.Any(d => d.Code == "RULE_ASSOCIATION_AMBIGUOUS"), "Duplicate generated markers were silently selected.");
+
+            var staleEntry = new MenuEntry { Id = "stale", Title = "Open", MatchTitle = "open", Origin = "system", GeneratedRuleMarker = "deadbeefdeadbeef" };
+            var stale = new MenuSnapshot { Phase = "captured", Context = "folder", ContextCategory = "folder", Entries = [staleEntry] };
+            MenuEditing.BindCaptureSources(workspace, stale);
+            True(staleEntry.GeneratedRuleId is null && staleEntry.GeneratedRuleMarker is not null && stale.Diagnostics.Any(d => d.Code == "RULE_ASSOCIATION_STALE"), "A stale generated marker remained editable.");
+        });
+        Test("native repeated import occurrences refresh through undo and redo", () =>
+        {
+            string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"), child = Path.Combine(dir, "child.nss");
+            File.WriteAllText(root, "item(title='Root')\nimport 'child.nss'\nimport 'child.nss'\n");
+            File.WriteAllText(child, "item(title='Child')\n");
+            var workspace = new Workspace(root, new NativeLanguage());
+            var initial = workspace.ImportOccurrences.ToArray();
+            Equal(2, initial.Length);
+            True(initial[0].OccurrenceId != initial[1].OccurrenceId && initial[0].Order < initial[1].Order,
+                "Repeated imports collapsed into one occurrence or lost source order.");
+            var entries = MenuEditing.FromConfiguration(workspace).Entries;
+            Equal(3, entries.Count);
+            Equal("Child", entries[1].Title); Equal("Child", entries[2].Title);
+
+            var rootFile = workspace.Files[root];
+            workspace.Checkpoint();
+            int secondImport = rootFile.Text.LastIndexOf("import 'child.nss'", StringComparison.Ordinal);
+            rootFile.Replace(secondImport, "import 'child.nss'".Length, "");
+            Equal(1, workspace.ImportOccurrences.Count);
+            workspace.Undo();
+            Equal(2, workspace.ImportOccurrences.Count);
+            True(workspace.ImportOccurrences[0].OccurrenceId == initial[0].OccurrenceId &&
+                workspace.ImportOccurrences[1].OccurrenceId == initial[1].OccurrenceId,
+                "Undo did not restore the two distinct import identities.");
+            workspace.Redo();
+            Equal(1, workspace.ImportOccurrences.Count);
+            True(workspace.ImportOccurrences[0].Order == 0 &&
+                string.Equals(workspace.ImportOccurrences[0].ResolvedPath, Path.GetFullPath(child), StringComparison.OrdinalIgnoreCase),
+                "Redo did not refresh the remaining import occurrence.");
+        });
+        Test("native matching rules retain repeated import occurrence identity", () =>
+        {
+            string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"), child = Path.Combine(dir, "child.nss");
+            File.WriteAllText(root, "import 'child.nss'\nimport 'child.nss'\n");
+            File.WriteAllText(child, "modify(where=(this.name==\"Open\") title=\"Changed\")\n");
+            var workspace = new Workspace(root, new NativeLanguage());
+            var occurrences = workspace.ImportOccurrences.ToArray();
+            Equal(2, occurrences.Length);
+            var file = workspace.Files[Path.GetFullPath(child)];
+            var node = file.AllNodes().Single(current => current.Kind.Equals("modify", StringComparison.OrdinalIgnoreCase));
+            var entry = new MenuEntry
+            {
+                Id = "open", Title = "Open", MatchTitle = "Open", Origin = "system",
+                RuleOutcomes = [new()
+                {
+                    RuleId = "static.title", Outcome = "matched",
+                    Source = new SourceReference
+                    {
+                        File = file.Path, Start = node.Start, End = node.Start + node.Length,
+                        NodeId = node.Id, Hash = file.CurrentHash, OccurrenceId = occurrences[1].OccurrenceId,
+                    },
+                }],
+            };
+            var snapshot = new MenuSnapshot { Phase = "captured", Entries = [entry] };
+            var associations = MenuEditing.FindMatchingRules(workspace, snapshot, entry);
+            Equal(2, associations.Count);
+            True(associations.Select(association => association.Source!.OccurrenceId).ToHashSet(StringComparer.Ordinal).SetEquals(
+                    occurrences.Select(occurrence => occurrence.OccurrenceId)),
+                "Repeated imports were collapsed into one source association.");
+            Equal(1, associations.Count(association => association.Outcome == "matched" &&
+                association.Source?.OccurrenceId == occurrences[1].OccurrenceId));
+        });
+        Test("native dirty imported files remain detached until the import is restored", () =>
+        {
+            string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"), child = Path.Combine(dir, "child.nss");
+            File.WriteAllText(root, "import 'child.nss'\n");
+            File.WriteAllText(child, "item(title='Original')\n");
+            var workspace = new Workspace(root, new NativeLanguage());
+            string fullChild = Path.GetFullPath(child);
+            var childFile = workspace.Files[fullChild];
+            childFile.SetText("item(title='Unsaved')\n");
+            workspace.Checkpoint();
+            var rootFile = workspace.Files[root];
+            rootFile.Replace(0, "import 'child.nss'".Length, "");
+            True(workspace.DetachedFiles.Contains(fullChild), "A dirty imported file was discarded after its import was removed.");
+            True(!workspace.EffectiveFiles.Any(file => string.Equals(file.Path, fullChild, StringComparison.OrdinalIgnoreCase)),
+                "A detached dirty file remained in the effective preview source set.");
+            workspace.Undo();
+            True(!workspace.DetachedFiles.Contains(fullChild) && workspace.ImportOccurrences.Count == 1,
+                "Undo did not reconnect the dirty imported file.");
+            Equal("item(title='Unsaved')\n", workspace.Files[fullChild].Text);
+            workspace.Redo();
+            True(workspace.DetachedFiles.Contains(fullChild) && workspace.ImportOccurrences.Count == 0,
+                "Redo did not detach the dirty file after removing its import again.");
+        });
+        Test("native localization imports retain role through edit undo and redo", () =>
+        {
+            string dir = NewDirectory(), root = Path.Combine(dir, "shell.nss"), languagePath = Path.Combine(dir, "lang", "en.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(languagePath)!);
+            File.WriteAllText(root, "import lang 'lang/en.nss'\nitem(title=loc.caption)\n");
+            File.WriteAllText(languagePath, "caption='Original'\n");
+            var workspace = new Workspace(root, new NativeLanguage());
+            using var native = AttachNativeResolver(workspace);
+            string fullLanguagePath = Path.GetFullPath(languagePath);
+            Equal(SourceParseRole.Localization, workspace.Files[fullLanguagePath].ParseRole);
+            var occurrence = workspace.ImportOccurrences.Single();
+            Equal(SourceParseRole.Localization, occurrence.ParseRole);
+            Equal("Original", MenuEditing.FromConfiguration(workspace).Entries.Single().DisplayTitle);
+            workspace.Checkpoint();
+            workspace.Files[fullLanguagePath].SetText("caption='Changed'\n");
+            Equal("Changed", MenuEditing.FromConfiguration(workspace).Entries.Single().DisplayTitle);
+            workspace.Undo();
+            Equal(SourceParseRole.Localization, workspace.Files[fullLanguagePath].ParseRole);
+            Equal("Original", MenuEditing.FromConfiguration(workspace).Entries.Single().DisplayTitle);
+            workspace.Redo();
+            Equal(SourceParseRole.Localization, workspace.Files[fullLanguagePath].ParseRole);
+            Equal("Changed", MenuEditing.FromConfiguration(workspace).Entries.Single().DisplayTitle);
+        });
+        Test("native configuration snapshots compare captured structure and report drift", () =>
+        {
+            string path = Path.Combine(NewDirectory(), "shell.nss");
+            File.WriteAllText(path, "item(title='Open')\n");
+            var workspace = new Workspace(path, new NativeLanguage());
+            var expected = MenuEditing.FromConfiguration(workspace);
+            var expectation = CaptureExpectation.FromSnapshot(expected, workspace.Revision);
+            var actual = MenuEditing.Clone(expected);
+            Equal(CaptureVerificationStatus.Passed, CaptureVerification.Compare(expectation, actual).Status);
+            actual.Entries[0].Title = "Renamed";
+            var changed = CaptureVerification.Compare(expectation, actual);
+            Equal(CaptureVerificationStatus.Failed, changed.Status);
+            True(changed.Differences.Any(d => d.Code == "VERIFY_TITLE"), "A changed captured title was not reported.");
+            actual.Entries[0].Title = "Open";
+            actual.Entries[0].Keys = "Ctrl+K";
+            var changedKeys = CaptureVerification.Compare(expectation, actual);
+            Equal(CaptureVerificationStatus.Failed, changedKeys.Status);
+            True(changedKeys.Differences.Any(d => d.Code == "VERIFY_STATE"), "A changed captured key binding was not reported.");
+            actual.Entries[0].Keys = "";
+            actual.Entries[0].OwnerDraw = true;
+            var changedOwnerDraw = CaptureVerification.Compare(expectation, actual);
+            Equal(CaptureVerificationStatus.Failed, changedOwnerDraw.Status);
+            True(changedOwnerDraw.Differences.Any(d => d.Code == "VERIFY_STATE"), "A changed owner-draw state was not reported.");
+            actual.Entries[0].OwnerDraw = false;
+            var partial = MenuEditing.Clone(expected);
+            partial.Entries[0].ChildrenCaptured = false;
+            var partialExpectation = CaptureExpectation.FromSnapshot(partial, workspace.Revision);
+            var incomplete = CaptureVerification.Compare(partialExpectation, partial);
+            Equal(CaptureVerificationStatus.Inconclusive, incomplete.Status);
+            True(incomplete.Differences.Any(d => d.Code == "VERIFY_PARTIAL_CAPTURE"), "An unavailable popup descendant was not reported.");
+            Equal(CaptureVerificationStatus.Inconclusive, CaptureVerification.Compare(expectation, null).Status);
+        });
+    }
+    if (args.Contains("--native"))
+    {
+        Test("workspace template closure exports and rebases localized imports", () =>
+        {
+            var language = new RecordingLanguage();
+            string sourceRoot = NewDirectory();
+            string source = Path.Combine(sourceRoot, "shell.nss");
+            string managed = Path.Combine(sourceRoot, "imports", "studio.nss");
+            string localization = Path.Combine(sourceRoot, "imports", "lang", "en.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(localization)!);
+            File.WriteAllText(source, "import 'imports/studio.nss'\n");
+            File.WriteAllText(managed, "import lang 'lang/en.nss'\nitem(title=loc.greeting)\n");
+            File.WriteAllText(localization, "greeting=\"Hello\"\n");
+
+            var workspace = new Workspace(source, language);
+            using var native = AttachNativeResolver(workspace);
+            True(workspace.Files.ContainsKey(Path.GetFullPath(managed)), "Managed customization was not resolved.");
+            True(workspace.Files.ContainsKey(Path.GetFullPath(localization)), "Localization import was not resolved.");
+            Equal(SourceParseRole.Localization, workspace.Files[Path.GetFullPath(localization)].ParseRole);
+
+            var template = TemplateAssets.CreateWorkspace("Localized closure", workspace, language);
+            Equal("workspace-closure", template.Scope);
+            Equal("entry.nss", template.EntrySourceKey);
+            True(template.SourceFiles.Count == 2, "The managed entry and localized import were not both packaged.");
+            True(template.SourceRoles.Values.Contains("localization", StringComparer.OrdinalIgnoreCase), "Localization source role was not retained.");
+            True(template.SourceOrigins.Values.Contains("imports/lang/en.nss", StringComparer.OrdinalIgnoreCase), "Relative localization origin was not retained.");
+
+            string package = Path.Combine(NewDirectory(), "localized.shelltemplate");
+            TemplatePackages.Save(package, template);
+            var loaded = TemplatePackages.Load(package);
+            int localizationCalls = language.LocalizationCalls;
+            var packageDiagnostics = TemplatePackages.Inspect(loaded, language);
+            True(language.LocalizationCalls > localizationCalls, "Template inspection did not parse the localized source with ParseLocalization.");
+            True(!packageDiagnostics.Any(d => d.Severity == "error"), "Packaged closure inspection failed: " + string.Join(";", packageDiagnostics.Select(d => d.Code + ":" + d.Message)));
+
+            string destinationRoot = NewDirectory();
+            string destination = Path.Combine(destinationRoot, "shell.nss");
+            string destinationManaged = Path.Combine(destinationRoot, "imports", "studio.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationManaged)!);
+            File.WriteAllText(destination, "import 'imports/studio.nss'\n");
+            int rebaseLocalizationCalls = language.LocalizationCalls;
+            var rebased = TemplateAssets.RebaseWorkspace(loaded, destination, destinationManaged, language);
+            True(language.LocalizationCalls > rebaseLocalizationCalls, "Closure rebase did not parse the localized source with ParseLocalization.");
+            True(!rebased.Diagnostics.Any(d => d.Severity == "error"), "Closure rebase failed: " + string.Join(";", rebased.Diagnostics.Select(d => d.Code + ":" + d.Message)));
+            True(rebased.Sources.Count == 1, "The localized source was not returned as a staged source edit.");
+            var localizedEdit = rebased.Sources.Single();
+            True(localizedEdit.Path.StartsWith(Path.Combine(destinationRoot, "imports", "studio-templates"), StringComparison.OrdinalIgnoreCase), "Localized source escaped the template-owned staging directory.");
+            True(rebased.Configuration.Contains("studio-templates", StringComparison.OrdinalIgnoreCase), "The managed localization import was not rewritten to its staged destination: " + rebased.Configuration);
+            var localizedDocument = language.Inner.ParseLocalization(Encoding.UTF8.GetString(localizedEdit.Content));
+            True(!localizedDocument.Diagnostics.Any(d => d.Severity == "error"), "Rebased localization source is not valid localization syntax.");
+
+            var edits = new List<FileEdit> { new(destinationManaged, "MISSING", Encoding.UTF8.GetBytes(rebased.Configuration)) };
+            edits.AddRange(rebased.Sources); edits.AddRange(rebased.Assets);
+            var applied = new ConfigurationTransactions(destination, edits.Select(edit => edit.Path), Path.Combine(destinationRoot, "backups")).Apply(edits);
+            True(applied.Success, string.Join(";", applied.Diagnostics.Select(d => d.Code + ":" + d.Message)));
+            var reopenedWorkspace = new Workspace(destination, language);
+            using var reopenedNative = AttachNativeResolver(reopenedWorkspace);
+            var reopenedLocalization = reopenedWorkspace.Files.Values.Single(file => file.ParseRole == SourceParseRole.Localization);
+            Equal("Hello", MenuEditing.FromConfiguration(reopenedWorkspace).Entries.Single().DisplayTitle);
+            True(reopenedLocalization.Path.Equals(localizedEdit.Path, StringComparison.OrdinalIgnoreCase), "Applied localization source was not reached through the rewritten import.");
+        });
+
+        Test("workspace template rebase rejects conflicting source and asset destinations", () =>
+        {
+            var language = new NativeLanguage();
+            string sourceRoot = NewDirectory();
+            string source = Path.Combine(sourceRoot, "shell.nss");
+            string managed = Path.Combine(sourceRoot, "imports", "studio.nss");
+            string imported = Path.Combine(sourceRoot, "imports", "shared.nss");
+            string icon = Path.Combine(sourceRoot, "imports", "icon.png");
+            Directory.CreateDirectory(Path.GetDirectoryName(managed)!);
+            File.WriteAllText(source, "import 'imports/studio.nss'\n");
+            File.WriteAllText(managed, "import 'shared.nss'\nitem(title=\"Greeting\" image=\"icon.png\")\n");
+            File.WriteAllText(imported, "item(title=\"Shared\")\n");
+            File.WriteAllBytes(icon, [1, 2, 3]);
+            var template = TemplateAssets.CreateWorkspace("Conflict closure", new Workspace(source, language), language);
+            True(template.SourceFiles.Count == 2 && template.Assets.Count == 1, "Conflict fixture did not contain its source and asset closure.");
+
+            string destinationRoot = NewDirectory();
+            string destination = Path.Combine(destinationRoot, "shell.nss");
+            string destinationManaged = Path.Combine(destinationRoot, "imports", "studio.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(destinationManaged)!);
+            File.WriteAllText(destination, "import 'imports/studio.nss'\n");
+            var initial = TemplateAssets.RebaseWorkspace(template, destination, destinationManaged, language);
+            var sourcePath = initial.Sources.Single().Path;
+            var assetPath = initial.Assets.Single().Path;
+            True(!File.Exists(sourcePath) && !File.Exists(assetPath), "Rebase wrote a destination before review/apply.");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(sourcePath)!);
+            File.WriteAllText(sourcePath, "item(title=\"Unrelated\")\n");
+            var sourceConflict = TemplateAssets.RebaseWorkspace(template, destination, destinationManaged, language);
+            True(sourceConflict.Diagnostics.Any(d => d.Code == "TEMPLATE_SOURCE_CONFLICT" && d.Severity == "error"), "Different existing source content was accepted.");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+            File.WriteAllBytes(assetPath, [9, 9, 9]);
+            var assetConflict = TemplateAssets.RebaseWorkspace(template, destination, destinationManaged, language);
+            True(assetConflict.Diagnostics.Any(d => d.Code == "TEMPLATE_ASSET_CONFLICT" && d.Severity == "error"), "Different existing asset content was accepted.");
+
+            string directoryDestinationRoot = NewDirectory();
+            string directoryDestination = Path.Combine(directoryDestinationRoot, "shell.nss");
+            string directoryManaged = Path.Combine(directoryDestinationRoot, "imports", "studio.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(directoryManaged)!);
+            File.WriteAllText(directoryDestination, "import 'imports/studio.nss'\n");
+            var directoryInitial = TemplateAssets.RebaseWorkspace(template, directoryDestination, directoryManaged, language);
+            Directory.CreateDirectory(directoryInitial.Sources.Single().Path);
+            var directoryConflict = TemplateAssets.RebaseWorkspace(template, directoryDestination, directoryManaged, language);
+            True(directoryConflict.Diagnostics.Any(d => d.Code == "TEMPLATE_SOURCE_CONFLICT" && d.Severity == "error"), "An existing source directory was accepted as a file destination.");
+        });
+
+        Test("template merge reports an incompatible definition target", () =>
+        {
+            var language = new NativeLanguage();
+            string destinationRoot = NewDirectory();
+            string destination = Path.Combine(destinationRoot, "shell.nss");
+            string managed = Path.Combine(destinationRoot, "imports", "studio.nss");
+            Directory.CreateDirectory(Path.GetDirectoryName(managed)!);
+            File.WriteAllText(destination, "import 'imports/studio.nss'\n");
+            File.WriteAllText(managed, "item(title=\"Greeting\")\n");
+            var workspace = new Workspace(destination, language);
+            var template = new StudioTemplate { Name = "Incompatible", Scope = "managed", Configuration = "item(title=\"Greeting\")\n" };
+            var merge = TemplatePackages.InspectMerge(template, workspace, language, replaceManaged: false);
+            True(merge.Any(d => d.Code == "TEMPLATE_DEFINITION_CONFLICT" && d.Severity == "warning"), "Merge did not report the overlapping definition.");
+            var replacement = TemplatePackages.InspectMerge(template, workspace, language, replaceManaged: true);
+            True(!replacement.Any(d => d.Code == "TEMPLATE_DEFINITION_CONFLICT"), "Replacing managed customization retained a conflict with the file being replaced.");
+        });
+
+        Test("dynamic imports remain unresolved and retain diagnostics", () =>
+        {
+            var language = new NativeLanguage();
+            string directory = NewDirectory();
+            string root = Path.Combine(directory, "shell.nss");
+            const string text = "$loc_path='imports/lang/'\n" +
+                "import lang if(path.exists(loc_path + sys.lang + \".nss\"), loc_path + sys.lang + \".nss\", loc_path + \"en.nss\")\n" +
+                "item(title=\"Dynamic\")\n";
+            File.WriteAllText(root, text);
+            var workspace = new Workspace(root, language);
+            var occurrence = workspace.ImportOccurrences.Single();
+            Equal(ImportResolutionStatus.Unresolved, occurrence.Status);
+            True(workspace.Diagnostics.Count(d => d.Code == "LANG_IMPORT_DYNAMIC") == 1, "Dynamic import diagnostics were duplicated or lost.");
+            True(workspace.Files.Count == 1, "Runtime-dependent import caused a destination file to be loaded.");
+
+            var template = new StudioTemplate
+            {
+                Name = "Dynamic", Scope = "workspace-closure", Configuration = text,
+                EntrySourceKey = "entry.nss",
+                SourceFiles = new(StringComparer.OrdinalIgnoreCase) { ["entry.nss"] = text },
+                SourceOrigins = new(StringComparer.OrdinalIgnoreCase) { ["entry.nss"] = "imports/studio.nss" },
+                SourceRoles = new(StringComparer.OrdinalIgnoreCase) { ["entry.nss"] = "configuration" }
+            };
+            var diagnostics = TemplatePackages.Inspect(template, language);
+            True(diagnostics.Any(d => d.Code == "LANG_IMPORT_DYNAMIC"), "Template inspection dropped the native dynamic-import diagnostic.");
+            string destinationRoot = NewDirectory();
+            var rebased = TemplateAssets.RebaseWorkspace(template, Path.Combine(destinationRoot, "shell.nss"), Path.Combine(destinationRoot, "imports", "studio.nss"), language);
+            Equal(text, rebased.Configuration);
+        });
+
+        Test("durable template layouts survive insertion move undo and reopen", () =>
+        {
+            var language = new NativeLanguage();
+            const string original = "item(title=\"One\")\nitem(title=\"Two\")\n";
+            string path = Path.Combine(NewDirectory(), "shell.nss");
+            File.WriteAllText(path, original);
+            var file = new SourceFile(path, Encoding.UTF8.GetBytes(original), language);
+            var state = new EditorState();
+            var target = file.Syntax.Nodes[1];
+            string originalKey = TemplateLayouts.StateKey(file, target, "title");
+            state.GraphLayouts[originalKey] = new() { ["e11"] = new(34, 56) };
+            var template = new StudioTemplate { Name = "Durable", Configuration = original };
+            TemplateLayouts.Capture(template, file, state, language);
+            True(template.LayoutSourceHash.Length == 64, "Template did not retain its source hash.");
+            True(template.Layout.Keys.All(key => !key.Contains(path, StringComparison.OrdinalIgnoreCase)), "Template layout retained a machine path.");
+
+            string package = Path.Combine(NewDirectory(), "durable.shelltemplate");
+            TemplatePackages.Save(package, template);
+            var reopenedTemplate = TemplatePackages.Load(package);
+            var reopenedFile = new SourceFile(Path.Combine(NewDirectory(), "reopened.nss"), Encoding.UTF8.GetBytes(original), language);
+            Equal(originalKey, TemplateLayouts.StateKey(reopenedFile, reopenedFile.Syntax.Nodes[1], "title"));
+
+            var workspace = new Workspace(path, language);
+            workspace.Checkpoint();
+            workspace.Files[path].SetText("item(title=\"Inserted\")\nitem(title=\"One\")\nitem(title=\"Two\")\n");
+            workspace.Undo();
+            Equal(originalKey, TemplateLayouts.StateKey(workspace.Files[path], workspace.Files[path].Syntax.Nodes[1], "title"));
+
+            const string moved = "item(title=\"Inserted\")\nitem(title=\"One\")\nitem(title=\"Two\")\n";
+            string destination = Path.Combine(NewDirectory(), "destination.nss");
+            var restored = new EditorState();
+            TemplateLayouts.Restore(reopenedTemplate, moved, destination, 42, restored, language);
+            var movedFile = new SourceFile(destination, Encoding.UTF8.GetBytes(moved), language);
+            var movedTarget = movedFile.Syntax.Nodes[2];
+            string expectedKey = TemplateLayouts.StateKey(movedFile, movedTarget, "title");
+            True(restored.GraphLayouts.TryGetValue(expectedKey, out var layout) && layout["e11"] == new NodePosition(34, 56), "Layout did not follow the moved declaration after insertion. Keys: " + string.Join(" | ", restored.GraphLayouts.Keys));
+            string legacyKey = destination + "#" + (42 + movedTarget.Start) + ".title";
+            True(restored.GraphLayouts.ContainsKey(legacyKey), "Restore did not retain the editor's path/offset compatibility alias.");
+        });
     }
 }
 finally
@@ -543,6 +1332,7 @@ string NewDirectory() { var path = Path.Combine(temporaryRoot, Guid.NewGuid().To
 static void True(bool condition, string message) { if (!condition) throw new Exception(message); }
 static void Equal<T>(T expected, T actual) { if (!EqualityComparer<T>.Default.Equals(expected, actual)) throw new Exception($"Expected '{expected}', got '{actual}'."); }
 static void Throws<T>(Action action) where T : Exception { try { action(); } catch (T) { return; } throw new Exception("Expected " + typeof(T).Name); }
+NativeSemanticFixture AttachNativeResolver(Workspace workspace) => new(workspace);
 sealed class NoParsing : ILanguageService { public SyntaxDocument Parse(string text) => new(); }
 static class EncodingProbe
 {
@@ -560,4 +1350,93 @@ sealed class ItemParsing : ILanguageService
         Nodes = System.Text.RegularExpressions.Regex.Matches(text, @"item\([^)]*\)").Select(m =>
             new SyntaxNode { Id = "parser-offset-" + m.Index, Kind = "item", Start = m.Index, Length = m.Length }).ToList()
     };
+}
+sealed class RuleParsing : ILanguageService
+{
+    public SyntaxDocument Parse(string text) => new()
+    {
+        Nodes = System.Text.RegularExpressions.Regex.Matches(text, @"modify\([^)]*\)")
+            .Select(m => new SyntaxNode { Id = "parser-offset-" + m.Index, Kind = "modify", Start = m.Index, Length = m.Length })
+            .ToList(),
+    };
+}
+sealed class RecordingLanguage : ILanguageService
+{
+    public NativeLanguage Inner { get; } = new();
+    public int LocalizationCalls { get; private set; }
+    public SyntaxDocument Parse(string text) => Inner.Parse(text);
+    public SyntaxDocument ParseLocalization(string text)
+    {
+        LocalizationCalls++;
+        return Inner.ParseLocalization(text);
+    }
+}
+sealed class BindingLanguage : ILanguageService
+{
+    public SyntaxDocument Parse(string text)
+    {
+        int firstStart = text.IndexOf("$answer='literal'", StringComparison.Ordinal);
+        int firstValue = text.IndexOf("'literal'", firstStart, StringComparison.Ordinal);
+        int secondStart = text.IndexOf("$answer=runtime", StringComparison.Ordinal);
+        int secondValue = text.IndexOf("runtime", secondStart, StringComparison.Ordinal);
+        int importStart = text.IndexOf("import answer", StringComparison.Ordinal);
+        int importValue = text.IndexOf("answer", importStart, StringComparison.Ordinal);
+        return new SyntaxDocument
+        {
+            Nodes =
+            [
+                new SyntaxNode
+                {
+                    Kind = "variable", Name = "$answer", Start = firstStart,
+                    Length = "$answer='literal'".Length,
+                    Expression = new ExpressionNode { Kind = "literal", Text = "'literal'", LiteralString = "literal", Start = firstValue, Length = "'literal'".Length },
+                },
+                new SyntaxNode
+                {
+                    Kind = "variable", Name = "$answer", Start = secondStart,
+                    Length = "$answer=runtime".Length,
+                    Expression = new ExpressionNode { Kind = "identifier", Text = "runtime", Start = secondValue, Length = "runtime".Length },
+                },
+                new SyntaxNode
+                {
+                    Kind = "import", Start = importStart, Length = "import answer".Length,
+                    Expression = new ExpressionNode { Kind = "identifier", Text = "answer", Start = importValue, Length = "answer".Length },
+                },
+            ],
+        };
+    }
+}
+sealed class BindingResolver : IWorkspaceSemanticResolver
+{
+    public List<SourceSemanticRequest> Requests { get; } = [];
+
+    public SourceSemanticResult Resolve(SourceSemanticRequest request)
+    {
+        Requests.Add(request);
+        if (request.Query == SourceSemanticQuery.PropertyValue && request.ExpressionText == "'literal'")
+            return new SourceSemanticResult(true, "literal", SemanticResolutionOrigin.Native, []);
+        return SourceSemanticResult.Unavailable("The fixture resolver intentionally leaves this expression unresolved.",
+            request.FilePath, request.Position, request.Length, request.ScopeNodeId);
+    }
+}
+
+sealed class NativeSemanticFixture : IDisposable
+{
+    private readonly PreviewWorkspaceSemanticResolver resolver;
+
+    public NativeSemanticFixture(Workspace workspace)
+    {
+        string workerPath = Path.Combine(AppContext.BaseDirectory, "ShellStudio.PreviewWorker.exe");
+        string languagePath = Path.Combine(AppContext.BaseDirectory, "ShellStudio.Language.dll");
+        if (!File.Exists(workerPath))
+            throw new FileNotFoundException("The native preview worker was not copied beside the tests.", workerPath);
+        if (!File.Exists(languagePath))
+            throw new FileNotFoundException("The native language service was not copied beside the tests.", languagePath);
+
+        var client = new PreviewWorkerClient(workerPath, languagePath, TimeSpan.FromSeconds(15));
+        resolver = new PreviewWorkspaceSemanticResolver(workspace, client, disposeClient: true);
+        workspace.SemanticResolver = resolver;
+    }
+
+    public void Dispose() => resolver.DisposeAsync().GetAwaiter().GetResult();
 }

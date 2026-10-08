@@ -34,13 +34,59 @@ public sealed record OperationDescriptor(
     IReadOnlyList<OperationField> Fields,
     bool RequiresElevation,
     bool Destructive,
-    string Category);
+    string Category,
+    bool ShowInCatalog = true);
+
+/// <summary>
+/// The complete Explorer or picker selection associated with an operation.
+/// Keeping this beside the typed request prevents command/profile generation
+/// from silently collapsing a multi-selection to its first path.
+/// </summary>
+public sealed class OperationSelection
+{
+    public OperationSelection() { }
+
+    public OperationSelection(
+        string context,
+        IEnumerable<string>? paths = null,
+        string? parentPath = null,
+        bool isBackground = false,
+        bool isDesktop = false)
+    {
+        Context = string.IsNullOrWhiteSpace(context) ? "none" : context.Trim();
+        Paths = (paths ?? Array.Empty<string>()).ToArray();
+        ParentPath = parentPath;
+        IsBackground = isBackground;
+        IsDesktop = isDesktop;
+    }
+
+    public string Context { get; init; } = "none";
+    public IReadOnlyList<string> Paths { get; init; } = Array.Empty<string>();
+    public string? ParentPath { get; init; }
+    public bool IsBackground { get; init; }
+    public bool IsDesktop { get; init; }
+    public bool IsMultiple => Paths.Count > 1;
+
+    public static OperationSelection Empty { get; } = new();
+}
 
 /// <summary>Typed request sent by the GUI or command host.</summary>
 public sealed record OperationRequest(string Id, Dictionary<string, string> Values)
 {
-    public static OperationRequest Create(string id, IEnumerable<KeyValuePair<string, string>>? values = null)
-        => new(id, new Dictionary<string, string>(values ?? Array.Empty<KeyValuePair<string, string>>(), StringComparer.OrdinalIgnoreCase));
+    /// <summary>All selected paths and their context, not only the primary path field.</summary>
+    public OperationSelection Selection { get; init; } = OperationSelection.Empty;
+
+    public static OperationRequest Create(
+        string id,
+        IEnumerable<KeyValuePair<string, string>>? values = null,
+        OperationSelection? selection = null)
+        => new(id, new Dictionary<string, string>(values ?? Array.Empty<KeyValuePair<string, string>>(), StringComparer.OrdinalIgnoreCase))
+        {
+            Selection = selection ?? OperationSelection.Empty
+        };
+
+    public OperationRequest WithSelection(OperationSelection? selection)
+        => this with { Selection = selection ?? OperationSelection.Empty };
 }
 
 /// <summary>Immutable preview that must be presented before execution.</summary>

@@ -21,12 +21,22 @@ internal sealed record OperationPreview(
 /// </summary>
 public sealed class OperationService
 {
+    // WinSetView seeds this fixed layout when legacy Explorer is selected so
+    // the old shell remembers a usable window size and position. Keep the
+    // donor bytes exact; the value is written only when that setting is on.
+    private static readonly byte[] Win10ExplorerToolbarLayout = Convert.FromHexString(
+        "13000000000000000000000020000000100001000000000001000000010700005e01000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000");
+
     private readonly IToolEnvironment _environment;
+    private readonly IFolderThumbnailSetting _folderThumbnails;
     private readonly Dictionary<string, OperationPlan> _plans = new(StringComparer.Ordinal);
     private readonly object _planGate = new();
 
-    public OperationService(IToolEnvironment? environment = null)
-        => _environment = environment ?? new WindowsToolEnvironment();
+    public OperationService(IToolEnvironment? environment = null, IFolderThumbnailSetting? folderThumbnails = null)
+    {
+        _environment = environment ?? new WindowsToolEnvironment();
+        _folderThumbnails = folderThumbnails ?? new WindowsFolderThumbnailSetting(_environment);
+    }
 
     public IToolEnvironment Environment => _environment;
 
@@ -41,6 +51,8 @@ public sealed class OperationService
         }
 
         var normalized = NormalizeRequest(request, descriptor, diagnostics);
+        if (!OperationCatalog.IsSelectionEligible(descriptor.Id, normalized.Selection, out var selectionReason))
+            diagnostics.Add(new Diagnostic("TOOL-SELECTION-INELIGIBLE", selectionReason, NodeId: descriptor.Id));
         OperationPreview preview;
         try
         {
@@ -105,7 +117,7 @@ public sealed class OperationService
         {
             journal = new RecoveryJournal(_environment);
             journal.Begin(plan);
-            await ExecuteRequestAsync(plan.Request, descriptor, journal, diagnostics, progress, cancellationToken).ConfigureAwait(false);
+            await ExecuteRequestAsync(plan, descriptor, journal, diagnostics, progress, cancellationToken).ConfigureAwait(false);
             journal.Complete(true);
             lock (_planGate) _plans.Remove(plan.Token);
             return new OperationResult(true, diagnostics, journal.DirectoryPath);
@@ -224,7 +236,12 @@ public sealed class OperationService
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in descriptor.Fields)
-            values[field.Name] = request.Values.TryGetValue(field.Name, out var supplied) ? supplied : field.DefaultValue;
+        {
+            var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : field.DefaultValue;
+            values[field.Name] = IsFeatureField(field.Name)
+                ? NormalizeFeatureChoice(field.Name, supplied, diagnostics)
+                : supplied;
+        }
         foreach (var supplied in request.Values.Keys)
             if (!descriptor.Fields.Any(f => f.Name.Equals(supplied, StringComparison.OrdinalIgnoreCase)))
                 diagnostics.Add(new Diagnostic("TOOL-FIELD-UNKNOWN", $"Field '{supplied}' is not supported by {descriptor.Id}.", NodeId: descriptor.Id));
@@ -239,7 +256,24 @@ public sealed class OperationService
             if (field.Kind == "integer" && !int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
                 diagnostics.Add(new Diagnostic("TOOL-FIELD-INTEGER", $"{field.Label} must be an integer.", NodeId: descriptor.Id));
         }
-        return new OperationRequest(descriptor.Id, values);
+        return new OperationRequest(descriptor.Id, values) { Selection = request.Selection ?? OperationSelection.Empty };
+    }
+
+    private static bool IsFeatureField(string name)
+        => name.Equals("win10Search", StringComparison.OrdinalIgnoreCase)
+            || name.Equals("win11Explorer", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeFeatureChoice(string field, string? raw, List<Diagnostic> diagnostics)
+    {
+        var value = raw?.Trim() ?? string.Empty;
+        if (value.Equals("true", StringComparison.OrdinalIgnoreCase) || value.Equals("1", StringComparison.OrdinalIgnoreCase))
+            // WinSetView's Win11Explorer checkbox is intentionally inverse:
+            // checked means the feature itself is disabled.
+            return field.Equals("win11Explorer", StringComparison.OrdinalIgnoreCase) ? "Disabled" : "Enabled";
+        if (value.Equals("false", StringComparison.OrdinalIgnoreCase) || value.Equals("0", StringComparison.OrdinalIgnoreCase))
+            return field.Equals("win11Explorer", StringComparison.OrdinalIgnoreCase) ? "Enabled" : "Disabled";
+        if (value.Length == 0) return "Unchanged";
+        return value;
     }
 
     private async Task<OperationPreview> BuildPreviewAsync(OperationRequest request, OperationDescriptor descriptor, List<Diagnostic> inherited, CancellationToken cancellationToken)
@@ -250,6 +284,10 @@ public sealed class OperationService
         var summary = descriptor.Description;
         switch (request.Id.ToLowerInvariant())
         {
+            case "folder.thumbnail.set":
+                requiresElevation = await Task.Run(() => PreviewThumbnailSetting(request, changes, diagnostics, cancellationToken), cancellationToken)
+                    .WaitAsync(cancellationToken).ConfigureAwait(false);
+                break;
             case "folder.thumbnail.inspect": PreviewThumbnailInspect(request, changes, diagnostics); break;
             case "folder.thumbnail.apply": PreviewThumbnailApply(request, changes, diagnostics); break;
             case "folder.thumbnail.restore": PreviewThumbnailRestore(request, changes, diagnostics); requiresElevation = true; break;
@@ -272,6 +310,9 @@ public sealed class OperationService
             case "launch.file-manager": PreviewLaunch(request, "file-manager", changes, diagnostics, ref requiresElevation); break;
             case "launch.search": PreviewLaunch(request, "search", changes, diagnostics, ref requiresElevation); break;
             case "launch.custom": PreviewLaunch(request, "custom", changes, diagnostics, ref requiresElevation); break;
+            case "launch.user-script": PreviewUserScript(request, changes, diagnostics); break;
+            case "registry.import-reg": PreviewRegistryImport(request, changes, diagnostics, ref requiresElevation); break;
+            case "registry.export-reg": PreviewRegistryExport(request, changes, diagnostics); break;
             case "views.inspect": PreviewViewsInspect(request, changes, diagnostics); break;
             case "views.apply": PreviewViewsApply(request, changes, diagnostics, ref requiresElevation); break;
             case "views.options": PreviewViewsOptions(request, changes, diagnostics, ref requiresElevation); break;
@@ -287,10 +328,12 @@ public sealed class OperationService
         return new OperationPreview(summary, changes, diagnostics, requiresElevation, !hasError);
     }
 
-    private async Task ExecuteRequestAsync(OperationRequest request, OperationDescriptor descriptor, RecoveryJournal journal, List<Diagnostic> diagnostics, IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
+    private async Task ExecuteRequestAsync(OperationPlan plan, OperationDescriptor descriptor, RecoveryJournal journal, List<Diagnostic> diagnostics, IProgress<OperationProgress>? progress, CancellationToken cancellationToken)
     {
+        var request = plan.Request;
         switch (request.Id.ToLowerInvariant())
         {
+            case "folder.thumbnail.set": await ExecuteThumbnailSettingAsync(plan, journal, diagnostics, cancellationToken).ConfigureAwait(false); break;
             case "folder.thumbnail.apply": ExecuteThumbnailApply(request, journal, cancellationToken); break;
             case "folder.thumbnail.restore": ExecuteJournalRestore(request, cancellationToken); break;
             case "folder.type.set": await ExecuteFolderTypeMutationAsync(request, false, journal, progress, cancellationToken).ConfigureAwait(false); break;
@@ -310,6 +353,9 @@ public sealed class OperationService
             case "launch.file-manager": await ExecuteLaunchAsync(request, "file-manager", cancellationToken).ConfigureAwait(false); break;
             case "launch.search": await ExecuteLaunchAsync(request, "search", cancellationToken).ConfigureAwait(false); break;
             case "launch.custom": await ExecuteLaunchAsync(request, "custom", cancellationToken).ConfigureAwait(false); break;
+            case "launch.user-script": await ExecuteUserScriptAsync(request, cancellationToken).ConfigureAwait(false); break;
+            case "registry.import-reg": ExecuteRegistryImport(plan, journal, diagnostics, cancellationToken); break;
+            case "registry.export-reg": ExecuteRegistryExport(plan, journal, cancellationToken); break;
             case "views.apply": ExecuteViewsApply(request, journal, cancellationToken); break;
             case "views.options": ExecuteViewsOptions(request, journal, cancellationToken); break;
             case "views.backup": ExecuteViewsBackup(request, journal, cancellationToken); break;
@@ -332,6 +378,33 @@ public sealed class OperationService
     private static bool GetBool(OperationRequest r, string n, bool fallback = false) => OperationHelpers.GetBool(r, n, fallback);
     private static int GetInt(OperationRequest r, string n, int fallback = 0) => OperationHelpers.GetInt(r, n, fallback);
 
+    private static bool TryGetFeatureIntent(OperationRequest request, string field, bool enableWhenChecked, out bool desired)
+    {
+        desired = false;
+        var value = GetValue(request, field, "Unchanged").Trim();
+        if (value.Equals("Unchanged", StringComparison.OrdinalIgnoreCase)) return false;
+        if (value.Equals("Enabled", StringComparison.OrdinalIgnoreCase))
+        {
+            // The public choice names describe the actual feature state. The
+            // donor's Win11 checkbox is inverted only for legacy 0/1 input.
+            desired = true;
+            return true;
+        }
+        if (value.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
+        {
+            desired = false;
+            return true;
+        }
+        // Keep this compatibility path useful for callers that construct an
+        // OperationRequest directly and bypass PreviewAsync normalization.
+        if (bool.TryParse(value, out var legacy))
+        {
+            desired = legacy == enableWhenChecked;
+            return true;
+        }
+        return false;
+    }
+
     private static void AddPathMissing(IToolEnvironment env, string path, List<Diagnostic> diagnostics, string label = "Path")
     {
         if (!env.Files.FileExists(path) && !env.Files.DirectoryExists(path))
@@ -340,6 +413,61 @@ public sealed class OperationService
 
     private string? PathValue(OperationRequest request, string field, List<Diagnostic> diagnostics, bool directory = false)
         => OperationHelpers.ResolvePath(request, field, diagnostics, directory);
+
+    private const string ThumbnailHashPrefix = "Resource SHA-256: ";
+
+    private bool PreviewThumbnailSetting(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        OperationHelpers.RequireWindows11X64(_environment, diagnostics);
+        var state = _folderThumbnails.Inspect();
+        token.ThrowIfCancellationRequested();
+        changes.Add($"Current thumbnail style: {state.Style}.");
+        changes.Add(ThumbnailHashPrefix + state.Sha256);
+        if (state.Error is not null)
+            diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-INSPECT", state.Error, File: _folderThumbnails.ResourcePath));
+        string desired = GetValue(request, "style");
+        bool needsWrite = !state.Style.Equals(desired, StringComparison.OrdinalIgnoreCase);
+        changes.Add(!needsWrite
+            ? "The selected mask is already installed; no resource write is needed."
+            : $"Set thumbnail style to {desired}. Back up the current resource and replace only its folder mask in {_folderThumbnails.ResourcePath}.");
+        if (needsWrite) changes.Add("Default applies the built-in half-cover mask to the current Windows resource.");
+        if (GetBool(request, "refreshExplorer"))
+        {
+            changes.Add("Restart the current-session Explorer shell and reset this user's thumbnail cache after applying the style. Explorer windows will close; restarting can take 30–60 seconds.");
+            if (!needsWrite) changes.Add("The selected cache refresh will still run even though the mask is already installed.");
+            diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-RESTART", "Explorer windows will close. Save any work in them before continuing.", Severity: "warning"));
+        }
+        else changes.Add("Leave Explorer running. Sign out and sign back in if thumbnails do not change.");
+        if (state.Style.StartsWith("Unknown", StringComparison.Ordinal))
+            diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-CUSTOM", "The current mask is unrecognized. Applying this choice replaces that mask and keeps a recovery backup.", Severity: "warning"));
+        diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-REPAIR", "Windows Update, Windows repair, or SFC can reset this setting. Reapply it and refresh the thumbnail cache when needed.", Severity: "info"));
+        return needsWrite;
+    }
+
+    private async Task ExecuteThumbnailSettingAsync(OperationPlan plan, RecoveryJournal journal, List<Diagnostic> diagnostics, CancellationToken token)
+    {
+        if (!_environment.IsWindows11X64) throw new PlatformNotSupportedException("Folder thumbnail style requires Windows 11 x64.");
+        string expectedHash = plan.Changes.Single(value => value.StartsWith(ThumbnailHashPrefix, StringComparison.Ordinal))[ThumbnailHashPrefix.Length..];
+        string desired = GetValue(plan.Request, "style");
+        var current = _folderThumbnails.Inspect();
+        if (current.Error is not null || !string.Equals(current.Sha256, expectedHash, StringComparison.Ordinal))
+            throw new IOException("The Windows thumbnail resource changed after review. Preview the setting again.");
+        token.ThrowIfCancellationRequested();
+        if (!current.Style.Equals(desired, StringComparison.OrdinalIgnoreCase))
+        {
+            _environment.DemandMutation(_folderThumbnails.ResourcePath, systemOperation: true);
+            await _folderThumbnails.SetAsync(desired.Equals("Full size", StringComparison.OrdinalIgnoreCase), expectedHash, journal.DirectoryPath!, token).ConfigureAwait(false);
+        }
+        diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-SET", $"Folder thumbnail mask is set to {desired}. Its protected-file recovery record, if changed, is retained beside the operation journal.", Severity: "info"));
+        if (GetBool(plan.Request, "refreshExplorer"))
+        {
+            // A failed refresh must not silently undo a completed mask change.
+            // The resource backend owns its guarded recovery; this journal owns cache backups.
+            await ExecuteExplorerRefreshAsync(OperationRequest.Create("explorer.refresh", [new("resetThumbs", "true"), new("resetIcons", "false")]), journal, diagnostics, token).ConfigureAwait(false);
+        }
+        diagnostics.Add(new Diagnostic("TOOL-THUMBNAIL-SIGNIN", "If thumbnails are unchanged, sign out and sign back in. If Windows reports the resource is locked on a later attempt, run the setting from Safe Mode Command Prompt.", Severity: "info"));
+    }
 
     private void PreviewThumbnailInspect(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics)
     {
@@ -609,8 +737,11 @@ public sealed class OperationService
     {
         if (!TryBuildCustomLaunchSpec(request, diagnostics, out var specification)) return;
 
-        var selection = GetValue(request, "path").Trim();
-        var selectionText = string.IsNullOrWhiteSpace(selection) ? "without a selected path" : $"with selected path {selection}";
+        var selection = request.Selection?.Paths ?? [];
+        var legacySelection = GetValue(request, "path").Trim();
+        var selectionText = selection.Count > 0
+            ? $"with {selection.Count} selected path(s)"
+            : string.IsNullOrWhiteSpace(legacySelection) ? "without a selected path" : $"with selected path {legacySelection}";
         var elevationText = specification.Elevate ? " with administrator elevation" : "";
         changes.Add($"Launch {specification.FileName}{elevationText} {selectionText} using {specification.Arguments.Count} typed argument(s).");
         if (specification.WorkingDirectory is not null)
@@ -623,13 +754,104 @@ public sealed class OperationService
         }
     }
 
+    private void PreviewUserScript(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics)
+    {
+        var script = TryAbsoluteLaunchPath(request, "scriptPath", diagnostics, required: true, mustBeFile: true);
+        var workingDirectory = TryAbsoluteLaunchPath(request, "workingDirectory", diagnostics, required: false, mustBeFile: false, mustBeDirectory: true);
+        var arguments = TryParseLaunchArguments(GetValue(request, "arguments", "[]"), diagnostics, request.Id);
+        var selection = request.Selection?.Paths ?? [];
+        ValidateSelectionPaths(request, selection, diagnostics);
+        if (script is null || arguments is null || diagnostics.Any(d => d.Severity.Equals("error", StringComparison.OrdinalIgnoreCase)
+                && (d.NodeId is null || d.NodeId.Equals(request.Id, StringComparison.OrdinalIgnoreCase))))
+            return;
+        if (!UserScriptLauncher.TryBuild(script, arguments, workingDirectory, selection, out var specification, out var error))
+        {
+            diagnostics.Add(new Diagnostic("TOOL-SCRIPT-CONTRACT", error, File: script, NodeId: request.Id));
+            return;
+        }
+        try { changes.Add($"Script SHA-256: {_environment.Files.GetSha256(script)}"); }
+        catch (Exception ex) { OperationHelpers.AddException(diagnostics, "TOOL-SCRIPT-HASH", ex, script); return; }
+        changes.Add($"Run the explicitly selected {Path.GetExtension(script)} script from the calling user session with {arguments.Count} typed argument(s) and {selection.Count} selected path(s). No administrator elevation or elevated-host script dispatch is used.");
+        if (workingDirectory is not null) changes.Add($"Use {workingDirectory} as the working directory.");
+        changes.Add($"Invoke {specification.FileName} with the script path as a typed argument.");
+    }
+
+    private void PreviewRegistryImport(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics, ref bool requiresElevation)
+    {
+        var path = PathValue(request, "regPath", diagnostics);
+        if (path is null) return;
+        AddPathMissing(_environment, path, diagnostics, "Registry file");
+        if (!_environment.Files.FileExists(path)) return;
+
+        RegistryRegDocument document;
+        try { document = RegistryRegOperations.Read(_environment.Files, path); }
+        catch (Exception ex) { OperationHelpers.AddException(diagnostics, "TOOL-REG-READ", ex, path); return; }
+        changes.Add($"Registry file SHA-256: {document.SourceSha256}");
+        changes.Add($"Parse {document.Keys.Count} typed registry key section(s) from {path}; no reg.exe or script execution is used.");
+        if (RegistryRegOperations.ContainsDeletes(document) && !GetBool(request, "allowDeletes"))
+            diagnostics.Add(new Diagnostic("TOOL-REG-DELETES", "The registry file declares key or value deletions, but declared deletes are disabled.", File: path,
+                Remedy: "Enable the explicit allowDeletes option and review every deletion in the diff."));
+
+        try
+        {
+            var diff = RegistryRegOperations.Diff(document, _environment.Registry);
+            changes.Add($"Registry target fingerprint: {RegistryRegOperations.DiffFingerprint(diff)}");
+            changes.Add(diff.Count == 0
+                ? "The typed registry diff is empty; no registry values will change."
+                : $"Apply {diff.Count} typed registry change(s) after review, with a recovery journal for each affected registry tree.");
+            foreach (var change in diff.Take(256))
+                changes.Add($"{change.Action}: {change.Hive}\\{change.KeyPath}{(change.ValueName.Length == 0 ? string.Empty : "\\" + change.ValueName)}");
+            if (diff.Count > 256)
+                changes.Add($"The remaining {diff.Count - 256} diff item(s) remain represented in the typed plan but are omitted from this compact preview.");
+        }
+        catch (Exception ex) { OperationHelpers.AddException(diagnostics, "TOOL-REG-DIFF", ex, path); }
+
+        if (document.Keys.Any(key => IsSystemRegistryHive(key.Hive)))
+        {
+            requiresElevation = true;
+            diagnostics.Add(new Diagnostic("TOOL-REG-ELEVATION", "The import targets a machine or shared registry hive and requires an explicitly system-enabled operation host.", Severity: "warning",
+                Remedy: "Review the typed diff, then continue from the administrator operation window."));
+        }
+    }
+
+    private void PreviewRegistryExport(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics)
+    {
+        var hive = GetValue(request, "hive", "HKCU");
+        var keyPath = GetValue(request, "keyPath").Trim().Trim('\\');
+        var destination = PathValue(request, "destination", diagnostics);
+        if (destination is null) return;
+        if (!destination.EndsWith(".reg", StringComparison.OrdinalIgnoreCase))
+            diagnostics.Add(new Diagnostic("TOOL-REG-DESTINATION", "The registry export destination must use the .reg extension.", File: destination, NodeId: request.Id));
+        var parent = Path.GetDirectoryName(destination);
+        if (string.IsNullOrWhiteSpace(parent) || !_environment.Files.DirectoryExists(parent))
+            diagnostics.Add(new Diagnostic("TOOL-REG-DESTINATION", $"The registry export destination directory does not exist: {parent ?? destination}", File: destination, NodeId: request.Id));
+        try
+        {
+            var document = RegistryRegOperations.Export(_environment.Registry, hive, keyPath, GetBool(request, "includeSubkeys", true), _environment.Options.MaxDepth, _environment.Options.MaxItems);
+            changes.Add($"Export {document.Keys.Count} typed registry key section(s) from {hive}\\{keyPath} to {destination} as Windows Registry Editor Version 5 data.");
+            var text = RegistryRegOperations.Write(document);
+            var bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray();
+            changes.Add($"Export payload SHA-256: {OperationHelpers.HashBytes(bytes)}");
+            if (_environment.Files.FileExists(destination))
+                changes.Add($"Existing destination SHA-256: {_environment.Files.GetSha256(destination)}");
+            else
+                changes.Add("Destination does not exist yet.");
+        }
+        catch (Exception ex) { OperationHelpers.AddException(diagnostics, "TOOL-REG-EXPORT", ex, destination); }
+    }
+
+    private static bool IsSystemRegistryHive(string hive)
+        => hive.Equals("HKLM", StringComparison.OrdinalIgnoreCase)
+            || hive.Equals("HKCR", StringComparison.OrdinalIgnoreCase)
+            || hive.Equals("HKU", StringComparison.OrdinalIgnoreCase);
+
     private bool TryBuildCustomLaunchSpec(OperationRequest request, List<Diagnostic> diagnostics, out ProcessLaunchSpec specification)
     {
         specification = null!;
         var executable = TryAbsoluteLaunchPath(request, "executable", diagnostics, required: true, mustBeFile: true);
         var selection = TryAbsoluteLaunchPath(request, "path", diagnostics, required: false, mustBeFile: false);
         var workingDirectory = TryAbsoluteLaunchPath(request, "workingDirectory", diagnostics, required: false, mustBeFile: false, mustBeDirectory: true);
-        var arguments = TryParseLaunchArguments(GetValue(request, "arguments", "[]"), diagnostics);
+        var arguments = TryParseLaunchArguments(GetValue(request, "arguments", "[]"), diagnostics, request.Id);
         if (executable is null || arguments is null || diagnostics.Any(d => d.Severity.Equals("error", StringComparison.OrdinalIgnoreCase)
                 && d.NodeId is null or "launch.custom"))
             return false;
@@ -637,10 +859,37 @@ public sealed class OperationService
         var argumentVector = arguments.ToList();
         // A custom operation's selection is an explicit data argument. This
         // keeps ProcessStartInfo.ArgumentList typed and avoids shell parsing,
-        // while still making the selected file/folder useful to a tool.
-        if (selection is not null) argumentVector.Add(selection);
+        // while still making every selected file/folder useful to a tool.
+        if (request.Selection?.Paths is { Count: > 0 } selectedPaths)
+        {
+            ValidateSelectionPaths(request, selectedPaths, diagnostics);
+            argumentVector.AddRange(selectedPaths);
+        }
+        else if (selection is not null) argumentVector.Add(selection);
         specification = new ProcessLaunchSpec(executable, argumentVector, workingDirectory, GetBool(request, "elevate"));
         return true;
+    }
+
+    private void ValidateSelectionPaths(OperationRequest request, IReadOnlyList<string> selection, List<Diagnostic> diagnostics)
+    {
+        foreach (var raw in selection)
+        {
+            if (string.IsNullOrWhiteSpace(raw) || !Path.IsPathFullyQualified(raw))
+            {
+                diagnostics.Add(new Diagnostic("TOOL-SELECTION-PATH", "Every selected path must be absolute.", NodeId: request.Id));
+                continue;
+            }
+            try
+            {
+                var full = Path.GetFullPath(raw);
+                if (!_environment.Files.FileExists(full) && !_environment.Files.DirectoryExists(full))
+                    diagnostics.Add(new Diagnostic("TOOL-SELECTION-MISSING", $"The selected path does not exist: {full}", File: full, NodeId: request.Id));
+            }
+            catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException)
+            {
+                diagnostics.Add(new Diagnostic("TOOL-SELECTION-PATH", $"The selected path is invalid: {ex.Message}", NodeId: request.Id));
+            }
+        }
     }
 
     private string? TryAbsoluteLaunchPath(
@@ -697,17 +946,17 @@ public sealed class OperationService
         return full;
     }
 
-    private static IReadOnlyList<string>? TryParseLaunchArguments(string raw, List<Diagnostic> diagnostics)
+    private static IReadOnlyList<string>? TryParseLaunchArguments(string raw, List<Diagnostic> diagnostics, string operationId = "launch.custom")
     {
         if (string.IsNullOrWhiteSpace(raw))
         {
-            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS", "Arguments must be a JSON array of strings.", NodeId: "launch.custom",
+            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS", "Arguments must be a JSON array of strings.", NodeId: operationId,
                 Remedy: "Use [] for no arguments, or for example [\"--open\",\"file.txt\"]."));
             return null;
         }
         if (raw.Length > 1_048_576)
         {
-            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-LIMIT", "The JSON argument vector exceeds the 1 MiB limit.", NodeId: "launch.custom"));
+            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-LIMIT", "The JSON argument vector exceeds the 1 MiB limit.", NodeId: operationId));
             return null;
         }
 
@@ -716,7 +965,7 @@ public sealed class OperationService
             using var document = JsonDocument.Parse(raw, new JsonDocumentOptions { MaxDepth = 16, CommentHandling = JsonCommentHandling.Disallow, AllowTrailingCommas = false });
             if (document.RootElement.ValueKind != JsonValueKind.Array)
             {
-                diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS", "Arguments must be a JSON array of strings.", NodeId: "launch.custom"));
+                diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS", "Arguments must be a JSON array of strings.", NodeId: operationId));
                 return null;
             }
             var result = new List<string>();
@@ -724,18 +973,18 @@ public sealed class OperationService
             {
                 if (result.Count >= 1024)
                 {
-                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-LIMIT", "A custom launch may contain at most 1024 arguments.", NodeId: "launch.custom"));
+                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-LIMIT", "A typed launch may contain at most 1024 arguments.", NodeId: operationId));
                     return null;
                 }
                 if (item.ValueKind != JsonValueKind.String)
                 {
-                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENT", "Every custom launch argument must be a JSON string.", NodeId: "launch.custom"));
+                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENT", "Every launch argument must be a JSON string.", NodeId: operationId));
                     return null;
                 }
                 var value = item.GetString();
                 if (value is null || value.IndexOf('\0') >= 0 || value.Length > 32_760)
                 {
-                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENT", "Custom launch arguments must be non-null, contain no NUL characters, and be at most 32,760 characters.", NodeId: "launch.custom"));
+                    diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENT", "Launch arguments must be non-null, contain no NUL characters, and be at most 32,760 characters.", NodeId: operationId));
                     return null;
                 }
                 result.Add(value);
@@ -744,7 +993,7 @@ public sealed class OperationService
         }
         catch (JsonException ex)
         {
-            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-JSON", $"Arguments are not valid JSON: {ex.Message}", NodeId: "launch.custom",
+            diagnostics.Add(new Diagnostic("TOOL-LAUNCH-ARGUMENTS-JSON", $"Arguments are not valid JSON: {ex.Message}", NodeId: operationId,
                 Remedy: "Use a JSON array containing only quoted strings."));
             return null;
         }
@@ -791,6 +1040,17 @@ public sealed class OperationService
         changes.Add(@"Update HKCU\Software\Microsoft\Windows\CurrentVersion\Search, SearchSettings, and Feeds\DSB (internet search and highlights).");
         changes.Add(@"Update HKCU\Software\Classes\CLSID and AllFileSystemObjects context-menu handler keys (classic menu and Copy/Move).");
         changes.Add(@"Update Home/Gallery pinning, suggestions, launch folder, legacy PlacesBar, AppData/Public Desktop attributes, and view compatibility options.");
+        var thisPcView = GetInt(request, "thisPcView", 3);
+        if (thisPcView is < 1 or > 8)
+            diagnostics.Add(new Diagnostic("TOOL-VIEWS-THISPC-VIEW", "This PC view must be between 1 and 8, matching the WinSetView view selector.", NodeId: "thisPcView"));
+        if (GetBool(request, "explorerStart"))
+        {
+            var option = GetValue(request, "explorerStartOption", "Home");
+            changes.Add($"Set Explorer's start location to {option}.");
+            if (option.Equals("Custom", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(GetValue(request, "launchPath")))
+                diagnostics.Add(new Diagnostic("TOOL-VIEWS-EXPLORER-START-PATH", "A custom Explorer start location requires launchPath.", NodeId: "launchPath"));
+        }
         PreviewFeatureFlag(request, "win10Search", FeatureFlagIds.Windows10Search, enableWhenTrue: true, changes, diagnostics, ref requiresElevation);
         PreviewFeatureFlag(request, "win11Explorer", FeatureFlagIds.Windows11Explorer, enableWhenTrue: false, changes, diagnostics, ref requiresElevation);
     }
@@ -798,14 +1058,13 @@ public sealed class OperationService
     private void PreviewFeatureFlag(OperationRequest request, string field, uint featureId, bool enableWhenTrue,
         List<string> changes, List<Diagnostic> diagnostics, ref bool requiresElevation)
     {
-        if (!GetBool(request, field)) return;
+        if (!TryGetFeatureIntent(request, field, enableWhenTrue, out var desired)) return;
         requiresElevation = true;
         if (_environment.Options.MutationMode != ToolMutationMode.AllowSystem)
             diagnostics.Add(new Diagnostic("TOOL-VIEWS-FEATURE-ELEVATION",
                 $"Feature {featureId} changes require an AllowSystem operation host.", NodeId: field,
                 Remedy: "Review the plan, then execute it from an explicitly system-enabled Studio host."));
         var inspection = _environment.FeatureFlags.Inspect(featureId);
-        var desired = enableWhenTrue;
         if (!inspection.Supported)
         {
             diagnostics.Add(new Diagnostic("TOOL-VIEWS-FEATURE-UNSUPPORTED",
@@ -889,10 +1148,13 @@ public sealed class OperationService
         if (applyOptions)
         {
             var importedOptions = BuildImportedOptionsRequest(settings, diagnostics);
+            var thisPcView = GetInt(importedOptions, "thisPcView", 3);
+            if (thisPcView is < 1 or > 8)
+                diagnostics.Add(new Diagnostic("TOOL-VIEWS-THISPC-VIEW", "Options/ThisPCView must be between 1 and 8, matching the WinSetView view selector.", File: path, NodeId: "Options/ThisPCView"));
             PreviewFeatureFlag(importedOptions, "win10Search", FeatureFlagIds.Windows10Search, enableWhenTrue: true, changes, diagnostics, ref requiresElevation);
             PreviewFeatureFlag(importedOptions, "win11Explorer", FeatureFlagIds.Windows11Explorer, enableWhenTrue: false, changes, diagnostics, ref requiresElevation);
         }
-        else if (ReadIniBool(options, "Win10Search", false, diagnostics, "Options") || ReadIniBool(options, "Win11Explorer", false, diagnostics, "Options"))
+        else if (options.ContainsKey("Win10Search") || options.ContainsKey("Win11Explorer"))
             diagnostics.Add(new Diagnostic("TOOL-VIEWS-FEATURE-SKIPPED", "WinSetView feature flag requests are present but ApplyOptions is disabled; no feature state will be changed.", Severity: "warning", File: path));
     }
 
@@ -927,6 +1189,31 @@ public sealed class OperationService
         diagnostics.Add(new Diagnostic("TOOL-VIEWS-INI-BOOL", $"{sectionName}/{key} must be 0, 1, true, or false; using {fallback}.", Severity: "warning", NodeId: sectionName));
         return fallback;
     }
+
+    private static string ReadIniFeatureChoice(IReadOnlyDictionary<string, string> section, string key,
+        bool enableWhenChecked, List<Diagnostic> diagnostics)
+    {
+        if (!section.TryGetValue(key, out var value) || string.IsNullOrWhiteSpace(value)) return "Unchanged";
+        var normalized = value.Trim();
+        if (normalized.Equals("1", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("true", StringComparison.OrdinalIgnoreCase))
+            return enableWhenChecked ? "Enabled" : "Disabled";
+        if (normalized.Equals("0", StringComparison.OrdinalIgnoreCase)
+            || normalized.Equals("false", StringComparison.OrdinalIgnoreCase))
+            return enableWhenChecked ? "Disabled" : "Enabled";
+        diagnostics.Add(new Diagnostic("TOOL-VIEWS-INI-BOOL", $"Options/{key} must be 0, 1, true, or false; leaving the feature unchanged.", Severity: "warning", NodeId: "Options"));
+        return "Unchanged";
+    }
+
+    private static string ExplorerStartOption(int value)
+        => value switch
+        {
+            1 => "ThisPC",
+            2 => "Home",
+            3 => "Downloads",
+            4 => "Custom",
+            _ => "Home"
+        };
 
     private void PreviewViewsReset(OperationRequest request, List<string> changes, List<Diagnostic> diagnostics)
     {
@@ -1014,6 +1301,7 @@ public sealed class OperationService
             journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
             foreach (var value in _environment.Registry.Read("HKCU", key).Values)
                 _environment.Registry.DeleteValue("HKCU", key, value.Name);
+            journal.RecordRegistry("HKCU", key);
         }
 
         var recycle = HistoryTargets(request).Any(x => x.Equals("shell:RecycleBinFolder", StringComparison.OrdinalIgnoreCase));
@@ -1197,6 +1485,7 @@ public sealed class OperationService
         if (action.Equals("Remove", StringComparison.OrdinalIgnoreCase)) parts.RemoveAll(x => x.Equals(entry, StringComparison.OrdinalIgnoreCase));
         if (action.Equals("Normalize", StringComparison.OrdinalIgnoreCase)) parts = parts.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _environment.Registry.SetValue(hive, key, "Path", string.Join(';', parts), RegistryValueKind.ExpandString);
+        journal.RecordRegistry(hive, key);
     }
 
     private void ExecuteVisibility(OperationRequest request, RecoveryJournal journal, CancellationToken token)
@@ -1206,6 +1495,7 @@ public sealed class OperationService
         journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
         _environment.Registry.SetValue("HKCU", key, "Hidden", GetValue(request, "value", "Show").Equals("Show", StringComparison.OrdinalIgnoreCase) ? 1 : 2, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "ShowSuperHidden", GetBool(request, "protected") ? 1 : 0, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", key);
     }
 
     private async Task ExecuteExplorerRefreshAsync(OperationRequest request, RecoveryJournal journal, List<Diagnostic> diagnostics, CancellationToken token)
@@ -1238,6 +1528,7 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", key, "Hidden", GetBool(request, "showHidden") ? 1 : 2, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "UseCompactMode", GetBool(request, "compactMode") ? 1 : 0, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "ShowSuperHidden", GetBool(request, "showProtected") ? 1 : 0, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", key);
     }
 
     private void ExecuteUrlShortcuts(OperationRequest request, RecoveryJournal journal, IProgress<OperationProgress>? progress, CancellationToken token)
@@ -1312,6 +1603,68 @@ public sealed class OperationService
         if (!result.Started) throw new InvalidOperationException(result.Error ?? "The requested process did not start.");
     }
 
+    private async Task ExecuteUserScriptAsync(OperationRequest request, CancellationToken token)
+    {
+        var diagnostics = new List<Diagnostic>();
+        var script = TryAbsoluteLaunchPath(request, "scriptPath", diagnostics, required: true, mustBeFile: true);
+        var workingDirectory = TryAbsoluteLaunchPath(request, "workingDirectory", diagnostics, required: false, mustBeFile: false, mustBeDirectory: true);
+        var arguments = TryParseLaunchArguments(GetValue(request, "arguments", "[]"), diagnostics, request.Id);
+        var selection = request.Selection?.Paths ?? [];
+        ValidateSelectionPaths(request, selection, diagnostics);
+        if (script is null || arguments is null || diagnostics.Any(d => d.Severity.Equals("error", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException(string.Join("; ", diagnostics.Select(d => d.Message)));
+        if (!UserScriptLauncher.TryBuild(script, arguments, workingDirectory, selection, out var specification, out var error))
+            throw new InvalidDataException(error);
+        var result = await _environment.Processes.LaunchAsync(specification, token).ConfigureAwait(false);
+        if (!result.Started) throw new InvalidOperationException(result.Error ?? "The user script did not start.");
+    }
+
+    private void ExecuteRegistryImport(OperationPlan plan, RecoveryJournal journal, List<Diagnostic> diagnostics, CancellationToken token)
+    {
+        var path = GetValue(plan.Request, "regPath");
+        if (string.IsNullOrWhiteSpace(path)) throw new InvalidDataException("Registry file path is required.");
+        var document = RegistryRegOperations.Read(_environment.Files, path);
+        var expectedHash = plan.Changes.FirstOrDefault(change => change.StartsWith("Registry file SHA-256: ", StringComparison.Ordinal))?["Registry file SHA-256: ".Length..];
+        if (string.IsNullOrWhiteSpace(expectedHash) || !document.SourceSha256.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The registry file changed after review. Preview the import again.");
+        var expectedTarget = plan.Changes.FirstOrDefault(change => change.StartsWith("Registry target fingerprint: ", StringComparison.Ordinal))?["Registry target fingerprint: ".Length..];
+        var currentDiff = RegistryRegOperations.Diff(document, _environment.Registry);
+        if (string.IsNullOrWhiteSpace(expectedTarget)
+            || !RegistryRegOperations.DiffFingerprint(currentDiff).Equals(expectedTarget, StringComparison.OrdinalIgnoreCase))
+            throw new IOException("The registry target changed after review. Preview the import again.");
+        RegistryRegOperations.Apply(document, _environment, journal, GetBool(plan.Request, "allowDeletes"), token);
+        diagnostics.Add(new Diagnostic("TOOL-REG-IMPORTED", $"Applied the typed registry import from {path} with journaled recovery.", Severity: "info", File: path));
+    }
+
+    private void ExecuteRegistryExport(OperationPlan plan, RecoveryJournal journal, CancellationToken token)
+    {
+        var request = plan.Request;
+        var hive = GetValue(request, "hive", "HKCU");
+        var keyPath = GetValue(request, "keyPath").Trim().Trim('\\');
+        var destination = PathValue(request, "destination", [], false)
+            ?? throw new InvalidDataException("Registry export destination is required.");
+        var existingMarker = plan.Changes.FirstOrDefault(change => change.StartsWith("Existing destination SHA-256: ", StringComparison.Ordinal));
+        if (existingMarker is null)
+        {
+            if (_environment.Files.FileExists(destination))
+                throw new IOException("The registry export destination was created after review. Preview the export again.");
+        }
+        else
+        {
+            var expected = existingMarker["Existing destination SHA-256: ".Length..];
+            if (!_environment.Files.FileExists(destination) || !_environment.Files.GetSha256(destination).Equals(expected, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("The registry export destination changed after review. Preview the export again.");
+        }
+        var document = RegistryRegOperations.Export(_environment.Registry, hive, keyPath, GetBool(request, "includeSubkeys", true), _environment.Options.MaxDepth, _environment.Options.MaxItems);
+        var text = RegistryRegOperations.Write(document);
+        var bytes = Encoding.Unicode.GetPreamble().Concat(Encoding.Unicode.GetBytes(text)).ToArray();
+        _environment.DemandMutation(destination);
+        journal.BackupFile(destination);
+        token.ThrowIfCancellationRequested();
+        _environment.Files.WriteAllBytes(destination, bytes);
+        journal.RecordFile(destination, _environment.Files.GetSha256(destination));
+    }
+
     private void ExecuteViewsApply(OperationRequest request, RecoveryJournal journal, CancellationToken token)
     {
         var scope = GetValue(request, "scope", "Global");
@@ -1335,6 +1688,7 @@ public sealed class OperationService
             token.ThrowIfCancellationRequested();
             journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
             WriteViewValues(request, key);
+            journal.RecordRegistry("HKCU", key);
         }
     }
 
@@ -1412,6 +1766,7 @@ public sealed class OperationService
             _environment.Registry.SetValue(targetHive, targetKey, value.Name, value.Value, value.Kind);
         foreach (var child in _environment.Registry.EnumerateSubKeys(sourceHive, sourceKey))
             CopyRegistryTree(sourceHive, sourceKey + "\\" + child, targetHive, targetKey + "\\" + child, journal, token, depth + 1);
+        journal.RecordRegistry(targetHive, targetKey);
     }
 
     private void WriteImportedTopView(WinSetViewIniSettings settings, string name, IReadOnlyDictionary<string, string> section, string key)
@@ -1433,7 +1788,8 @@ public sealed class OperationService
             (ReadIniBool(options, "AlignToGrid", false, [], "Options") ? 4 : 0));
     }
 
-    private void WriteImportedShellView(IReadOnlyDictionary<string, string> options, IReadOnlyDictionary<string, string> section, string key, bool forceVirtualFlags = false)
+    private void WriteImportedShellView(IReadOnlyDictionary<string, string> options, IReadOnlyDictionary<string, string> section, string key,
+        string canonicalName, bool forceVirtualFlags = false)
     {
         var index = ReadIniInt(section, "View", 1, [], "Generic");
         var (logicalViewMode, mode, defaultIconSize) = ImportedRawView(index);
@@ -1444,6 +1800,7 @@ public sealed class OperationService
         var groupBy = NormalizeImportedProperty(section.TryGetValue("GroupBy", out var rawGroup) ? rawGroup : string.Empty);
         var groupView = string.IsNullOrWhiteSpace(groupBy) ? 0 : 1;
         var icon = ReadIniInt(section, "IconSize", defaultIconSize, [], "Generic");
+        _environment.Registry.SetValue("HKCU", key, "", canonicalName, RegistryValueKind.String);
         _environment.Registry.SetValue("HKCU", key, "FFlags", fFlags, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "Mode", mode, RegistryValueKind.DWord);
@@ -1451,10 +1808,11 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", key, "IconSize", icon, RegistryValueKind.DWord);
     }
 
-    private void WriteImportedDialogView(IReadOnlyDictionary<string, string> section, string key, int viewIndex, bool noGrouping)
+    private void WriteImportedDialogView(IReadOnlyDictionary<string, string> section, string key, int viewIndex, bool noGrouping, string canonicalName)
     {
         var (logicalViewMode, mode, defaultIconSize) = ImportedRawView(viewIndex);
         var iconSize = ReadIniInt(section, "IconSize", defaultIconSize, [], "Generic");
+        _environment.Registry.SetValue("HKCU", key, "", canonicalName, RegistryValueKind.String);
         _environment.Registry.SetValue("HKCU", key, "FFlags", 0x41200001, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "Mode", mode, RegistryValueKind.DWord);
@@ -1462,7 +1820,8 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", key, "IconSize", iconSize, RegistryValueKind.DWord);
     }
 
-    private void WriteImportedRawView(string key, int logicalViewMode, int mode, int iconSize, string groupBy, int groupAscending, string sortBy, string columns, int fFlags)
+    private void WriteImportedRawView(string key, int logicalViewMode, int mode, int iconSize, string groupBy, int groupAscending,
+        string sortBy, string columns, int fFlags, bool includeGroupKeys = false)
     {
         _environment.Registry.SetValue("HKCU", key, "FFlags", fFlags, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
@@ -1473,6 +1832,11 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", key, "GroupAscending", groupAscending, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "SortByList", sortBy, RegistryValueKind.String);
         _environment.Registry.SetValue("HKCU", key, "ColumnList", columns, RegistryValueKind.String);
+        if (includeGroupKeys)
+        {
+            _environment.Registry.SetValue("HKCU", key, "GroupByKey:FMTID", "{B725F130-47EF-101A-A5F1-02608C9EEBAC}", RegistryValueKind.String);
+            _environment.Registry.SetValue("HKCU", key, "GroupByKey:PID", 4, RegistryValueKind.DWord);
+        }
     }
 
     private static (int LogicalViewMode, int Mode, int IconSize) ImportedRawView(int index)
@@ -1555,7 +1919,7 @@ public sealed class OperationService
         return fallback;
     }
 
-    private void ExecuteViewsOptions(OperationRequest request, RecoveryJournal journal, CancellationToken token)
+    private void ExecuteViewsOptions(OperationRequest request, RecoveryJournal journal, CancellationToken token, bool applyViewDefaults = true)
     {
         const string advanced = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
         _environment.DemandRegistryMutation("HKCU");
@@ -1563,16 +1927,19 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", advanced, "HideFileExt", GetBool(request, "showExtensions", true) ? 0 : 1, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", advanced, "UseCompactMode", GetBool(request, "compactMode") ? 1 : 0, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", advanced, "Hidden", GetBool(request, "showHidden") ? 1 : 2, RegistryValueKind.DWord);
-        _environment.Registry.SetValue("HKCU", advanced, "FullRowSelect", GetBool(request, "noFullRowSelect") ? 0 : 1, RegistryValueKind.DWord);
+        if (GetBool(request, "legacySpacing"))
+            _environment.Registry.SetValue("HKCU", advanced, "FullRowSelect", GetBool(request, "noFullRowSelect") ? 0 : 1, RegistryValueKind.DWord);
+        _environment.Registry.SetValue("HKCU", advanced, "IconsOnly", GetBool(request, "alwaysShowIcons") ? 1 : 0, RegistryValueKind.DWord);
 
         var colors = @"Control Panel\Colors";
         journal.BackupRegistry("HKCU", colors, _environment.Registry.Read("HKCU", colors));
-        if (GetBool(request, "legacySpacing"))
-            _environment.Registry.SetValue("HKCU", colors, "WindowText", GetValue(request, "systemTextColor", "0 0 0"), RegistryValueKind.String);
+        _environment.Registry.SetValue("HKCU", colors, "WindowText", GetValue(request, "systemTextColor", "0 0 0"), RegistryValueKind.String);
+        journal.RecordRegistry("HKCU", colors);
 
         var noNumericalSort = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
         journal.BackupRegistry("HKCU", noNumericalSort, _environment.Registry.Read("HKCU", noNumericalSort));
         _environment.Registry.SetValue("HKCU", noNumericalSort, "NoStrCmpLogical", GetBool(request, "noNumericalSort") ? 1 : 0, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", noNumericalSort);
 
         var placesBar = @"Software\Microsoft\Windows\CurrentVersion\Policies\ComDlg32\PlacesBar";
         journal.BackupRegistry("HKCU", placesBar, _environment.Registry.Read("HKCU", placesBar));
@@ -1585,11 +1952,15 @@ public sealed class OperationService
             _environment.Registry.SetValue("HKCU", placesBar, "Place4", "shell:NetworkPlacesFolder", RegistryValueKind.String);
         }
         else
-            _environment.Registry.DeleteTree("HKCU", placesBar);
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", placesBar,
+                "Place0", "Place1", "Place2", "Place3", "Place4");
+        journal.RecordRegistry("HKCU", placesBar);
 
         var classicMenu = @"Software\Classes\CLSID\{86CA1AA0-34AA-4E8B-A509-50C905BAE2A2}\InprocServer32";
         journal.BackupRegistry("HKCU", classicMenu, _environment.Registry.Read("HKCU", classicMenu));
-        if (GetBool(request, "classicContextMenu")) _environment.Registry.SetValue("HKCU", classicMenu, "", string.Empty, RegistryValueKind.String); else _environment.Registry.DeleteTree("HKCU", classicMenu[..classicMenu.LastIndexOf('\\')]);
+        if (GetBool(request, "classicContextMenu")) _environment.Registry.SetValue("HKCU", classicMenu, "", string.Empty, RegistryValueKind.String);
+        else DeleteOwnedRegistryValues(_environment.Registry, "HKCU", classicMenu, "");
+        journal.RecordRegistry("HKCU", classicMenu);
         var copyHandler = @"Software\Classes\AllFileSystemObjects\shellex\ContextMenuHandlers\{C2FBB630-2971-11D1-A18C-00C04FD75D13}";
         var moveHandler = @"Software\Classes\AllFileSystemObjects\shellex\ContextMenuHandlers\{C2FBB631-2971-11D1-A18C-00C04FD75D13}";
         journal.BackupRegistry("HKCU", copyHandler, _environment.Registry.Read("HKCU", copyHandler));
@@ -1601,9 +1972,11 @@ public sealed class OperationService
         }
         else
         {
-            _environment.Registry.DeleteTree("HKCU", copyHandler);
-            _environment.Registry.DeleteTree("HKCU", moveHandler);
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", copyHandler, "");
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", moveHandler, "");
         }
+        journal.RecordRegistry("HKCU", copyHandler);
+        journal.RecordRegistry("HKCU", moveHandler);
         var search = @"Software\Microsoft\Windows\CurrentVersion\Search";
         var searchSettings = @"Software\Microsoft\Windows\CurrentVersion\SearchSettings";
         var feeds = @"Software\Microsoft\Windows\CurrentVersion\Feeds\DSB";
@@ -1613,21 +1986,34 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", search, "BingSearchEnabled", GetBool(request, "searchInternet") ? 1 : 0, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", searchSettings, "IsDynamicSearchBoxEnabled", GetBool(request, "searchHighlights") ? 1 : 0, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", feeds, "ShowDynamicContent", GetBool(request, "searchHighlights") ? 1 : 0, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", search);
+        journal.RecordRegistry("HKCU", searchSettings);
+        journal.RecordRegistry("HKCU", feeds);
+        if (GetBool(request, "searchInternet") || GetBool(request, "searchHighlights"))
+        {
+            var policy = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
+            journal.BackupRegistry("HKCU", policy, _environment.Registry.Read("HKCU", policy));
+            _environment.Registry.SetValue("HKCU", policy, "DisableSearchBoxSuggestions", 0, RegistryValueKind.DWord);
+            journal.RecordRegistry("HKCU", policy);
+        }
         var home = @"Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}";
         var gallery = @"Software\Classes\CLSID\{e88865ea-0e1c-4e20-9aa6-edcd0212c87c}";
         journal.BackupRegistry("HKCU", home, _environment.Registry.Read("HKCU", home));
         journal.BackupRegistry("HKCU", gallery, _environment.Registry.Read("HKCU", gallery));
         _environment.Registry.SetValue("HKCU", home, "System.IsPinnedToNameSpaceTree", GetBool(request, "removeHome") ? 0 : 1, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", gallery, "System.IsPinnedToNameSpaceTree", GetBool(request, "removeGallery") ? 0 : 1, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", home);
+        journal.RecordRegistry("HKCU", gallery);
 
         var classicSearch = @"Software\Classes\CLSID\{1d64637d-31e9-4b06-9124-e83fb178ac6e}\TreatAs";
         journal.BackupRegistry("HKCU", classicSearch, _environment.Registry.Read("HKCU", classicSearch));
         if (GetBool(request, "classicSearch"))
             _environment.Registry.SetValue("HKCU", classicSearch, "", "{64bc32b5-4eec-4de7-972d-bd8bd0324537}", RegistryValueKind.String);
         else
-            _environment.Registry.DeleteTree("HKCU", classicSearch[..classicSearch.LastIndexOf('\\')]);
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", classicSearch, "");
+        journal.RecordRegistry("HKCU", classicSearch);
 
-        var userProfile = System.Environment.GetFolderPath(System.Environment.SpecialFolder.UserProfile);
+        var userProfile = _environment.UserProfilePath;
         if (!string.IsNullOrWhiteSpace(userProfile))
         {
             var appData = Path.Combine(userProfile, "AppData");
@@ -1646,48 +2032,84 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", suggestions, "ScoobeSystemSettingEnabled", suggestionValue, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", content, "SubscribedContent-310093Enabled", suggestionValue, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", content, "SubscribedContent-338389Enabled", suggestionValue, RegistryValueKind.DWord);
-        var launch = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
-        _environment.Registry.SetValue("HKCU", launch, "LaunchTo", GetValue(request, "launchFolder", "Home").Equals("ThisPC", StringComparison.OrdinalIgnoreCase) ? 1 : 2, RegistryValueKind.DWord);
-        if (!string.IsNullOrWhiteSpace(GetValue(request, "launchPath")))
+        journal.RecordRegistry("HKCU", suggestions);
+        journal.RecordRegistry("HKCU", content);
+        if (GetBool(request, "explorerStart"))
         {
-            var launchCommand = @"Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\OpenNewWindow\command";
+            const string explorerStartRoot = @"Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}";
+            const string launchCommand = explorerStartRoot + @"\shell\OpenNewWindow\command";
+            journal.BackupRegistry("HKCU", explorerStartRoot, _environment.Registry.Read("HKCU", explorerStartRoot));
             journal.BackupRegistry("HKCU", launchCommand, _environment.Registry.Read("HKCU", launchCommand));
-            _environment.Registry.SetValue("HKCU", launchCommand, "", "explorer " + GetValue(request, "launchPath"), RegistryValueKind.String);
-            _environment.Registry.SetValue("HKCU", launchCommand, "DelegateExecute", string.Empty, RegistryValueKind.String);
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", launchCommand, "", "DelegateExecute");
+            var option = GetValue(request, "explorerStartOption", "Home");
+            if (option.Equals("Custom", StringComparison.OrdinalIgnoreCase))
+            {
+                _environment.Registry.SetValue("HKCU", launchCommand, "", "explorer " + GetValue(request, "launchPath"), RegistryValueKind.String);
+                _environment.Registry.SetValue("HKCU", launchCommand, "DelegateExecute", string.Empty, RegistryValueKind.String);
+            }
+            else
+            {
+                var launch = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+                var launchTo = option.Equals("ThisPC", StringComparison.OrdinalIgnoreCase) ? 1
+                    : option.Equals("Downloads", StringComparison.OrdinalIgnoreCase) ? 3 : 2;
+                _environment.Registry.SetValue("HKCU", launch, "LaunchTo", launchTo, RegistryValueKind.DWord);
+            }
+            journal.RecordRegistry("HKCU", launchCommand);
+            journal.RecordRegistry("HKCU", explorerStartRoot);
         }
+        journal.RecordRegistry("HKCU", advanced);
 
         var legacyExplorerA = @"Software\Classes\CLSID\{2aa9162e-c906-4dd9-ad0b-3d24a8eef5a0}\InProcServer32";
         var legacyExplorerB = @"Software\Classes\CLSID\{6480100b-5a83-4d1e-9f69-8ae5a88e9a33}\InProcServer32";
+        var legacyExplorerToolbar = @"Software\Microsoft\Internet Explorer\Toolbar\ShellBrowser";
         journal.BackupRegistry("HKCU", legacyExplorerA, _environment.Registry.Read("HKCU", legacyExplorerA));
         journal.BackupRegistry("HKCU", legacyExplorerB, _environment.Registry.Read("HKCU", legacyExplorerB));
+        journal.BackupRegistry("HKCU", legacyExplorerToolbar, _environment.Registry.Read("HKCU", legacyExplorerToolbar));
         if (GetBool(request, "win10Explorer"))
         {
             _environment.Registry.SetValue("HKCU", legacyExplorerA, "", string.Empty, RegistryValueKind.String);
             _environment.Registry.SetValue("HKCU", legacyExplorerB, "", string.Empty, RegistryValueKind.String);
+            _environment.Registry.SetValue("HKCU", legacyExplorerToolbar, "ITBar7Layout", Win10ExplorerToolbarLayout, RegistryValueKind.Binary);
         }
         else
         {
-            _environment.Registry.DeleteTree("HKCU", legacyExplorerA[..legacyExplorerA.LastIndexOf('\\')]);
-            _environment.Registry.DeleteTree("HKCU", legacyExplorerB[..legacyExplorerB.LastIndexOf('\\')]);
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", legacyExplorerA, "");
+            DeleteOwnedRegistryValues(_environment.Registry, "HKCU", legacyExplorerB, "");
         }
+        journal.RecordRegistry("HKCU", legacyExplorerA);
+        journal.RecordRegistry("HKCU", legacyExplorerB);
+        journal.RecordRegistry("HKCU", legacyExplorerToolbar);
 
-        var allFoldersShell = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell";
-        journal.BackupRegistry("HKCU", allFoldersShell, _environment.Registry.Read("HKCU", allFoldersShell));
-        if (GetBool(request, "noFolderThumbs"))
-            _environment.Registry.SetValue("HKCU", allFoldersShell, "Logo", "none", RegistryValueKind.String);
-        else
-            _environment.Registry.DeleteValue("HKCU", allFoldersShell, "Logo");
-        if (GetBool(request, "genericDefaults"))
-            _environment.Registry.SetValue("HKCU", allFoldersShell, "FolderType", "Generic", RegistryValueKind.String);
-        if (GetBool(request, "virtualFolderColumns"))
-            WriteVirtualFolderDefaults(request, journal);
-        if (GetBool(request, "thisPc"))
-            WriteThisPcDefaults(request, journal);
+        if (applyViewDefaults)
+        {
+            var allFoldersShell = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell";
+            journal.BackupRegistry("HKCU", allFoldersShell, _environment.Registry.Read("HKCU", allFoldersShell));
+            if (GetBool(request, "noFolderThumbs"))
+                _environment.Registry.SetValue("HKCU", allFoldersShell, "Logo", "none", RegistryValueKind.String);
+            else
+                _environment.Registry.DeleteValue("HKCU", allFoldersShell, "Logo");
+            if (GetBool(request, "automaticFolderTypeDiscovery"))
+            {
+                _environment.Registry.DeleteValue("HKCU", allFoldersShell, "FolderType");
+                _environment.Registry.DeleteValue("HKCU", allFoldersShell, "SniffedFolderType");
+            }
+            else if (GetBool(request, "genericDefaults"))
+                _environment.Registry.SetValue("HKCU", allFoldersShell, "FolderType", "Generic", RegistryValueKind.String);
+            if (GetBool(request, "setVirtualFolders"))
+            {
+                WriteVirtualFolderDefaults(request, journal);
+                if (GetBool(request, "virtualFolderColumns"))
+                    CopyVirtualFolderColumns(journal, token);
+            }
+            if (GetBool(request, "thisPc"))
+                WriteThisPcDefaults(request, journal);
+            journal.RecordRegistry("HKCU", allFoldersShell);
+        }
 
         if (GetBool(request, "unhidePublicDesktop"))
         {
-            var publicDesktop = System.Environment.GetFolderPath(System.Environment.SpecialFolder.CommonDesktopDirectory);
-            if (_environment.Files.DirectoryExists(publicDesktop))
+            var publicDesktop = _environment.CommonDesktopPath;
+            if (publicDesktop is not null && _environment.Files.DirectoryExists(publicDesktop))
             {
                 _environment.DemandMutation(publicDesktop);
                 _environment.Files.SetAttributes(publicDesktop, _environment.Files.GetAttributes(publicDesktop) & ~FileAttributes.Hidden);
@@ -1699,7 +2121,9 @@ public sealed class OperationService
 
     private void ExecuteFeatureFlagChanges(OperationRequest request, CancellationToken token)
     {
-        if (!GetBool(request, "win10Search") && !GetBool(request, "win11Explorer")) return;
+        var hasWin10Intent = TryGetFeatureIntent(request, "win10Search", enableWhenChecked: true, out _);
+        var hasWin11Intent = TryGetFeatureIntent(request, "win11Explorer", enableWhenChecked: false, out _);
+        if (!hasWin10Intent && !hasWin11Intent) return;
         var windows = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Windows);
         if (string.IsNullOrWhiteSpace(windows))
             throw new InvalidOperationException("The Windows directory could not be resolved for feature-store authorization.");
@@ -1710,22 +2134,35 @@ public sealed class OperationService
             ApplyFeatureFlag(request, "win10Search", FeatureFlagIds.Windows10Search, enableWhenTrue: true, changes, token);
             ApplyFeatureFlag(request, "win11Explorer", FeatureFlagIds.Windows11Explorer, enableWhenTrue: false, changes, token);
         }
-        catch
+        catch (Exception original)
         {
             // A later feature update can fail after an earlier one succeeds.
-            // Restore the captured state best-effort before the journal rolls
-            // back the registry portion of this operation.
+            // Restore the captured state before the journal rolls back the
+            // registry portion of this operation. Keep every rollback failure
+            // alongside the original error so recovery is actionable.
+            var rollbackFailures = new List<Exception>();
             foreach (var change in changes.AsEnumerable().Reverse())
             {
                 try
                 {
+                    FeatureFlagMutationResult result;
                     if (change.Previous.Exists && change.Previous.Enabled.HasValue)
-                        _environment.FeatureFlags.Set(change.FeatureId, change.Previous.Enabled.Value);
+                        result = _environment.FeatureFlags.Set(change.FeatureId, change.Previous.Enabled.Value);
                     else
-                        _environment.FeatureFlags.Reset(change.FeatureId);
+                        result = _environment.FeatureFlags.Reset(change.FeatureId);
+                    if (!result.Succeeded)
+                        throw new InvalidOperationException(result.Error ?? $"Feature {change.FeatureId} rollback failed.");
                 }
-                catch { }
+                catch (Exception rollbackError)
+                {
+                    rollbackFailures.Add(new InvalidOperationException(
+                        $"Feature {change.FeatureId} rollback failed: {rollbackError.Message}", rollbackError));
+                }
             }
+            if (rollbackFailures.Count > 0)
+                throw new AggregateException(
+                    $"Feature flag update failed ({original.Message}); one or more rollback attempts also failed.",
+                    new[] { original }.Concat(rollbackFailures));
             throw;
         }
     }
@@ -1733,12 +2170,11 @@ public sealed class OperationService
     private void ApplyFeatureFlag(OperationRequest request, string field, uint featureId, bool enableWhenTrue,
         List<(uint FeatureId, FeatureFlagInspection Previous)> changes, CancellationToken token)
     {
-        if (!GetBool(request, field)) return;
+        if (!TryGetFeatureIntent(request, field, enableWhenTrue, out var desired)) return;
         token.ThrowIfCancellationRequested();
         var inspection = _environment.FeatureFlags.Inspect(featureId);
         if (!inspection.Supported || inspection.Error is not null)
             throw new InvalidOperationException(inspection.Error ?? $"Feature {featureId} is unsupported on this Windows build.");
-        var desired = enableWhenTrue;
         if (inspection.Enabled.HasValue && inspection.Enabled.Value == desired) return;
         var result = _environment.FeatureFlags.Set(featureId, desired);
         if (!result.Succeeded)
@@ -1758,6 +2194,26 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", key, "GroupView", GetBool(request, "homeGrouping") || GetBool(request, "libraryGrouping") ? 1 : 0, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "GroupByKey:FMTID", "{B725F130-47EF-101A-A5F1-02608C9EEBAC}", RegistryValueKind.String);
         _environment.Registry.SetValue("HKCU", key, "GroupByKey:PID", 4, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", key);
+    }
+
+    private void CopyVirtualFolderColumns(RecoveryJournal journal, CancellationToken token)
+    {
+        const string guid = "{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
+        const string prefix = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\";
+        var source = new[]
+        {
+            prefix + @"2\Shell\" + guid,
+            prefix + @"1\Shell\" + guid
+        }.FirstOrDefault(path => _environment.Registry.KeyExists("HKCU", path));
+        if (source is null) return;
+
+        foreach (var variant in new[] { "Shell", "ComDlg", "ComDlgLegacy" })
+        {
+            token.ThrowIfCancellationRequested();
+            var destination = prefix + $@"AllFolders\{variant}\{guid}";
+            CopyRegistryTree("HKCU", source, "HKCU", destination, journal, token);
+        }
     }
 
     private void WriteThisPcDefaults(OperationRequest request, RecoveryJournal journal)
@@ -1770,19 +2226,22 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", bagMru, "MRUListEx", new byte[] { 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff }, RegistryValueKind.Binary);
         _environment.Registry.SetValue("HKCU", bagMru, "0", new byte[] { 0x14, 0x00, 0x1f, 0x50, 0xe0, 0x4f, 0xd0, 0x20, 0xea, 0x3a, 0x69, 0x10, 0xa2, 0xd8, 0x08, 0x00, 0x2b, 0x30, 0x30, 0x9d, 0x00, 0x00 }, RegistryValueKind.Binary);
         _environment.Registry.SetValue("HKCU", bagMruChild, "NodeSlot", 1, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", bagMruChild);
+        journal.RecordRegistry("HKCU", bagMru);
         const string guid = "{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
-        WriteVirtualFolderDefaults(request, journal);
+        var (logicalViewMode, mode, defaultIconSize) = ImportedRawView(GetInt(request, "thisPcView", 3));
         foreach (var variant in new[] { "Shell", "ComDlg" })
         {
             var key = $@"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\1\{variant}\{guid}";
             journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
             _environment.Registry.SetValue("HKCU", key, "FFlags", 0x41200001, RegistryValueKind.DWord);
-            _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", 3, RegistryValueKind.DWord);
-            _environment.Registry.SetValue("HKCU", key, "Mode", 1, RegistryValueKind.DWord);
+            _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
+            _environment.Registry.SetValue("HKCU", key, "Mode", mode, RegistryValueKind.DWord);
             _environment.Registry.SetValue("HKCU", key, "GroupView", GetBool(request, "thisPcNoGrouping") ? 0 : 1, RegistryValueKind.DWord);
-            _environment.Registry.SetValue("HKCU", key, "IconSize", 48, RegistryValueKind.DWord);
+            _environment.Registry.SetValue("HKCU", key, "IconSize", defaultIconSize, RegistryValueKind.DWord);
             _environment.Registry.SetValue("HKCU", key, "GroupByKey:FMTID", "{B725F130-47EF-101A-A5F1-02608C9EEBAC}", RegistryValueKind.String);
             _environment.Registry.SetValue("HKCU", key, "GroupByKey:PID", 4, RegistryValueKind.DWord);
+            journal.RecordRegistry("HKCU", key);
         }
     }
 
@@ -1822,6 +2281,7 @@ public sealed class OperationService
             journal.BackupRegistry(record.Hive, record.Key, _environment.Registry.Read(record.Hive, record.Key));
             foreach (var value in (record.Values ?? throw new InvalidDataException("View backup contains a missing value map.")).Values)
                 _environment.Registry.SetValue(record.Hive, record.Key, value.Name, RegistryJsonValue.ToObject(value.Value), value.Kind);
+            journal.RecordRegistry(record.Hive, record.Key);
         }
     }
 
@@ -1840,16 +2300,17 @@ public sealed class OperationService
         var applyOptions = ReadIniBool(options, "ApplyOptions", false, [], "Options");
         var applyViews = ReadIniBool(options, "ApplyViews", true, [], "Options");
         if (applyOptions)
-            ExecuteViewsOptions(BuildImportedOptionsRequest(settings, []), journal, token);
+            // WinSetView applies global option keys here. View defaults,
+            // This PC, virtual bags, and folder-thumbnail flags belong to the
+            // ApplyViews phase below and must remain untouched when that phase
+            // is disabled.
+            ExecuteViewsOptions(BuildImportedOptionsRequest(settings, []), journal, token, applyViewDefaults: false);
 
         if (applyViews)
         {
-            // WinSetView applies these global view flags inside ApplyViews. Keep
-            // them effective when a saved INI deliberately leaves ApplyOptions
-            // disabled, while avoiding a second write when options were already
-            // applied above.
-            if (!applyOptions)
-                ExecuteImportedViewFlags(settings, journal, token);
+            // WinSetView applies these global view flags inside ApplyViews,
+            // regardless of whether the separate ApplyOptions phase ran.
+            ExecuteImportedViewFlags(settings, journal, token);
 
             var sections = settings.Sections
                 .Where(pair => !pair.Key.Equals("Options", StringComparison.OrdinalIgnoreCase)
@@ -1866,12 +2327,18 @@ public sealed class OperationService
                 ExecuteImportedFolderSection(settings, name, section, guid, journal, token);
                 progress?.Report(new OperationProgress(++completed, sections.Length, "Imported folder view", name));
             }
+            if (ReadIniBool(options, "SetVirtualFolders", false, [], "Options"))
+                ExecuteImportedVirtualFolder(settings, journal, token);
+            if (ReadIniBool(options, "ThisPCoption", false, [], "Options"))
+                ExecuteImportedThisPc(settings, journal, token);
         }
 
-        if (ReadIniBool(options, "SetVirtualFolders", false, [], "Options"))
-            ExecuteImportedVirtualFolder(settings, journal, token);
-        if (ReadIniBool(options, "ThisPCoption", false, [], "Options"))
-            ExecuteImportedThisPc(settings, journal, token);
+        // The donor runs this replication helper after ApplyViews. It is
+        // intentionally independent of ApplyOptions, but still requires both
+        // virtual-folder switches.
+        if (ReadIniBool(options, "SetVirtualFolders", false, [], "Options")
+            && ReadIniBool(options, "SetVirtualFolderColumns", false, [], "Options"))
+            CopyVirtualFolderColumns(journal, token);
     }
 
     private void ExecuteImportedViewFlags(WinSetViewIniSettings settings, RecoveryJournal journal, CancellationToken token)
@@ -1884,10 +2351,28 @@ public sealed class OperationService
             _environment.Registry.SetValue("HKCU", allFoldersShell, "Logo", "none", RegistryValueKind.String);
         else
             _environment.Registry.DeleteValue("HKCU", allFoldersShell, "Logo");
+        // ApplyViews clears the donor's three root view overrides before
+        // applying the selected Generic/thumbnail state. Keep that cleanup
+        // scoped to the typed values and leave unrelated bag data journaled.
+        _environment.Registry.DeleteValue("HKCU", allFoldersShell, "FolderType");
+        _environment.Registry.DeleteValue("HKCU", allFoldersShell, "SniffedFolderType");
+        if (ReadIniBool(options, "LegacySpacing", false, [], "Options"))
+        {
+            var advanced = @"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced";
+            journal.BackupRegistry("HKCU", advanced, _environment.Registry.Read("HKCU", advanced));
+            _environment.Registry.SetValue("HKCU", advanced, "FullRowSelect",
+                ReadIniBool(options, "NoFullRowSelect", false, [], "Options") ? 0 : 1, RegistryValueKind.DWord);
+            journal.RecordRegistry("HKCU", advanced);
+        }
+        var colors = @"Control Panel\Colors";
+        journal.BackupRegistry("HKCU", colors, _environment.Registry.Read("HKCU", colors));
+        _environment.Registry.SetValue("HKCU", colors, "WindowText",
+            options.TryGetValue("SystemTextColor", out var textColor) && !string.IsNullOrWhiteSpace(textColor) ? textColor : "0 0 0",
+            RegistryValueKind.String);
+        journal.RecordRegistry("HKCU", colors);
         if (ReadIniBool(options, "Generic", false, [], "Options"))
             _environment.Registry.SetValue("HKCU", allFoldersShell, "FolderType", "Generic", RegistryValueKind.String);
-        if (ReadIniBool(options, "SetVirtualFolderColumns", false, [], "Options"))
-            WriteVirtualFolderDefaults(BuildImportedOptionsRequest(settings, []), journal);
+        journal.RecordRegistry("HKCU", allFoldersShell);
         token.ThrowIfCancellationRequested();
     }
 
@@ -1918,16 +2403,20 @@ public sealed class OperationService
             new("unhideAppData", ReadIniBool(source, "UnhideAppData", false, diagnostics, "Options").ToString()),
             new("unhidePublicDesktop", ReadIniBool(source, "UnhidePublicDesktop", false, diagnostics, "Options").ToString()),
             new("win10Explorer", ReadIniBool(source, "Win10Explorer", false, diagnostics, "Options").ToString()),
-            new("win10Search", ReadIniBool(source, "Win10Search", false, diagnostics, "Options").ToString()),
-            new("win11Explorer", ReadIniBool(source, "Win11Explorer", false, diagnostics, "Options").ToString()),
+            new("win10Search", ReadIniFeatureChoice(source, "Win10Search", enableWhenChecked: true, diagnostics)),
+            new("win11Explorer", ReadIniFeatureChoice(source, "Win11Explorer", enableWhenChecked: false, diagnostics)),
             new("genericDefaults", ReadIniBool(source, "Generic", false, diagnostics, "Options").ToString()),
             new("searchOnly", ReadIniBool(source, "SearchOnly", true, diagnostics, "Options").ToString()),
+            new("setVirtualFolders", ReadIniBool(source, "SetVirtualFolders", false, diagnostics, "Options").ToString()),
             new("virtualFolderColumns", ReadIniBool(source, "SetVirtualFolderColumns", false, diagnostics, "Options").ToString()),
             new("homeGrouping", ReadIniBool(source, "HomeGrouping", false, diagnostics, "Options").ToString()),
             new("libraryGrouping", ReadIniBool(source, "LibraryGrouping", false, diagnostics, "Options").ToString()),
             new("noFolderThumbs", ReadIniBool(source, "NoFolderThumbs", false, diagnostics, "Options").ToString()),
             new("thisPc", ReadIniBool(source, "ThisPCoption", true, diagnostics, "Options").ToString()),
+            new("thisPcView", ReadIniInt(source, "ThisPCView", 3, diagnostics, "Options").ToString(CultureInfo.InvariantCulture)),
             new("thisPcNoGrouping", ReadIniBool(source, "ThisPCNG", false, diagnostics, "Options").ToString()),
+            new("explorerStart", ReadIniBool(source, "ExplorerStart", false, diagnostics, "Options").ToString()),
+            new("explorerStartOption", ExplorerStartOption(ReadIniInt(source, "ExplorerStartOption", 2, diagnostics, "Options"))),
             new("launchFolder", ReadIniInt(source, "ExplorerStartOption", 2, diagnostics, "Options") == 1 ? "ThisPC" : "Home")
         };
         if (ReadIniBool(source, "ExplorerStart", false, diagnostics, "Options")
@@ -1957,6 +2446,7 @@ public sealed class OperationService
             var key = topViews + "\\" + child;
             journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
             WriteImportedTopView(settings, name, section, key);
+            journal.RecordRegistry("HKCU", key);
         }
 
         var options = settings.Sections["Options"];
@@ -1964,7 +2454,8 @@ public sealed class OperationService
         {
             var shellKey = $@"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell\{folderGuid}";
             journal.BackupRegistry("HKCU", shellKey, _environment.Registry.Read("HKCU", shellKey));
-            WriteImportedShellView(options, section, shellKey);
+            WriteImportedShellView(options, section, shellKey, name);
+            journal.RecordRegistry("HKCU", shellKey);
         }
 
         if (ReadIniBool(section, "FileDialogOption", false, [], name))
@@ -1974,7 +2465,8 @@ public sealed class OperationService
             {
                 var dialogKey = $@"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\{variant}\{folderGuid}";
                 journal.BackupRegistry("HKCU", dialogKey, _environment.Registry.Read("HKCU", dialogKey));
-                WriteImportedDialogView(section, dialogKey, dialogIndex, ReadIniBool(section, "FileDialogNG", false, [], name));
+                WriteImportedDialogView(section, dialogKey, dialogIndex, ReadIniBool(section, "FileDialogNG", false, [], name), name);
+                journal.RecordRegistry("HKCU", dialogKey);
             }
         }
     }
@@ -1987,7 +2479,8 @@ public sealed class OperationService
             : "{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
         var key = $@"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell\{guid}";
         journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
-        WriteImportedShellView(settings.Sections["Options"], section, key, forceVirtualFlags: true);
+        WriteImportedShellView(settings.Sections["Options"], section, key, "Generic", forceVirtualFlags: true);
+        journal.RecordRegistry("HKCU", key);
         token.ThrowIfCancellationRequested();
     }
 
@@ -2003,6 +2496,8 @@ public sealed class OperationService
         _environment.Registry.SetValue("HKCU", bagMru, "MRUListEx", new byte[] { 0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff }, RegistryValueKind.Binary);
         _environment.Registry.SetValue("HKCU", bagMru, "0", new byte[] { 0x14, 0x00, 0x1f, 0x50, 0xe0, 0x4f, 0xd0, 0x20, 0xea, 0x3a, 0x69, 0x10, 0xa2, 0xd8, 0x08, 0x00, 0x2b, 0x30, 0x30, 0x9d, 0x00, 0x00 }, RegistryValueKind.Binary);
         _environment.Registry.SetValue("HKCU", bagMruChild, "NodeSlot", 1, RegistryValueKind.DWord);
+        journal.RecordRegistry("HKCU", bagMruChild);
+        journal.RecordRegistry("HKCU", bagMru);
 
         if (!settings.Sections.TryGetValue("Generic", out var section)) section = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var guid = "{5C4F28B5-F869-4E84-8E60-F11DB97C5CC7}";
@@ -2016,7 +2511,8 @@ public sealed class OperationService
             journal.BackupRegistry("HKCU", key, _environment.Registry.Read("HKCU", key));
             WriteImportedRawView(key, logicalViewMode, mode, iconOverride ?? defaultIconSize, groupBy: string.Empty,
                 groupAscending: !ReadIniBool(options, "ThisPCNG", false, [], "Options") ? 1 : 0,
-                sortBy: string.Empty, columns: string.Empty, fFlags: 0x41200001);
+                sortBy: string.Empty, columns: string.Empty, fFlags: 0x41200001, includeGroupKeys: true);
+            journal.RecordRegistry("HKCU", key);
         }
     }
 
@@ -2027,12 +2523,19 @@ public sealed class OperationService
         {
             journal.BackupRegistry(hive, key, _environment.Registry.Read(hive, key));
             _environment.Registry.DeleteTree(hive, key);
+            journal.RecordRegistry(hive, key);
         }
     }
 
     private static void SetOptionalRegistry(IToolRegistry registry, string hive, string key, string name, string value, RegistryValueKind kind)
     {
         if (!string.IsNullOrWhiteSpace(value)) registry.SetValue(hive, key, name, value, kind);
+    }
+
+    private static void DeleteOwnedRegistryValues(IToolRegistry registry, string hive, string key, params string[] valueNames)
+    {
+        foreach (var valueName in valueNames)
+            registry.DeleteValue(hive, key, valueName);
     }
 
     private DesktopIniDocument? TryReadDesktopIni(string path, List<Diagnostic> diagnostics)

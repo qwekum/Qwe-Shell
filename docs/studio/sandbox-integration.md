@@ -6,6 +6,12 @@ Testing used fresh Windows 11 Enterprise x64 Sandbox guests, build
 Only a read-only package/script directory and a writable evidence directory
 were mapped. Installation and registration affected the guest only.
 
+This is historical evidence for the MSI hash below, not the current final
+native-authoring package. Do not use it to claim that a current-source MSI's clean
+install, repair, uninstall, or older-normal-version upgrade passed. The current
+artifact identity is in [local verification](local-verification.md), and its
+safe first-use procedure is in [Install and use](using-shell-studio.md).
+
 The fixed MSI is 54,385,858 bytes, SHA-256
 `66D05AEE47EBC2FCFF0B6DEC0A6C8E52DC9B68C83982E2D2D370B9F3FDA88557`.
 [Local verification](local-verification.md) records its binary hashes and build.
@@ -26,14 +32,19 @@ The fixed MSI is 54,385,858 bytes, SHA-256
 The seven preservation fixtures cover the root configuration, a handwritten
 import, `imports/studio.nss`, a modified shipped theme import, an asset, a
 template, and a recovery backup. These test preservation of file contents;
-they do not establish semantic template import or recovery execution.
+they do not establish semantic template import, recovery execution, or the
+current source-backed entry-details and rule-association workflow. They also
+do not exercise occurrence-aware imports, effective `settings.modify` gates,
+or automatic semantic submenu materialization.
 Repair tested an intact installation with edited user files, not restoration
 of deliberately deleted application files or registration.
 
 The startup check uses the real installed self-contained application and native
 parser. It is an offscreen render, not a Start Menu click, management-window
-Customize check, or actual Explorer capture. No Computer Use was performed
-after the user's request to continue without it.
+Customize check, source-backed editing flow, or actual Explorer capture. The
+MSI predates the current source checkpoint, so its semantic and appearance
+behavior cannot be used as evidence for those changes. No Computer Use was
+performed after the user's request to continue without it.
 
 ## Defect and regression coverage
 

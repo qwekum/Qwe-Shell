@@ -23,12 +23,48 @@ internal static class ToolHost
         using var writerGate = new SemaphoreSlim(1, 1);
         using var executionGate = new SemaphoreSlim(1, 1);
 
-        var singleOperation = FindOption(args, "--operation");
+        OperationRequest? profileRequest = null;
+        var profilePath = FindOption(args, "--profile");
+        if (!string.IsNullOrWhiteSpace(profilePath))
+        {
+            if (!ActionProfileStore.TryLoad(profilePath, out var loadedProfile, out var profileDiagnostics))
+            {
+                var profileError = new HostResponse(Guid.NewGuid().ToString("N"), "error", null, profileDiagnostics);
+                await WriteAsync(output, writerGate, profileError).ConfigureAwait(false);
+                return 2;
+            }
+            profileRequest = loadedProfile!.ToRequest();
+        }
+        var selectionFile = FindOption(args, "--selection-file");
+        if (HasOption(args, "--selection-file") && string.IsNullOrWhiteSpace(selectionFile))
+        {
+            var diagnostic = new Diagnostic("TOOLHOST-SELECTION-FILE", "--selection-file requires an absolute JSON snapshot path.");
+            await WriteAsync(output, writerGate, new HostResponse(Guid.NewGuid().ToString("N"), "error", null, [diagnostic])).ConfigureAwait(false);
+            return 2;
+        }
+        if (profileRequest is not null && selectionFile is not null)
+        {
+            try { profileRequest = profileRequest.WithSelection(SelectionSnapshotStore.Load(selectionFile)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or InvalidDataException or NotSupportedException)
+            {
+                var diagnostic = new Diagnostic("TOOLHOST-SELECTION-FILE", ex.Message, File: selectionFile);
+                await WriteAsync(output, writerGate, new HostResponse(Guid.NewGuid().ToString("N"), "error", null, [diagnostic])).ConfigureAwait(false);
+                return 2;
+            }
+        }
+        var singleOperation = profileRequest?.Id ?? FindOption(args, "--operation");
         if (!string.IsNullOrWhiteSpace(singleOperation))
         {
-            var request = BuildCommandLineRequest(singleOperation, args);
             var id = Guid.NewGuid().ToString("N");
             using var requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            OperationRequest request;
+            try { request = profileRequest ?? BuildCommandLineRequest(singleOperation, args); }
+            catch (Exception ex)
+            {
+                var diagnostic = new Diagnostic("TOOLHOST-COMMAND", ex.Message);
+                await WriteAsync(output, writerGate, new HostResponse(id, "error", null, [diagnostic])).ConfigureAwait(false);
+                return 2;
+            }
             var plan = await service.PreviewAsync(request, requestCts.Token).ConfigureAwait(false);
             await WriteAsync(output, writerGate, new HostResponse(id, "preview", plan, plan.Diagnostics)).ConfigureAwait(false);
             if (args.Contains("--execute", StringComparer.OrdinalIgnoreCase) && plan.CanExecute)
@@ -171,17 +207,47 @@ internal static class ToolHost
     private static OperationRequest BuildCommandLineRequest(string id, IReadOnlyList<string> args)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var selectionPaths = Array.Empty<string>();
+        var selectionContext = "none";
+        string? selectionParent = null;
+        var selectionBackground = false;
+        var selectionDesktop = false;
         for (var i = 0; i < args.Count - 1; i++)
         {
             if (!args[i].StartsWith("--", StringComparison.Ordinal) || args[i] is "--operation" or "--journal-root") continue;
-            if (args[i].Equals("--allow-system", StringComparison.OrdinalIgnoreCase) || args[i].Equals("--allow-user-data", StringComparison.OrdinalIgnoreCase) || args[i].Equals("--execute", StringComparison.OrdinalIgnoreCase)) continue;
+            if (args[i].Equals("--allow-system", StringComparison.OrdinalIgnoreCase)
+                || args[i].Equals("--allow-user-data", StringComparison.OrdinalIgnoreCase)
+                || args[i].Equals("--execute", StringComparison.OrdinalIgnoreCase)
+                || args[i].Equals("--profile", StringComparison.OrdinalIgnoreCase)) continue;
             if (args[i + 1].StartsWith("--", StringComparison.Ordinal)) continue;
+            if (args[i].Equals("--selection-json", StringComparison.OrdinalIgnoreCase))
+            {
+                selectionPaths = JsonSerializer.Deserialize<string[]>(args[i + 1], Protocol.Json)
+                    ?? throw new InvalidDataException("--selection-json must be a JSON array of strings.");
+                if (selectionPaths.Length > 100_000 || selectionPaths.Any(path => path is null || path.IndexOf('\0') >= 0))
+                    throw new InvalidDataException("--selection-json contains an invalid or oversized selection.");
+                i++;
+                continue;
+            }
+            if (args[i].Equals("--selection-file", StringComparison.OrdinalIgnoreCase))
+            {
+                i++;
+                continue;
+            }
+            if (args[i].Equals("--selection-context", StringComparison.OrdinalIgnoreCase)) { selectionContext = args[i + 1]; i++; continue; }
+            if (args[i].Equals("--selection-parent", StringComparison.OrdinalIgnoreCase)) { selectionParent = args[i + 1]; i++; continue; }
+            if (args[i].Equals("--selection-background", StringComparison.OrdinalIgnoreCase)) { selectionBackground = bool.Parse(args[i + 1]); i++; continue; }
+            if (args[i].Equals("--selection-desktop", StringComparison.OrdinalIgnoreCase)) { selectionDesktop = bool.Parse(args[i + 1]); i++; continue; }
             var name = args[i][2..];
             if (name.Equals("target", StringComparison.OrdinalIgnoreCase)) name = "path";
             values[name] = args[i + 1];
             i++;
         }
-        return OperationRequest.Create(id, values);
+        var selection = new OperationSelection(selectionContext, selectionPaths, selectionParent, selectionBackground, selectionDesktop);
+        var selectionFile = FindOption(args, "--selection-file");
+        if (selectionFile is not null)
+            selection = SelectionSnapshotStore.Load(selectionFile);
+        return OperationRequest.Create(id, values, selection);
     }
 
     private static ToolMutationMode ParseMode(IEnumerable<string> args)
@@ -196,6 +262,9 @@ internal static class ToolHost
         var index = Array.FindIndex(args.ToArray(), item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
         return index >= 0 && index + 1 < args.Count ? args[index + 1] : null;
     }
+
+    private static bool HasOption(IReadOnlyList<string> args, string name)
+        => args.Any(item => item.Equals(name, StringComparison.OrdinalIgnoreCase));
 
     private static JsonSerializerOptions CreateJson() => new(Protocol.Json) { WriteIndented = false };
 
@@ -256,6 +325,7 @@ internal static class ToolHost
     }
 
     private sealed record FrameReadResult(string? Text, string? Error, bool EndOfStream);
+
 }
 
 internal sealed record HostRequest(

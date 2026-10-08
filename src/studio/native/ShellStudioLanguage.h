@@ -15,9 +15,14 @@
 
 extern "C"
 {
+	SHELL_STUDIO_LANGUAGE_EXPORT char* SHELL_STUDIO_LANGUAGE_CALL shell_studio_preview(const wchar_t* json, std::size_t length) noexcept;
 	// The returned UTF-8 buffer is allocated by the native library and must be
 	// released with shell_studio_free.  `length` is a UTF-16 code-unit count.
 	SHELL_STUDIO_LANGUAGE_EXPORT char* SHELL_STUDIO_LANGUAGE_CALL shell_studio_parse(const wchar_t* text, std::size_t length) noexcept;
+	// Parse a file reached through an explicit `import lang` or `import loc`
+	// edge.  The role selects the runtime localization grammar; it does not
+	// evaluate the source or load any imports.
+	SHELL_STUDIO_LANGUAGE_EXPORT char* SHELL_STUDIO_LANGUAGE_CALL shell_studio_parse_localization(const wchar_t* text, std::size_t length) noexcept;
 	SHELL_STUDIO_LANGUAGE_EXPORT char* SHELL_STUDIO_LANGUAGE_CALL shell_studio_capabilities() noexcept;
 	// Returns the native Text::Encoding::EncodingType value for the supplied
 	// bytes.  Studio uses this to keep source-file decoding in lockstep with

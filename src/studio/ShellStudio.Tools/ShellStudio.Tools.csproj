@@ -8,6 +8,7 @@
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="Assets/FolderThumbnails/*.ico" />
     <ProjectReference Include="../ShellStudio.Core/ShellStudio.Core.csproj" />
     <Compile Remove="Tests/**/*.cs" />
     <None Remove="Tests/**/*.cs" />

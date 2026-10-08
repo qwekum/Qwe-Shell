@@ -8,9 +8,11 @@
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <PublishSingleFile>false</PublishSingleFile>
     <NativeLanguagePath Condition="'$(NativeLanguagePath)' == ''">../native/bin/Release/x64/ShellStudio.Language.dll</NativeLanguagePath>
+    <PreviewWorkerPath Condition="'$(PreviewWorkerPath)' == ''">../native/bin/Release/x64/ShellStudio.PreviewWorker.exe</PreviewWorkerPath>
   </PropertyGroup>
   <ItemGroup><ProjectReference Include="../ShellStudio.Core/ShellStudio.Core.csproj" /><ProjectReference Include="../ShellStudio.Tools/ShellStudio.Tools.csproj" /></ItemGroup>
   <ItemGroup><None Include="$(NativeLanguagePath)" Link="ShellStudio.Language.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(NativeLanguagePath)')" /></ItemGroup>
+  <ItemGroup><None Include="$(PreviewWorkerPath)" Link="ShellStudio.PreviewWorker.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(PreviewWorkerPath)')" /></ItemGroup>
   <ItemGroup>
     <Content Include="../licenses/**/*" Link="licenses/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>

@@ -3,6 +3,7 @@
 #include "ShellStudioLanguage.h"
 #include "../../dll/src/Parser/Parser.h"
 #include "../../shared/System/Text/Encoding.h"
+#include "PreviewService.h"
 
 #include <cstdlib>
 #include <cstring>
@@ -36,11 +37,8 @@ namespace
 		return "{\"version\":1,\"tokens\":[],\"nodes\":[],\"diagnostics\":[{\"code\":\"" + code +
 			"\",\"message\":\"" + message + "\",\"severity\":\"error\",\"file\":null,\"start\":0,\"length\":0,\"nodeId\":null,\"remedy\":null,\"importChain\":[]}]}";
 	}
-}
 
-extern "C"
-{
-	SHELL_STUDIO_EXPORT char* SHELL_STUDIO_CALL shell_studio_parse(const wchar_t* text, std::size_t length) noexcept
+	char* Parse(const wchar_t* text, std::size_t length, bool localization) noexcept
 	{
 		if (text == nullptr && length != 0)
 			return CopyResult(Failure("LANG_INPUT", "The source pointer is null for a non-empty document."));
@@ -51,7 +49,8 @@ extern "C"
 			using SyntaxInput = Nilesoft::Shell::Parser::SyntaxInput;
 			Nilesoft::Shell::Parser parser(SyntaxInput{
 				std::wstring_view(text ? text : L"", length),
-				L"<studio>"});
+				L"<studio>",
+				localization});
 			parser.Load();
 			return CopyResult(Nilesoft::Shell::StudioLanguage::DocumentToJson(parser.StudioSyntax()));
 		}
@@ -63,6 +62,28 @@ extern "C"
 		{
 			return CopyResult(Failure("LANG_INTERNAL", "The language service failed without executing configuration content."));
 		}
+	}
+}
+
+extern "C"
+{
+	SHELL_STUDIO_EXPORT char* SHELL_STUDIO_CALL shell_studio_preview(const wchar_t* json, std::size_t length) noexcept
+	{
+		if((!json && length) || length > 8u * 1024u * 1024u)
+			return CopyResult(Nilesoft::Shell::StudioPreview::FailureJson("PREVIEW_INPUT", "The preview request exceeds its native input limit."));
+		try { return CopyResult(Nilesoft::Shell::StudioPreview::Process(std::wstring_view(json ? json : L"", length))); }
+		catch(const std::exception& exception) { return CopyResult(Nilesoft::Shell::StudioPreview::FailureJson("PREVIEW_INPUT", exception.what())); }
+		catch(...) { return CopyResult(Nilesoft::Shell::StudioPreview::FailureJson("PREVIEW_INTERNAL", "The native preview failed.")); }
+	}
+
+	SHELL_STUDIO_EXPORT char* SHELL_STUDIO_CALL shell_studio_parse(const wchar_t* text, std::size_t length) noexcept
+	{
+		return Parse(text, length, false);
+	}
+
+	SHELL_STUDIO_EXPORT char* SHELL_STUDIO_CALL shell_studio_parse_localization(const wchar_t* text, std::size_t length) noexcept
+	{
+		return Parse(text, length, true);
 	}
 
 	SHELL_STUDIO_EXPORT char* SHELL_STUDIO_CALL shell_studio_capabilities() noexcept

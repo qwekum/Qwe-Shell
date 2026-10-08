@@ -638,6 +638,7 @@ namespace Nilesoft
 		//  str.sub('12 354', 2).trim(' ');
 		FuncExpression *Parser::parse_func(Expression *parent)
 		{
+			const auto source_start = l->index;
 			prevCol = l->column - 1;
 			//auto ident_col = l->column;
 			Ident ident;
@@ -682,7 +683,7 @@ namespace Nilesoft
 			for(auto &arg : args)
 				func->push_back(arg.release());
 
-			return func.release();
+			return recorded_expression(func.release(), source_start);
 			/*
 			auto type = verify_ident(ident, args.size(), hasedot);
 			switch(type)
@@ -734,6 +735,9 @@ namespace Nilesoft
 		//  str.sub('12 354', 2).trim(' ');
 		Expression *Parser::parse_identifier(Expression *parent = nullptr, bool hasedot, bool inside_quotes, bool is_var)
 		{
+			ExpressionDepthGuard depth(*this);
+			if(!depth) return nullptr;
+			const auto source_start = l->index;
 			prevCol = l->column - 1;
 			auto ident_col = l->column;
 			Ident ident;
@@ -744,7 +748,7 @@ namespace Nilesoft
 			prevCol = l->column - 1;
 
 			if(ident[0] == IDENT_FOR)
-				return parse_for_statement(parent);
+				return recorded_expression(parse_for_statement(parent), source_start);
 
 			std::vector<std::unique_ptr<Expression>> args;
 			std::unique_ptr<Expression> _array;
@@ -817,9 +821,9 @@ namespace Nilesoft
 					exp->Parent = func.get();
 					func->Arguments.insert(func->Arguments.begin(), exp.release());
 					func->extented = true;
-					return func.release();
+					return recorded_expression(func.release(), source_start);
 				}
-				return exp.release();
+				return recorded_expression(exp.release(), source_start);
 			}
 
 			auto type = verify_ident(ident, args.size(), hasedot);
@@ -837,10 +841,10 @@ namespace Nilesoft
 						exp->Parent = func.get();
 						func->Arguments.insert(func->Arguments.begin(), exp.release());
 						func->extented = true;
-						return func.release();
+						return recorded_expression(func.release(), source_start);
 					}
 
-					return exp.release();
+					return recorded_expression(exp.release(), source_start);
 				}
 				case ExpressionType::StringExt:
 				{
@@ -859,10 +863,10 @@ namespace Nilesoft
 					exp->Parent = func.get();
 					func->Arguments.insert(func->Arguments.begin(), exp.release());
 
-					return func.release();
+					return recorded_expression(func.release(), source_start);
 				}
 				case ExpressionType::Number:
-					return new NumberExpression(ident.equals({ IDENT_FALSE, IDENT_NO }) ? false : true);
+					return recorded_expression(new NumberExpression(ident.equals({ IDENT_FALSE, IDENT_NO }) ? false : true), source_start);
 				case ExpressionType::Identifier:
 				{
 					if(!_hasdot)
@@ -922,7 +926,7 @@ namespace Nilesoft
 					for(auto &arg : args)
 						func->push_back(arg.release());
 
-					return func.release();
+					return recorded_expression(func.release(), source_start);
 				}
 				default:
 					error(error_code, ident_col);
@@ -932,6 +936,9 @@ namespace Nilesoft
 
 		Expression *Parser::parse_statement(Expression *parent)
 		{
+			ExpressionDepthGuard depth(*this);
+			if(!depth) return nullptr;
+			const auto source_start = l->index;
 			std::unique_ptr<StatementExpression> stmt(new StatementExpression(parent, false));
 			start_line = l->line;
 			start_col = l->column;
@@ -942,11 +949,13 @@ namespace Nilesoft
 			}
 			// skip close curly
 			error_if(!l->next_is(L'}'), TokenError::CloseCurlyExpected, start_col, start_line);
-			return stmt.release();
+			return recorded_expression(stmt.release(), source_start);
 		}
 
 		Expression *Parser::parse_for_statement(Expression *parent)
 		{
+			ExpressionDepthGuard depth(*this);
+			if(!depth) return nullptr;
 			skip();
 			error_if(!l->next_is(L'('), TokenError::OpenParenExpected);
 			skip();
@@ -991,6 +1000,9 @@ namespace Nilesoft
 
 		Expression *Parser::parse_interpolated_string(wchar_t close, Expression *parent)
 		{
+			ExpressionDepthGuard depth(*this);
+			if(!depth) return nullptr;
+			const auto source_start = l->index - 1;
 			std::unique_ptr<StatementExpression> stmt(new StatementExpression(parent, true));
 
 			auto close_curly = close == L'}';
@@ -1001,9 +1013,19 @@ namespace Nilesoft
 
 			while(l->tok != close)
 			{
+				const auto part_start = l->index;
 				string value;
 				if(l->tok == close) break;
-				else if(l->tok == L'%') parse_environment(value);
+				else if(l->tok == L'%')
+				{
+					const bool complete = parse_environment(value);
+					if(m_syntaxOnly && complete && value.length() >= 2)
+					{
+						stmt->push_back(recorded_expression(new PreviewEnvironmentExpression(
+							std::wstring(value.c_str() + 1, value.length() - 2)), part_start));
+						continue;
+					}
+				}
 				else if(l->next_is(L'@'))
 				{
 					if(l->is_dquote())
@@ -1019,6 +1041,7 @@ namespace Nilesoft
 					}
 				}
 
+				const auto text_start = value.empty() ? l->index : part_start;
 				while(l->tok != close)
 				{
 					if(!skip(close_curly, false)) break;
@@ -1031,18 +1054,19 @@ namespace Nilesoft
 					}*/
 					value.append(l->next());
 				}
-				stmt->push_back(value.move());
+				if(!value.empty()) stmt->push_back(recorded_expression(new StringExpression(value.move()), text_start));
 			}
 
 			error_if(l->tok != close,
 					 close_curly ? TokenError::CloseCurlyExpected : TokenError::CloseSingleQuoteExpected,
 					 start_col, start_line);
 			l->next(); // skip close
-			return stmt.release();
+			return recorded_expression(stmt.release(), source_start);
 		}
 
 		Expression *Parser::parse_array(Expression *parent)
 		{
+			const auto source_start = l->index;
 			if(l->tok == L'[')
 			{
 				std::unique_ptr<ArrayExpression> array(new ArrayExpression(parent));
@@ -1058,7 +1082,7 @@ namespace Nilesoft
 				
 				if(!l->next_is(L']')) // skip '['
 					error(TokenError::CloseBracketExpected);
-				return array.release();
+				return recorded_expression(array.release(), source_start);
 			}
 			return nullptr;
 		}
@@ -1066,6 +1090,7 @@ namespace Nilesoft
 		//parentheses, braces, brackets
 		Expression *Parser::parse_brackets(Expression *parent)
 		{
+			const auto source_start = l->index;
 			std::unique_ptr<Expression> expr;
 			if(l->next_if(l->is({ L'(', L'{' })))
 			{
@@ -1079,7 +1104,7 @@ namespace Nilesoft
 					expect_closeParen();
 				}
 			}
-			return expr.release();
+			return recorded_expression(expr.release(), source_start);
 		}
 
 		// <unary_expression> ::= <unary_operator> '(' <expression> ')'
@@ -1117,7 +1142,10 @@ namespace Nilesoft
 		//parse_primary_expression
 		Expression *Parser::parse_term(Expression *parent)
 		{
+			ExpressionDepthGuard depth(*this);
+			if(!depth) return nullptr;
 			skip();
+			const auto source_start = l->index;
 
 			if(l->eof) return nullptr;
 
@@ -1182,11 +1210,14 @@ namespace Nilesoft
 
 			skip();
 			if(lhs) lhs->Parent = parent;
+			record_expression_source(lhs.get(), source_start);
 			return lhs.release();
 		}
 
 		Expression *Parser::parse_expression(OperatorType precedence, Expression *parent)
 		{
+			skip();
+			const auto source_start = l->index;
 			std::unique_ptr<Expression> lhs(parse_term(parent));
 			while(lhs)
 			{
@@ -1248,6 +1279,8 @@ namespace Nilesoft
 			if(lhs)
 				lhs->Parent = parent;
 
+			record_expression_source(lhs.get(), source_start);
+			if(precedence == OperatorType::None && !parent) capture_expression_syntax(lhs.get());
 			return lhs.release();
 		}
 

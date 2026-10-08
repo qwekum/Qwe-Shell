@@ -67,7 +67,8 @@
       <LanguageStandard>stdcpp20</LanguageStandard>
       <CallingConvention>StdCall</CallingConvention>
       <ExceptionHandling>Async</ExceptionHandling>
-      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+      <!-- Shared syntax projection inspects the runtime expression hierarchy. -->
+      <RuntimeTypeInfo>true</RuntimeTypeInfo>
       <CompileAsManaged>false</CompileAsManaged>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <TreatWarningAsError>false</TreatWarningAsError>
@@ -164,8 +165,12 @@
     <ClInclude Include="src\Include\MenuItem.h" />
     <ClInclude Include="src\Include\Selections.h" />
     <ClInclude Include="src\Include\ContextMenu.h" />
+    <ClInclude Include="src\Include\NativeMenuRenderer.h" />
+    <ClInclude Include="src\Include\NativeMenuConstruction.h" />
+    <ClInclude Include="src\Include\NativeRowSurface.h" />
     <ClInclude Include="src\Include\StudioCapture.h" />
     <ClInclude Include="src\Parser\LanguageFrontend.h" />
+    <ClInclude Include="src\Parser\NativeExpressionSyntax.h" />
     <ClInclude Include="src\Parser\Ident.h" />
     <ClInclude Include="src\Expression\Expression.h" />
     <ClInclude Include="src\Parser\Parser.h" />
@@ -185,8 +190,10 @@
     <ClCompile Include="src\Parser\Parser.cpp" />
     <ClCompile Include="src\Selections.cpp" />
     <ClCompile Include="src\ContextMenu.cpp" />
+    <ClCompile Include="src\NativeMenuRenderer.cpp" />
     <ClCompile Include="src\StudioCapture.cpp" />
     <ClCompile Include="src\Parser\LanguageFrontend.cpp" />
+    <ClCompile Include="src\Parser\NativeExpressionSyntax.cpp" />
     <ClCompile Include="src\Main.cpp" />
     <ClCompile Include="src\Initializer.cpp" />
   </ItemGroup>
