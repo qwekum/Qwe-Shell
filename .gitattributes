@@ -1,0 +1,2 @@
+# Keep the Linux-only entry point usable with Windows Git autocrlf settings.
+/tools/cloud/*.sh text eol=lf

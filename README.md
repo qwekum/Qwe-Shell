@@ -4,6 +4,8 @@ This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows E
 
 See [Build and run Shell Studio](docs/studio/build-and-run.md) for prerequisites, complete build/run instructions, live capture setup, verification, and troubleshooting. The approved plan below remains the acceptance contract.
 
+For the candidate offline Linux source/static lane, see [Cloud development](docs/studio/cloud-development.md). Actual Linux validation is pending; the Windows application and its existing build workflow remain unchanged.
+
 The [Studio interface design](docs/studio/design-system.md) records the shared visual system, independent review gates, and the limits of local UI verification.
 
 ## Recommended companion: Microsoft PowerToys
