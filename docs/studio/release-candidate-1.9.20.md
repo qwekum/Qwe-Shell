@@ -138,7 +138,7 @@ are in [PR remediation notes](pr-remediation.md).
 | Installer lifecycle | Build-6 scoped clean install, damaged repair, uninstall and reinstall passed, with seven preserved user-data categories. Old normal-MSI upgrade, equal/newer rejection, registration-failure recovery and failed upgrade recovery remain incomplete |
 | Persistent VM/physical session | Reboot, startup cleanup, legacy upgrade/recovery and physical-session scenarios blocked by unavailable approved VM |
 | Human/UI | Keyboard, Narrator, themes/high contrast, 100/150/200% DPI, monitor transitions, large graphs and direct editing acceptance blocked pending recorded human testing |
-| Publication | Commits, pushes, PR retargeting/descriptions/review publication, merges, Actions and distribution await separate authorization |
+| Publication | The separate PR3 branch and scoped draft publication are authorized. Publishing the combined candidate/original fixes, changing PR1/PR2, retargeting, review publication, merges, Actions, signing and distribution still require separate authorization |
 
 ## Backup and rollback
 

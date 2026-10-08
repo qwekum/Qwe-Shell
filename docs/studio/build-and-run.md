@@ -203,8 +203,11 @@ the [existing-Shell decision and backup procedure](using-shell-studio.md#do-i-ha
 before changing a registration.
 
 1. In the disposable Windows 11 x64 test VM, preserve the existing Shell
-   configuration and take a VM snapshot. Copy the built MSI to the VM and
-   verify its SHA-256 against [local verification](local-verification.md).
+   configuration and take a VM snapshot. Before transferring the newly built
+   MSI, record `Get-FileHash .\bin\setup-x64.msi -Algorithm SHA256` on the build
+   machine. Copy that exact MSI to the VM and compare its SHA-256 with the
+   recorded value. Historical verification hashes apply only to their identified
+   packages.
 2. For the safest current route, remove a normal Shell installation only after
    its configuration/imports/assets are backed up. Then double-click
    `setup-x64.msi`, complete the interactive installer, and accept its elevation
@@ -295,7 +298,10 @@ dotnet run --project .\src\studio\ShellStudio.NativeTests\ShellStudio.NativeTest
 dotnet run --project .\src\studio\ShellStudio.PreviewWorker.ClientTests\ShellStudio.PreviewWorker.ClientTests.csproj -c Release --no-launch-profile
 ```
 
-See the [candidate record](release-candidate-1.9.20.md) for current counts,
+The [candidate record](release-candidate-1.9.20.md) reports counts for the
+combined local overlay. The qualification draft's PR description reports its
+branch-specific checks separately; its [publication scope](pr-remediation.md#pr3-scope-and-dependencies)
+excludes the twelve original fixes. See
 the [historical verification record](local-verification.md) for its earlier
 revision, and the [interface design record](design-system.md) for UI review gates.
 Run these sequentially: several projects share build
