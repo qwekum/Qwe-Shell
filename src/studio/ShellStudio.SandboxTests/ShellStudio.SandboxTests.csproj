@@ -33,5 +33,9 @@
           Link="ShellStudio.Language.dll"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\..\..\bin\studio\ShellStudio.PreviewWorker.exe"
+          Link="ShellStudio.PreviewWorker.exe"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

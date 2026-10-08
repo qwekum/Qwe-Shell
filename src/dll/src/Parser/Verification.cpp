@@ -341,7 +341,7 @@ namespace Nilesoft
 						return check(1, assignable);
 				}
 			}
-			
+
 			if(type == NativeMenuType::Menu)
 			{
 				switch(id[0])
@@ -446,7 +446,7 @@ namespace Nilesoft
 				case MENU_SEP:
 				case MENU_SEPARATOR:
 					return check(1, auto_signer);
-				
+
 				case MENU_VIS:
 				case MENU_VISIBILITY:
 				case MENU_POS:
@@ -518,7 +518,7 @@ namespace Nilesoft
 
 			auto check = [&](bool condition, uint32_t index = 0)->ExpressionType
 			{
-				if(condition && (length == index + 1)) 
+				if(condition && (length == index + 1))
 					return ExpressionType::Identifier;
 				return make_error(TokenError::IdentifierArguments, id.Col(index));
 			};
@@ -621,7 +621,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc <= 1, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -676,7 +676,7 @@ namespace Nilesoft
 											return check(argc == 0, 3);
 										case IDENT_ZERO:
 											return check(argc == 0, 2);
-										default: 
+										default:
 											return error_at(3);
 									}
 								}
@@ -685,7 +685,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc <= 1, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -704,7 +704,7 @@ namespace Nilesoft
 									return check(argc <= 1, 2);
 								case IDENT_ZERO:
 									return check(argc <= 2, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -722,7 +722,7 @@ namespace Nilesoft
 									return check(argc <= 1, 2);
 								case IDENT_ZERO:
 									return check(argc <= 2, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -769,7 +769,7 @@ namespace Nilesoft
 
 						case IDENT_ZERO:
 							return check(argc <= 3);
-						default: 
+						default:
 							return error_at(1);
 					}
 				}
@@ -849,7 +849,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc == 0, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -1033,7 +1033,7 @@ namespace Nilesoft
 									return check(argc == 0 || argc == 1, 2);
 								case IDENT_ZERO:
 									return error_at(1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -1056,7 +1056,7 @@ namespace Nilesoft
 							return check(argc >= 1 && argc <= 2, 1);
 						case IDENT_ZERO:
 							return error_at(0);
-						default: 
+						default:
 							return error_at(1);
 					}
 				}
@@ -1315,7 +1315,7 @@ namespace Nilesoft
 						case IDENT_DELETE:
 							return check(argc == 1 || argc == 2, 1);
 						case IDENT_SET:
-							return check(argc >= 1 && argc <= 4, 1); 
+							return check(argc >= 1 && argc <= 4, 1);
 						case IDENT_KEYS:
 						case IDENT_VALUES:
 							return check(argc == 1, 1);
@@ -1352,7 +1352,7 @@ namespace Nilesoft
 							return check(argc == 0, 1);
 						case IDENT_SET:
 							return check(argc == 1, 1);
-							
+
 						case IDENT_ZERO:
 							return check(argc <= 1, 0);
 						default:
@@ -1470,13 +1470,13 @@ namespace Nilesoft
 				{
 					if(length == 1)
 						return error_at(0);
-					
+
 					if(length == 2 && argc > 0)
 						return check(argc == 0, 1);
 
 					if(length > 3)
 						return error_at(2);
-					
+
 					if(length == 3)
 					{
 						if(!id.equals({ IDENT_TITLE, IDENT_NAME, IDENT_STR, IDENT_ICON }))
@@ -1488,7 +1488,7 @@ namespace Nilesoft
 
 					if(auto uid = Initializer::get_muid(id[1]); uid)
 						return check(argc < 3, length - 1);
-					
+
 					return error_at(1);
 				}
 				case IDENT_TITLE:
@@ -1623,7 +1623,7 @@ namespace Nilesoft
 							IDENT_TYPE_COMPUTER,
 							IDENT_TYPE_TASKBAR,
 							IDENT_TYPE_BACK,
-							IDENT_TYPE_UNKNOWN, 
+							IDENT_TYPE_UNKNOWN,
 						});
 					}
 					else if((id[1] == IDENT_TYPE_BACK)  && (length == 3))
@@ -1758,7 +1758,7 @@ namespace Nilesoft
 							return check(argc == 1, 1);
 						else if(id[1] == IDENT_COLOR_LIGHT || id[1] == IDENT_COLOR_DARK ||
 								id[1] == IDENT_COLOR_LIGHTEN || id[1] == IDENT_COLOR_DARKEN ||
-								id[1] == IDENT_COLOR_ADJUST || 
+								id[1] == IDENT_COLOR_ADJUST ||
 								id[1] == IDENT_OPACITY)
 							return check(argc == 1 || argc == 2, 1);
 
@@ -2107,7 +2107,7 @@ namespace Nilesoft
 					/*	for(; var && i < length; i++)
 							var = var->find(id[i]);
 					*/
-						if(var) 
+						if(var)
 						{
 							if(length > 1)
 							{
@@ -2119,9 +2119,9 @@ namespace Nilesoft
 										return ExpressionType::StringExt;
 								}*/
 							}
-							return ExpressionType::Variable; 
+							return ExpressionType::Variable;
 						}
-						
+
 						return error_at(--i);
 					}
 				}

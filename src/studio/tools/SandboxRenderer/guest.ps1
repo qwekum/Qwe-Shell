@@ -17,6 +17,7 @@ public static class GuestMenuInput {
  [DllImport("user32.dll")] public static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);
  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc proc,IntPtr data);
+ [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint process);
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd,StringBuilder value,int max);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern IntPtr SendMessage(IntPtr hwnd,uint msg,IntPtr wp,IntPtr lp);
@@ -35,6 +36,13 @@ public static class GuestMenuInput {
   var menu=SendMessage(hwnd,0x01E1,IntPtr.Zero,IntPtr.Zero);
   for(uint i=0;i<GetMenuItemCount(menu);i++) {var text=new StringBuilder(1024);GetMenuString(menu,i,text,1024,0x400);if(text.ToString().Replace("&","").Contains(name)){Rect r;if(GetMenuItemRect(hwnd,menu,i,out r))return r;}}
   throw new Exception("Requested menu row missing: "+name);
+ }
+ public static IntPtr PopupForOwner(IntPtr owner) {
+  uint expected; GetWindowThreadProcessId(owner,out expected);
+  if(expected==0)throw new Exception("Explorer target owner is unavailable");
+  IntPtr found=IntPtr.Zero;
+  EnumWindows((h,d)=>{uint actual;GetWindowThreadProcessId(h,out actual);var s=new StringBuilder(80);GetClassName(h,s,80);if(actual==expected&&IsWindowVisible(h)&&s.ToString()=="#32768"){found=h;return false;}return true;},IntPtr.Zero);
+  return found;
  }
 }
 '@
@@ -139,8 +147,13 @@ public static class GuestDpi {
    $null=[GuestMenuInput]::SetCursorPos([int]($bounds.Left+100),[int]($bounds.Top+$bounds.Height/2))
    [GuestMenuInput]::mouse_event(8,0,0,0,[UIntPtr]::Zero)
    [GuestMenuInput]::mouse_event(16,0,0,0,[UIntPtr]::Zero)
-   Start-Sleep -Milliseconds 500
-   if([GuestMenuInput]::Popup() -eq [IntPtr]::Zero){throw 'Context menu did not open.'}
+   $popupDeadline=[DateTime]::UtcNow.AddSeconds(10)
+   do {
+    $popup=[GuestMenuInput]::PopupForOwner([IntPtr]$window.HWND)
+    if($popup -eq [IntPtr]::Zero){Start-Sleep -Milliseconds 20}
+   } while($popup -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $popupDeadline)
+   if($popup -eq [IntPtr]::Zero){throw 'Owned Explorer context menu did not open within ten seconds.'}
+   $result.PopupHandle=$popup.ToInt64()
    $result.Window=$window.LocationName
   }
   'Submenu' {

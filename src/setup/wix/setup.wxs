@@ -166,7 +166,10 @@
 			<Custom Action='OnUninstall' After='FindRelatedProducts' Condition='(REMOVE ="ALL") AND (NOT UPGRADINGPRODUCTCODE)' />
 			<Custom Action='OnUpdate' After='FindRelatedProducts' Condition='(NOT INSTALLED) AND (NOT REMOVE)' />
 			<Custom Action='OnInstall' After='InstallFinalize' Condition='(NOT INSTALLED) AND (NOT REMOVE)' />
-			<RemoveExistingProducts After='InstallFinalize' />
+			<!-- Remove legacy packages before replacement files are written. Older
+			     uninstall actions can delete by wildcard; late removal can erase
+			     this package's new binaries. Keep removal inside the transaction. -->
+			<RemoveExistingProducts After='InstallInitialize' />
 		</InstallExecuteSequence>
 
 		<?include ui.wxi ?>

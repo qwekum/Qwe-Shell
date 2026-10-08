@@ -11,6 +11,8 @@
 #include <cassert>
 #include <cstdint>
 #include <future>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -159,6 +161,87 @@ namespace
 		capture.Stop();
 		peer.join();
 		::CloseHandle(server);
+	}
+
+	std::vector<std::string> EvidenceVersionFixtures()
+	{
+		StudioCaptureMetadata metadata;
+		std::vector<std::string> fixtures{
+			StudioCapture::SerializeOriginalForTesting(nullptr, metadata),
+			StudioCapture::SerializeFinalForTesting({}, metadata, {})};
+
+		menuitem_t rawRoot;
+		auto *rawParent = new menuitem_t();
+		rawParent->type = 1;
+		rawParent->title = L"System popup";
+		rawParent->name = L"system popup";
+		auto *rawChild = new menuitem_t();
+		rawChild->title = L"System child";
+		rawChild->name = L"system child";
+		rawParent->items.push_back(rawChild);
+		rawRoot.items.push_back(rawParent);
+
+		MenuItemInfo finalParent, systemChild, customChild;
+		finalParent.title.text = L"Final popup";
+		finalParent.title.normalize = L"final popup";
+		finalParent.hSubMenu = reinterpret_cast<HMENU>(1);
+		systemChild.title.text = L"System child";
+		systemChild.is_system = true;
+		customChild.title.text = L"Source-free custom child";
+		finalParent.items = {&systemChild, &customChild};
+		// Empty ledgers and absent source identities must still version completeness.
+		for(const bool effectiveSettings : {false, true})
+		{
+			metadata.hasEffectiveSettings = effectiveSettings;
+			fixtures.push_back(StudioCapture::SerializeOriginalForTesting(&rawRoot, metadata));
+			fixtures.push_back(StudioCapture::SerializeFinalForTesting({&finalParent}, metadata, {}));
+			fixtures.push_back(StudioCapture::SerializeFinalForTesting(finalParent.items, metadata,
+				L"final popup"));
+		}
+		return fixtures;
+	}
+
+	void RequireVersionedEvidence(const Value &value)
+	{
+		if(value.kind == Kind::Object)
+		{
+			if((value.Find("phase") || value.Find("id")) &&
+				(value.Find("completeness") || value.Find("source") ||
+				value.Find("ruleOutcomes") || value.Find("propertyEffects") ||
+				value.Find("effectiveSettings")))
+			{
+				const auto *version = value.Find("evidenceVersion");
+				Require(version && version->kind == Kind::Number && version->text == "1",
+					"Completeness or evidence is missing its supported evidence version.");
+			}
+			for(const auto &member : value.object)
+				RequireVersionedEvidence(member.second);
+		}
+		else if(value.kind == Kind::Array)
+			for(const auto &item : value.array)
+				RequireVersionedEvidence(item);
+	}
+
+	void TestEvidenceVersionsWithoutSourceOrLedger()
+	{
+		for(const auto &json : EvidenceVersionFixtures())
+			RequireVersionedEvidence(Parse(json)); // Parse also rejects duplicate members.
+	}
+
+	void ExportEvidenceVersionFixtures(const std::filesystem::path &path)
+	{
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		Require(output.good(), "Could not open the capture fixture output.");
+		const auto fixtures = EvidenceVersionFixtures();
+		for(const auto &json : fixtures)
+		{
+			Require(!json.empty() && json.size() <= StudioCapture::MaxMessageBytes,
+				"Capture fixture exceeded its protocol bound.");
+			output << json << '\n';
+		}
+		output.close();
+		Require(!output.fail(), "Could not write the capture fixtures.");
+		std::cout << "Exported " << fixtures.size() << " native capture fixtures\n";
 	}
 
 	void TestOriginalStateAndReservedImage()
@@ -657,10 +740,17 @@ namespace
 	}
 }
 
-int main()
+int wmain(int argc, wchar_t *argv[])
 {
 	try
 	{
+		if(argc == 3 && std::wstring_view(argv[1]) == L"--export-evidence-fixtures")
+		{
+			ExportEvidenceVersionFixtures(argv[2]);
+			return 0;
+		}
+		Require(argc == 1, "Usage: StudioCaptureSerializationTests [--export-evidence-fixtures <jsonl>]");
+		TestEvidenceVersionsWithoutSourceOrLedger();
 		TestOriginalStateAndReservedImage();
 		TestFinalOwnerDrawDoesNotInspectCallbackData();
 		TestImageNormalizationAndBudget();
@@ -671,7 +761,7 @@ int main()
 		TestImportedSourceWithoutOccurrenceIsUnavailable();
 		TestAutomaticCaptureCoordinatorPreservesSafeNestedRows();
 		TestTransportHandshakeAndSnapshot();
-		std::cout << "Studio capture serialization tests passed\n";
+		std::cout << "Studio capture serialization tests passed (11 tests)\n";
 		return 0;
 	}
 	catch(const std::exception &error)

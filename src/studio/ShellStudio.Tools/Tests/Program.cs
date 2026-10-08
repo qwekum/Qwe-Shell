@@ -6,6 +6,11 @@ using ShellStudio.Tools;
 
 var tests = new List<(string Name, Func<Task> Test)>
 {
+    ("qualification_view_modes_match_pinned_donor", QualificationRegressionTests.ViewModesMatchPinnedDonor),
+    ("qualification_imported_properties_match_pinned_donor", QualificationRegressionTests.ImportedPropertiesMatchPinnedDonor),
+    ("qualification_ini_reset_and_backup_contract", QualificationRegressionTests.IniResetAndBackupContract),
+    ("qualification_force_delete_preview_and_recovery", QualificationRegressionTests.ForceDeletePreviewAndRecovery),
+    ("qualification_folder_type_preserves_existing_attributes", QualificationRegressionTests.FolderTypePreservesExistingAttributes),
     ("thumbnail_native_resource_round_trip", ShellStudio.Tools.Tests.FolderThumbnailResourcesTests.RunAsync),
     ("thumbnail_noop_refresh_uses_only_user_permission", FolderThumbnailSettingTests.NoOpRefreshDoesNotRequireSystemPermission),
     ("thumbnail_slow_inspection_can_be_cancelled", FolderThumbnailSettingTests.SlowInspectionCanBeCancelled),
@@ -109,6 +114,7 @@ static async Task DesktopIniRoundTrip()
     var directory = fixture.NewDirectory("folder");
     var ini = Path.Combine(directory, "desktop.ini");
     File.WriteAllText(ini, "[ViewState]\r\nFolderType=Pictures\r\nIconResource=folder.dll,0\r\n", new UnicodeEncoding(false, true));
+    var attributesBefore = File.GetAttributes(ini);
 
     var environment = new InMemoryToolEnvironment(fixture.Journal, ToolMutationMode.AllowUserData);
     var service = new OperationService(environment);
@@ -121,7 +127,7 @@ static async Task DesktopIniRoundTrip()
     var text = File.ReadAllText(ini, Encoding.Unicode);
     Ensure(text.Contains("FolderType=Documents", StringComparison.Ordinal), "FolderType was not updated");
     Ensure(text.Contains("IconResource=folder.dll,0", StringComparison.Ordinal), "unrelated desktop.ini data was lost");
-    Ensure((File.GetAttributes(ini) & (FileAttributes.Hidden | FileAttributes.System)) == (FileAttributes.Hidden | FileAttributes.System), "new or updated desktop.ini attributes were not preserved");
+    Ensure(File.GetAttributes(ini) == attributesBefore, "existing desktop.ini attributes were not preserved");
     Ensure(result.RecoveryPath is not null && Directory.Exists(result.RecoveryPath), "journal was not created");
 }
 
@@ -438,7 +444,7 @@ static async Task ViewsWriteRegistry()
     var result = await service.ExecuteAsync(plan);
     Ensure(result.Success, "view operation failed");
     var key = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell";
-    Ensure((int?)environment.Registry.GetValue("HKCU", key, "LogicalViewMode") == 4, "view mode was not written as a DWORD");
+    Ensure((int?)environment.Registry.GetValue("HKCU", key, "LogicalViewMode") == 1, "Details view mode was not written as the donor DWORD");
     Ensure((int?)environment.Registry.GetValue("HKCU", key, "IconSize") == 48, "icon size was not written");
     Ensure((string?)environment.Registry.GetValue("HKCU", key, "ColumnList") == "System.ItemNameDisplay;System.Size", "column list was not written");
 
@@ -473,7 +479,7 @@ static async Task FolderTypeViewChild()
     var result = await service.ExecuteAsync(plan);
     Ensure(result.Success, "per-folder-type view operation failed");
     var key = baseKey + "\\" + viewGuid;
-    Ensure((int?)environment.Registry.GetValue("HKCU", key, "LogicalViewMode") == 4, "existing TopViews child was not updated");
+    Ensure((int?)environment.Registry.GetValue("HKCU", key, "LogicalViewMode") == 1, "existing TopViews child was not updated to donor Details mode");
     Ensure((string?)environment.Registry.GetValue("HKCU", key, "SortByList") == "prop:-System.DateModified", "donor sort value was not written");
     Ensure((string?)environment.Registry.GetValue("HKCU", key, "GroupBy") == "System.Kind", "donor group value was not written");
 }

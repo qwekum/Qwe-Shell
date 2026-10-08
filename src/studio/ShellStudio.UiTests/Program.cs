@@ -17,6 +17,18 @@ internal static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        if (args is ["--validate-native-capture", var fixturePath])
+        {
+            Test("actual native capture fixtures satisfy the managed evidence contract",
+                () => ValidateNativeCaptureFixtures(fixturePath));
+            Console.WriteLine($"{passed} passed; {failed} failed.");
+            return failed == 0 ? 0 : 1;
+        }
+        if (!File.Exists(Path.Combine(AppContext.BaseDirectory, "StudioCaptureSerializationTests.exe")))
+        {
+            Console.Error.WriteLine("Build StudioCaptureSerializationTests.vcxproj (Release/x64) before UI tests, then rebuild UI tests with NativeCaptureFixturePath set to that executable.");
+            return 1;
+        }
         string directory = Path.Combine(Path.GetTempPath(), "ShellStudio-ui-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         string path = Path.Combine(directory, "shell.nss");
@@ -1055,6 +1067,7 @@ internal static class Program
                         Assert(errors.Length == 0, name + ": " + string.Join("; ", errors.Select(d => d.Code + " " + d.Message)));
                     }
                 });
+                Test("actual native capture fixtures satisfy the managed evidence contract", () => NativeCaptureEvidence(directory));
                 Test("capture IPC preserves original evidence and final entries", () => Task.Run(CaptureFrames).GetAwaiter().GetResult());
                 Test("capture listener collision is not reported as active", CaptureListenerCollision);
                 Test("named controls and dynamic fields expose accessible names", () =>
@@ -1704,6 +1717,107 @@ internal static class Program
         static double Luminance(Color color) => .2126 * Linear(color.R) + .7152 * Linear(color.G) + .0722 * Linear(color.B);
         double first = Luminance(foreground), second = Luminance(background);
         return (Math.Max(first, second) + .05) / (Math.Min(first, second) + .05);
+    }
+
+    private static void NativeCaptureEvidence(string directory)
+    {
+        string serializer = Path.Combine(AppContext.BaseDirectory, "StudioCaptureSerializationTests.exe");
+        Assert(File.Exists(serializer), "Build the native capture serializer before running UI tests.");
+        string fixture = Path.Combine(directory, "native-capture.jsonl");
+        var start = new System.Diagnostics.ProcessStartInfo(serializer) { UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("--export-evidence-fixtures");
+        start.ArgumentList.Add(fixture);
+        using var process = System.Diagnostics.Process.Start(start) ?? throw new InvalidOperationException("Could not start the native serializer.");
+        if (!process.WaitForExit(10000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new InvalidOperationException("Native capture fixture export timed out.");
+        }
+        Assert(process.ExitCode == 0, "Native capture fixture export failed.");
+        ValidateNativeCaptureFixtures(fixture);
+    }
+
+    private static void ValidateNativeCaptureFixtures(string path)
+    {
+        Assert(new FileInfo(path).Length is > 0 and <= Protocol.MaxMessageBytes,
+            "Native capture fixture file exceeded its bound.");
+        string[] frames = File.ReadAllLines(path);
+        Assert(frames.Length == 8, "Expected eight actual native capture fixtures.");
+        int entryCount = 0, negativeChecks = 0;
+        for (int index = 0; index < frames.Length; index++)
+        {
+            using var document = JsonDocument.Parse(frames[index]);
+            void CheckVersion(JsonElement value)
+            {
+                if (value.ValueKind == JsonValueKind.Object)
+                {
+                    int versions = value.EnumerateObject().Count(property => property.Name == "evidenceVersion");
+                    bool hasEvidence = (value.TryGetProperty("phase", out _) || value.TryGetProperty("id", out _)) &&
+                        new[] { "source", "completeness", "ruleOutcomes", "propertyEffects", "effectiveSettings" }
+                            .Any(name => value.TryGetProperty(name, out _));
+                    Assert(versions <= 1 && (!hasEvidence || versions == 1 &&
+                        value.GetProperty("evidenceVersion").GetInt32() == 1),
+                        "Actual native evidence did not have exactly one supported version.");
+                    foreach (var property in value.EnumerateObject()) CheckVersion(property.Value);
+                }
+                else if (value.ValueKind == JsonValueKind.Array)
+                    foreach (var child in value.EnumerateArray()) CheckVersion(child);
+            }
+            var snapshot = document.RootElement.Deserialize<MenuSnapshot>(Protocol.Json)
+                ?? throw new InvalidDataException("Empty native snapshot.");
+            CaptureClient.Validate(snapshot);
+            CheckVersion(document.RootElement);
+            Assert(snapshot.Phase == (index is 0 or 2 or 5 ? "original" : "final"),
+                "Native fixture phase did not survive deserialization.");
+            Assert(snapshot.ParentPath == (index is 4 or 7 ? "final popup" : ""),
+                "Native submenu scope did not survive deserialization.");
+            Assert((snapshot.EffectiveSettings is not null) == (index >= 5),
+                "Native effective settings evidence did not survive deserialization.");
+            Assert(snapshot.EvidenceVersion == (index >= 5 ? 1 : (int?)null),
+                "Native root evidence version did not match its optional metadata.");
+            var entries = MenuEditing.Descendants(snapshot.Original.Concat(snapshot.Entries)).ToArray();
+            Assert(entries.Length == (index < 2 ? 0 : index is 2 or 4 or 5 or 7 ? 2 : 3),
+                "Native root or nested entries did not survive deserialization.");
+            foreach (var entry in entries)
+            {
+                entryCount++;
+                Assert(entry.Source is null && entry.RuleOutcomes is null && entry.PropertyEffects is null &&
+                    entry.Completeness is not null && entry.EvidenceVersion == 1,
+                    "Source-free entry completeness was not preserved.");
+                foreach (int? version in new int?[] { null, 2 })
+                {
+                    entry.EvidenceVersion = version;
+                    ExpectEvidenceVersionRejection(snapshot, version);
+                    negativeChecks++;
+                }
+                entry.EvidenceVersion = 1;
+            }
+            if (snapshot.EffectiveSettings is not null)
+            {
+                foreach (int? version in new int?[] { null, 2 })
+                {
+                    snapshot.EvidenceVersion = version;
+                    ExpectEvidenceVersionRejection(snapshot, version);
+                    negativeChecks++;
+                }
+                snapshot.EvidenceVersion = 1;
+            }
+        }
+        Console.WriteLine($"Native capture boundary: {frames.Length} frames; {entryCount} entries; {negativeChecks} missing/unsupported-version rejections.");
+    }
+
+    private static void ExpectEvidenceVersionRejection(MenuSnapshot snapshot, int? version)
+    {
+        try { CaptureClient.Validate(snapshot); }
+        catch (InvalidDataException error)
+        {
+            Assert(error.Message == (version is null
+                ? "Capture evidence is missing its version."
+                : "Capture evidence version is not supported."),
+                "Malformed native evidence was rejected for an unrelated reason.");
+            return;
+        }
+        throw new InvalidOperationException("Malformed native evidence crossed the capture boundary.");
     }
 
     private static async Task CaptureFrames()

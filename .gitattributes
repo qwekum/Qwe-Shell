@@ -1,0 +1,4 @@
+# Preserve native/source EOL bytes without hiding ordinary whitespace errors.
+/src/** whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+/docs/studio/*.json whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+/README.md whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

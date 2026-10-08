@@ -24,9 +24,9 @@ namespace Nilesoft
 				case L'*': ot = OperatorType::Multiply; break;
 				case L'%': ot = OperatorType::Modulo; break;
 				case L'/': ot = OperatorType::Divide; break;
-				
+
 				// arithmetic
-				case L'+': 
+				case L'+':
 				{
 					ot = OperatorType::Plus;
 					if(l->peek == L'=')
@@ -141,7 +141,7 @@ namespace Nilesoft
 						move_count += 2;
 						ot = OperatorType::LogicalNot;
 					}
-					else 
+					else
 						return OperatorType::None;
 					break;
 				}
@@ -221,7 +221,7 @@ namespace Nilesoft
 			for(; !l->is_dquote();)
 			{
 				error_if(l->eof, TokenError::StringTerminatedExpected);
-				
+
 				if(l->is_dquote())
 					break;
 				else if(l->tok == '\\')
@@ -247,7 +247,7 @@ namespace Nilesoft
 							//case '0->7': break;
 							// hexadecimal escape sequence /xHH
 						// ASCII and Unicode character in hexadecimal notation.
-						case 'x': 
+						case 'x':
 						case 'u':
 						case 'U':
 						{
@@ -258,14 +258,14 @@ namespace Nilesoft
 							//\x, which is always followed by 1 to 4 hex digits
 							//\u, which is always followed by 4 hex digits
 							//\U, which is always followed by 8 hex digits
-							
+
 							if(!l->is_xdigit())
 								error(TokenError::IllegalEscape);
 							else for(int i = 0; i < 8; i++)
 							{
 								if(c != 'U' && i > 3)
 									break;
-								//In the case of a Unicode escape sequence, you must specify all four hexadecimal digits. 
+								//In the case of a Unicode escape sequence, you must specify all four hexadecimal digits.
 								//That is, \u006A is a valid escape sequence, while \u06A and \u6A are not valid.
 
 								//In the case of a hexadecimal escape sequence, you can omit the leading zeros.
@@ -278,7 +278,7 @@ namespace Nilesoft
 									error_if(c != 'x', TokenError::IllegalEscape);
 									break;
 								}
-							
+
 								v = (v << 4) + l->to_xint<uint32_t>();
 								l->next();
 							}
@@ -302,7 +302,7 @@ namespace Nilesoft
 						{
 						//	if(!l->is_xdigit())
 								error(TokenError::IllegalEscape);
-							
+
 							/*uint32_t v = 0;
 							for(int i = 0; i < 2; i++)
 							{
@@ -342,7 +342,7 @@ namespace Nilesoft
 				{
 					if(c != 'U' && i > 3)
 						break;
-					//In the case of a Unicode escape sequence, you must specify all four hexadecimal digits. 
+					//In the case of a Unicode escape sequence, you must specify all four hexadecimal digits.
 					//That is, \u006A is a valid escape sequence, while \u06A and \u6A are not valid.
 
 					//In the case of a hexadecimal escape sequence, you can omit the leading zeros.
@@ -398,7 +398,7 @@ namespace Nilesoft
 					l->next();
 					count++;
 				}
-				
+
 				error_if(count == 0, TokenError::HexaDecimalExpected);
 
 				/*if(l->tok == 'u' || l->tok == 'U')
@@ -434,7 +434,7 @@ namespace Nilesoft
 					}
 					return new StringExpression(value.move());
 				}*/
-				
+
 				return new NumberExpression(val);
 			}
 			/*			else if(!l->isdigit())
@@ -484,7 +484,7 @@ namespace Nilesoft
 				}
 				val += mantissa_val / (double)mantissa;
 			}
-			
+
 			if(sign && val == 0) sign = false;
 			return new NumberExpression(sign ? -val : val);
 		}
@@ -560,7 +560,7 @@ namespace Nilesoft
 				}
 
 				std::unique_ptr<NumberExpression> ret(new NumberExpression(Color(r, g, b, a), PrimitiveType::Color));
-				
+
 				skip();
 
 				if(!l->next_is('.'))
@@ -634,7 +634,7 @@ namespace Nilesoft
 
 		// identifier
 		//	::= [@]identifier[([[expr][,expr]])]
-		//	ident | ident() | ident(arg, ...)	
+		//	ident | ident() | ident(arg, ...)
 		//  str.sub('12 354', 2).trim(' ');
 		FuncExpression *Parser::parse_func(Expression *parent)
 		{
@@ -731,7 +731,7 @@ namespace Nilesoft
 
 		// identifier
 		//	::= [@]identifier[([[expr][,expr]])]
-		//	ident | ident() | ident(arg, ...)	
+		//	ident | ident() | ident(arg, ...)
 		//  str.sub('12 354', 2).trim(' ');
 		Expression *Parser::parse_identifier(Expression *parent = nullptr, bool hasedot, bool inside_quotes, bool is_var)
 		{
@@ -755,7 +755,7 @@ namespace Nilesoft
 
 			bool brackets = false;
 			bool _hasdot = false;
-			
+
 			skip(true, !inside_quotes);
 
 			if(l->next_is('[')) // skip '('
@@ -786,7 +786,7 @@ namespace Nilesoft
 				brackets = true;
 				if(is_var)
 					skip(true, !inside_quotes);
-				else 
+				else
 				{
 					// create the list of arguments
 					while(l->tok != ')' && !l->eof)
@@ -809,7 +809,7 @@ namespace Nilesoft
 				if(!is_var)
 					_hasdot = l->next_is('.');
 			}
-			
+
 			if(is_var)
 			{
 				std::unique_ptr<VariableExpression> exp(new VariableExpression(ident, parent));
@@ -916,7 +916,7 @@ namespace Nilesoft
 					std::unique_ptr<FuncExpression> func(new FuncExpression(ident, parent));
 					func->Brackets = brackets;
 					func->Array = _array.release();
-					
+
 					if(func->Array)
 						func->Array->Parent = func.get();
 
@@ -962,7 +962,7 @@ namespace Nilesoft
 
 			std::unique_ptr<ForStatement> _for(new ForStatement(parent));
 			_for->Init = parse_ident(false);
-			
+
 			if(_for->Init != 0)
 			{
 				skip();
@@ -1079,7 +1079,7 @@ namespace Nilesoft
 					else if(!l->next_is(L',')) // skip comma
 						error(TokenError::ExpressionUnexpected);
 				}
-				
+
 				if(!l->next_is(L']')) // skip '['
 					error(TokenError::CloseBracketExpected);
 				return recorded_expression(array.release(), source_start);
@@ -1274,6 +1274,10 @@ namespace Nilesoft
 					std::unique_ptr<Expression> rhs(parse_expression(ot, parent));
 					lhs.reset(new BinaryExpression(ot, lhs.release(), rhs.release()));
 				}
+				// A later operator retains this node as a child. Record it now,
+				// before lhs becomes the next parent: imports destroy prior trees,
+				// and their addresses may have stale entries in the source table.
+				record_expression_source(lhs.get(), source_start);
 			}
 
 			if(lhs)

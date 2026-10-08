@@ -1,6 +1,6 @@
 # Studio attribution and notices
 
-This directory contains the source notices that must accompany a Studio publication. The four donor notices are exact copies of the `LICENSE` file at the pinned commit recorded below. `SetFolderType-main` and `WinSetView-main` remain as pinned source submodules; the retired RightClickTools and FolderThumbnailFix source snapshots are preserved locally under `Sandbox/20260911-donor-recovery/`, with their exact file inventory and hashes in `manifest.json`. No donor executable or binary-only helper is packaged by Studio.
+This directory contains the source notices that must accompany a Studio publication. The four donor notices are exact copies of the recovered `LICENSE` files for the pinned commits below. Their text matches the immutable Git blobs; some recovered copies use CRLF where the blobs use LF. The 1.9.20 provenance audit found no lost copyright, permission, or notice text. `SetFolderType-main` and `WinSetView-main` remain as pinned source submodules; the retired RightClickTools and FolderThumbnailFix source snapshots are preserved locally under `Sandbox/20260911-donor-recovery/`, with their exact file inventory and hashes in `manifest.json`. No donor executable or binary-only helper is packaged by Studio.
 
 | Donor | Repository | Pinned commit | License copyright | Notice file |
 |---|---|---|---|---|

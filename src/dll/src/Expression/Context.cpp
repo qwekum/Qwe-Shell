@@ -66,7 +66,7 @@ namespace Nilesoft
 		bool Context::to_color(const Object &obj, Color *color)
 		{
 			auto ret = false;
-			try 
+			try
 			{
 				if(obj.not_default())
 				{
@@ -168,7 +168,7 @@ namespace Nilesoft
 					return nullptr;
 				}
 			}
-			if(e) try 
+			if(e) try
 			{
 				return e->Eval(this).move();
 			}
@@ -238,7 +238,7 @@ namespace Nilesoft
 		Expression *Context::get_variable(uint32_t id, Expression *e)
 		{
 			Expression *var = nullptr;
-			
+
 			if(e)
 			{
 				var = e->Scope.at(id);
@@ -248,7 +248,7 @@ namespace Nilesoft
 					while(parent)
 					{
 						var = parent->Scope.at(id);
-						if(var) 
+						if(var)
 						{
 							return var;
 						}
@@ -286,7 +286,7 @@ namespace Nilesoft
 					_variables = _variables->Parent;
 				}
 			}
-			
+
 			if(var == nullptr && variables.global)
 			{
 				if(_variables != variables.global)
@@ -315,7 +315,7 @@ namespace Nilesoft
 					while(parent)
 					{
 						var = parent->Scope.at(id);
-						if(var) 
+						if(var)
 						{
 							parent->Scope.set(id, value);
 							return;
@@ -370,7 +370,7 @@ namespace Nilesoft
 					return;
 				}
 			}
-			
+
 			if(e && e->Parent)
 			{
 				e->Parent->Scope.set(id, value);
@@ -596,7 +596,7 @@ namespace Nilesoft
 		{
 			return cmd ? eval_number(cmd->wait, 0u) : 0;
 		}
-		
+
 		uint32_t Context::parse_invoke(Expression *e)
 		{
 			if(e)
@@ -766,7 +766,7 @@ namespace Nilesoft
 				mii->ui = nullptr;
 
 				Object obj = Eval(e).move();
-				
+
 				if(obj.is_null())
 				{
 					if(e)
@@ -816,7 +816,7 @@ namespace Nilesoft
 							return true;
 						}
 					}
-					
+
 					image->destroy();
 					image->hbitmap = Image::From(path.c_str(), image_size);
 					if(image->hbitmap)
@@ -831,7 +831,7 @@ namespace Nilesoft
 				Color color;
 				string font_name, icon_path;
 				int font_size = image_size, icon_id = 0;
-				
+
 				wchar_t glyph = 0;
 
 				if(obj.is_pointer(true))
@@ -894,10 +894,10 @@ namespace Nilesoft
 
 						if(argc == 0 || ptr[1].is_null())
 							return false;
-						
+
 						wchar_t g[2] = {};
 						Color clr[2];
-					
+
 						int i = 2;
 
 						//[[],[],size,name]
@@ -917,7 +917,7 @@ namespace Nilesoft
 							if(g[0] == 0)
 								return false;
 						}
-						
+
 						if(argc > 1 && argc >= i)
 						{
 							parse_arg(ptr, i++, &clr[0], &font_size, &font_name);
@@ -966,12 +966,12 @@ namespace Nilesoft
 					{
 						auto& args = *obj.get_pointer<std::tuple<uint32_t, uint32_t, int,
 							Object, Object, Object, Object, Object>>();
-						
+
 						auto func_front = std::get<0>(args);
 						Hash func = std::get<1>(args);
 						auto argc = std::get<2>(args);
 
-						auto &params = *obj.get_pointer<std::tuple<uint32_t, uint32_t, int, 
+						auto &params = *obj.get_pointer<std::tuple<uint32_t, uint32_t, int,
 							MUID*, Object, Object, Object>>();
 						auto func_0 = std::get<0>(params);
 						// image(path) image from path
@@ -1409,7 +1409,7 @@ namespace Nilesoft
 										string sztype;
 										string target = p->Extension;
 										bool is_file = false;
-										
+
 										if(p->IsLink)
 										{
 											if(Path::GetLinkInfo(p->get(), &target, nullptr) && !target.empty())
@@ -1422,7 +1422,7 @@ namespace Nilesoft
 										{
 											is_file = true;
 										}
-									
+
 										if(is_file)
 										{
 											if(target.equals({ L".exe", L".cmd", L".bat", L".com", L".scr" }))
@@ -1431,7 +1431,7 @@ namespace Nilesoft
 											else
 												sztype = target.move();
 										}
-										else 
+										else
 										{
 											//sztype = L"FOLDER";
 											image->hbitmap = Image::FromHICON(L"explorer.exe", 0, image_size);
@@ -1506,7 +1506,7 @@ namespace Nilesoft
 												//\uE113
 												return set_glyph(L'\uE10A');
 											}
-											else 
+											else
 											{
 												image->hbitmap = Image::FromFileExtension(p->Path, image_size);
 												if(image->hbitmap)
@@ -1521,7 +1521,7 @@ namespace Nilesoft
 										{
 											return set_glyph(L'\uE0D2');
 										}
-										else 
+										else
 										{
 											image->hbitmap = Image::FromFileExtension(p->Path, image_size);
 											if(image->hbitmap)
@@ -1547,7 +1547,7 @@ namespace Nilesoft
 										image->hbitmap = Image::FromHICON(icon_path.c_str(), icon_id, image_size);
 									else
 										image->hbitmap = Image::From(icon_path.c_str(), image_size);
-									
+
 									if(image->hbitmap)
 									{
 										image->import = ImageImport::Image;
@@ -1633,7 +1633,7 @@ namespace Nilesoft
 
 								if(size != image_size)
 									hfont = cache->fonts.add(FontCache::Default, font_size, dpi->val);
-								
+
 								// name,size,dpi
 								image->draw.type = image->draw.DT_GLYPH;
 								image->draw.glyph.font = hfont;
@@ -1644,7 +1644,7 @@ namespace Nilesoft
 
 								image->draw.glyph.color[0] = color_[0];
 								image->draw.glyph.color[1] = color_[1];
-								
+
 								return true;
 							}
 						}

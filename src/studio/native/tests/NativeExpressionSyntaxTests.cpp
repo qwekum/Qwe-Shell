@@ -82,6 +82,39 @@ namespace
 		for(const auto& child : node.children) AssertSpan(child, source);
 	}
 
+	void AssertContained(int start, int length, int parentStart, int parentLength)
+	{
+		if(start < parentStart || length < 0 || start > parentStart + parentLength - length)
+			std::cerr << "Source span " << start << "+" << length << " outside parent "
+				<< parentStart << "+" << parentLength << "\n";
+		assert(start >= parentStart);
+		assert(length >= 0);
+		assert(start <= parentStart + parentLength - length);
+	}
+
+	void AssertExpressionContained(const ExpressionNode& expression, int start, int length)
+	{
+		AssertContained(expression.start, expression.length, start, length);
+		for(const auto& child : expression.children)
+			AssertExpressionContained(child, expression.start, expression.length);
+	}
+
+	void AssertNodeContained(const Nilesoft::Shell::StudioLanguage::Node& node, int start, int length)
+	{
+		AssertContained(node.start, node.length, start, length);
+		if(node.propertyInsert >= 0) AssertContained(node.propertyInsert, 0, node.start, node.length);
+		if(node.childInsert >= 0) AssertContained(node.childInsert, 0, node.start, node.length);
+		if(node.hasExpression) AssertExpressionContained(node.expression, node.start, node.length);
+		for(const auto& property : node.properties)
+		{
+			AssertContained(property.start, property.length, node.start, node.length);
+			AssertContained(property.valueStart, property.valueLength, property.start, property.length);
+			if(property.hasExpression)
+				AssertExpressionContained(property.expression, property.valueStart, property.valueLength);
+		}
+		for(const auto& child : node.children) AssertNodeContained(child, node.start, node.length);
+	}
+
 	void AssertUniqueIds(const ExpressionNode& node, std::set<std::string>& ids)
 	{
 		assert(!node.id.empty());
@@ -271,6 +304,89 @@ int main()
 		AssertSpan(projected.syntax, projected.source);
 		std::set<std::string> ids;
 		AssertUniqueIds(projected.syntax, ids);
+	}
+
+	// The public source table must cover intermediate operator nodes even when
+	// the allocator does not happen to reuse a destroyed import's address.
+	{
+		const std::wstring source = L"loc_path + sys.lang + \".nss\"";
+		Parser parser(Parser::SyntaxInput{ source, L"<operator-source-test>" });
+		auto native = parser.ParseExpression(source);
+		const auto* root = dynamic_cast<const Nilesoft::Shell::BinaryExpression*>(native.get());
+		assert(root);
+		const auto* intermediate = dynamic_cast<const Nilesoft::Shell::BinaryExpression*>(root->Left);
+		assert(intermediate);
+		const auto record = parser.ExpressionSources.find(intermediate);
+		assert(record != parser.ExpressionSources.end());
+		assert(record->second.start == 0);
+		assert(record->second.length == 19);
+		auto syntax = ProjectNativeExpression(native.get(), source, parser.ExpressionSources);
+		AssertExpressionContained(syntax, 0, static_cast<int>(source.size()));
+		assert(Child(syntax, 0).text == "loc_path + sys.lang");
+	}
+
+	// Import expressions are destroyed after projection. A later allocation may
+	// reuse their address; every intermediate operator node still needs its own
+	// current source record. Exercise the same Parser::Load path as the DLL,
+	// including multiline localized imports and UTF-16 offsets under both EOLs.
+	for(const auto* newline : { L"\n", L"\r\n" })
+	{
+		const std::wstring eol = newline;
+		const std::wstring source =
+			L"$loc_path='imports/\u65E5\xD83D\xDE00/'" + eol +
+			L"import lang loc_path + \"en.nss\"" + eol +
+			L"import lang if(path.exists(loc_path + sys.lang + \".nss\")," + eol +
+			L"               loc_path + sys.lang + \".nss\"," + eol +
+			L"               loc_path + \"en.nss\")" + eol +
+			L"import loc loc_path + sys.lang + \".nss\"" + eol +
+			L"import lang if(path.exists(loc_path + \"extra.nss\"), loc_path + \"extra.nss\", loc_path + \"en.nss\")" + eol +
+			L"menu(title=\"\u65E5\xD83D\xDE00\") { item(title=loc_path + sys.lang + \".nss\") }" + eol;
+		Parser parser(Parser::SyntaxInput{ source, L"<dynamic-import-span-test>" });
+		assert(parser.Load());
+		const auto& document = parser.StudioSyntax();
+		assert(document.nodes.size() == 6);
+		for(const auto& diagnostic : document.diagnostics)
+			assert(diagnostic.severity != "error");
+		for(const auto& token : document.tokens)
+			AssertContained(token.start, token.length, 0, static_cast<int>(source.size()));
+		for(const auto& node : document.nodes)
+			AssertNodeContained(node, 0, static_cast<int>(source.size()));
+		assert(document.nodes[2].expression.kind == "if");
+		assert(document.nodes[2].expression.children.size() == 3);
+		const auto& condition = document.nodes[2].expression.children[0];
+		assert(condition.kind == "call");
+		assert(condition.children.size() == 1);
+		const auto& path = condition.children[0];
+		assert(path.kind == "binary");
+		assert(path.text == "loc_path + sys.lang + \".nss\"");
+		assert(Child(path, 0).kind == "binary");
+		assert(Child(path, 0).text == "loc_path + sys.lang");
+		const auto& title = document.nodes[5].properties[0].expression;
+		assert(title.length == 5); // Quotes, one BMP unit, and a surrogate pair.
+		assert(title.text == "\"\xE6\x97\xA5\xF0\x9F\x98\x80\"");
+	}
+
+	// Syntax-only imports must preserve a mutating expression without invoking
+	// it. The target is task-owned and absent before and after parsing.
+	{
+		wchar_t temporaryDirectory[MAX_PATH]{};
+		wchar_t marker[MAX_PATH]{};
+		assert(GetTempPathW(MAX_PATH, temporaryDirectory) > 0);
+		assert(GetTempFileNameW(temporaryDirectory, L"nsp", 0, marker) != 0);
+		assert(DeleteFileW(marker));
+		std::wstring path = marker;
+		std::replace(path.begin(), path.end(), L'\\', L'/');
+		const std::wstring source = L"import io.file.create(\"" + path + L"\")";
+		Parser parser(Parser::SyntaxInput{ source, L"<nonexecuting-import-test>" });
+		assert(parser.Load());
+		assert(GetFileAttributesW(marker) == INVALID_FILE_ATTRIBUTES);
+		assert(GetLastError() == ERROR_FILE_NOT_FOUND);
+		const auto& document = parser.StudioSyntax();
+		assert(document.nodes.size() == 1);
+		assert(document.nodes[0].expression.kind == "call");
+		assert(std::any_of(document.diagnostics.begin(), document.diagnostics.end(),
+			[](const auto& diagnostic) { return diagnostic.code == "LANG_IMPORT_DYNAMIC"; }));
+		AssertNodeContained(document.nodes[0], 0, static_cast<int>(source.size()));
 	}
 
 	std::cout << "Native expression syntax tests passed\n";

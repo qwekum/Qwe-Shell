@@ -1,5 +1,10 @@
 # Managed Studio tool parity
 
+This ledger records the combined implementation and its remaining parity gaps.
+The narrower qualification draft intentionally excludes the twelve original
+review fixes; see [publication scope](pr-remediation.md#pr3-scope-and-dependencies).
+Registry and launch behavior in its isolated branch still needs those fixes.
+
 This ledger records the source evidence used to consolidate the four pinned
 donors into `ShellStudio.Tools`.  Donor identifiers are evidence, not runtime
 dependencies.  The managed implementation targets Windows 11 x64 and routes
@@ -7,7 +12,7 @@ all mutations through a reviewed `OperationPlan`, a bounded environment seam,
 and a recovery journal.
 
 Build and launch instructions are in [build-and-run.md](build-and-run.md).
-The [local verification record](local-verification.md) records the current
+The [historical local verification record](local-verification.md) records its
 tool fixture/provider result and the separate 69-check tool matrix from the
 2026-09-11 integrated package checkpoint, including a copied-resource round
 trip and protected thumbnail-setting checks in a disposable Windows Sandbox.
@@ -15,6 +20,15 @@ The rows marked Windows-only still require the disposable-VM acceptance matrix.
 Native menu capture, source associations, and semantic preview are tracked by
 the [capture protocol](capture-protocol.md), rather than counted as
 tool-operation parity.
+
+The 1.9.20 preparation audit freshly verified all four pinned commit objects,
+150 recovered files, and the six publication notices. Nineteen recovered files
+differ from immutable Git blobs only in line endings; runtime source text and
+license content match. This establishes provenance, not Windows effect parity.
+Historical package results do not qualify 1.9.20. The unsupported differences
+listed below remain completion blockers under the README plan.
+Current scoped package checks and their limits are in the
+[1.9.20 candidate record](release-candidate-1.9.20.md).
 
 ## Pinned donor evidence
 
@@ -40,7 +54,9 @@ local evidence and is excluded from the publication tree.
 ## Implemented behavior
 
 - `desktop.ini` edits preserve the detected BOM, encoding, newline style,
-  unrelated entries, and existing attributes. Recursive walks have depth,
+  unrelated entries, and existing attributes; a new INI receives Hidden/System
+  flags. Forced removal deletes the entire file, including unrelated settings.
+  Recursive walks have depth,
   item, reparse-point, and cancellation bounds.
 - Folder thumbnails expose one Full size / Default setting with fixed-target,
   read-only state inspection and two attributed built-in mask assets. Resource
@@ -61,7 +77,11 @@ local evidence and is excluded from the publication tree.
   three sort levels, search-only column filtering, file-dialog variants,
   virtual-folder defaults, and This PC settings. It requires each imported
   folder section to resolve to an installed FolderTypes GUID and reports
-  unsupported keys before execution. The two donor feature IDs are queried and
+  unsupported keys before execution. Imported `Backup=1` is rejected before
+  mutation: use a separately reviewed `views.backup` destination, then import
+  `Backup=0`. The mandatory scoped recovery journal is not the donor's seven-root
+  export. `Reset=1` permits the enabled options phase, then skips imported view
+  sections and virtual-column replication. The two donor feature IDs are queried and
   written through the native ntdll feature-store API when the donor's build and
   UBR gates match; no ViVeTool binary or GPL library is bundled.
 - `shell.history.clear` accepts both `specificPaths` and the explicit
@@ -110,7 +130,7 @@ provider is implemented but cannot be established by the local fixture run.
 | Recover exact prior resource | Protected resource journal/backend; legacy `folder.thumbnail.restore` remains for generic resource journals | Hash-guarded typed recovery is dispatched by the generic recovery journal while preserving review/elevation boundaries | `thumbnail_native_resource_round_trip` (including generic dispatch), copied-resource checks, and protected Sandbox recovery checks |
 | Close Explorer and restart | `explorer.refresh` | Implemented through exact current-session shell ownership, scoped window-close requests, journal-aware cache reset, and an absolute `%WINDIR%\\explorer.exe` restart | Windows-only |
 | Reset thumbnail cache | `explorer.refresh.resetThumbs` | Implemented as a journaled provider option | `explorer_refresh_forwards_cache_options_and_reports_failure` (option forwarding); Windows-only cache files |
-| `/install` and `/remove` shell registration | Combined MSI and native `shell.exe` | Studio uses the shared Shell installation instead of registering a donor launcher | MSI database inspection; live installer behavior pending |
+| `/install` and `/remove` Full/Half masks | `folder.thumbnail.set` Full/Default and `explorer.refresh` | Resource changes replace these donor switches; shared Shell MSI registration is a separate operation | Protected resource/cache/appearance effects require current-package Windows qualification |
 | Donor bundled Resource Hacker | No dependency | Replaced by native resource APIs and staged MUI preservation | Copied-resource and protected Sandbox checks |
 
 ### SetFolderType (`cdde0ee`)
@@ -120,10 +140,10 @@ provider is implemented but cannot be established by the local fixture run.
 | Set `[ViewState] FolderType` | `folder.type.set` | Implemented | `desktop_ini_round_trip_preserves_unrelated_entries` |
 | Recursive set | `folder.type.set.recursive` | Implemented with depth/item/cancellation bounds | `recursive_folder_type_is_journaled_and_reports_progress` |
 | Remove only FolderType | `folder.type.remove` | Implemented | `desktop_ini_remove_uses_forward_section_context` |
-| Delete empty desktop.ini | `folder.type.remove.forceDelete` | Implemented with warning | Windows-only edge case |
+| Delete empty desktop.ini / force removal | `folder.type.remove` / `forceDelete` | Normal removal deletes an empty INI; force removal deletes any existing INI, including unrelated settings, with exact preview and warning | Fixture/recovery checks; Windows effects pending |
 | Preserve unrelated sections and encoding | `DesktopIniDocument` | Implemented | `desktop_ini_round_trip_preserves_unrelated_entries`, `desktop_ini_remove_uses_forward_section_context` |
-| Auto folder-type discovery | `folder.type.inspect` / `folder.type.discover` | Implemented from live HKCU/HKLM FolderTypes | Windows-only registry |
-| NTFS/fixed-drive validation | Environment path diagnostics | Implemented as path/permission boundary | Windows-only |
+| Auto folder-type discovery prerequisite | FolderTypes catalogue and INI inspection are separate | Partial: the donor's AllFolders Shell override prerequisite is not enforced | Missing prerequisite is a completion blocker; Windows effect pending |
+| NTFS/fixed-drive validation | Absolute-path/existence/reparse boundaries | Partial: fixed-drive and NTFS gates are not implemented | Missing prerequisite is a completion blocker |
 | Context-menu registration and MUI labels | Studio-generated tool entries and native Shell installation | Generated entries replace donor-specific registration; exact donor MUI behavior is not claimed | Live menu/localization parity pending |
 
 ### RightClickTools (`f68de3f`)
@@ -144,7 +164,7 @@ provider is implemented but cannot be established by the local fixture run.
 | User PATH add/remove/normalize | `environment.path:User` | Implemented | Windows-only registry |
 | Machine PATH add/remove/normalize | `environment.path:Machine` | Implemented with `AllowSystem` gate | Windows-only registry/UAC |
 | Show/hide protected and hidden items | `shell.visibility` | Implemented through Explorer Advanced values | Windows-only |
-| Quick shell refresh | `explorer.refresh` | Implemented through the reviewed current-session Explorer shell seam | Windows-only |
+| Quick shell refresh | `explorer.refresh` provides a reviewed restart | Partial: a notify-only quick refresh is not implemented | Source difference; Windows effects pending |
 | Icon/thumbnail cache reset | `explorer.refresh.resetIcons/resetThumbs` | Implemented as explicit options; matching user cache files are journaled before deletion | `explorer_refresh_forwards_cache_options_and_reports_failure` (provider options) |
 | Restart Explorer | `explorer.refresh` | Implemented with exact shell HWND/PID verification, scoped WM_CLOSE requests, reviewed shell-process stop, cache reset before a mandatory finally-path launch, and explicit blocking/failure results | `explorer_refresh_forwards_cache_options_and_reports_failure`, `explorer_refresh_blocks_unverified_shell`, `explorer_refresh_restarts_after_cache_failure`, and `explorer_refresh_restarts_after_cancellation`; Windows-only native window/process effect |
 | Cmd Here | `launch.terminal:CommandPrompt` | Implemented with typed process spec | Windows-only |
@@ -154,11 +174,15 @@ provider is implemented but cannot be established by the local fixture run.
 | Configured file manager | `launch.file-manager` | Implemented with absolute executable requirement | Windows-only |
 | Configured search tool | `launch.search` | Implemented with typed arguments | Windows-only |
 | Typed custom launcher | `launch.custom` | Implemented with an existing absolute executable, JSON string argument vector, optional selected path appended as a typed argument, working directory, and explicit elevation | `custom_launch_uses_typed_arguments_and_selection`, `custom_launch_rejects_invalid_argument_json` |
-| URL to LNK conversion | `shortcut.convert-url` | Implemented through native `IShellLinkW` | Windows-only link provider |
-| Optional source deletion after conversion | `shortcut.convert-url.removeSource` | Implemented and journaled | Windows-only link provider |
+| URL to LNK conversion | `shortcut.convert-url` | Partial: native `IShellLinkW` uses the URL as target; donor uses Explorer plus quoted URL arguments and preserves IconFile/IconIndex | HTTP/file/UNC target, arguments, directory and icon effects remain unqualified; icon preservation missing |
+| Optional source deletion after conversion | `shortcut.convert-url.removeSource` | Permanent deletion with scoped journal recovery replaces donor Recycle Bin movement | Revised behavior must be qualified explicitly |
 | Date modified/created from Date taken | `metadata.photo-date` | Implemented through native photo metadata provider | `photo_date_journal_restores_file_metadata` |
 | Folder options: extensions/hidden/compact/protected | `explorer.options` | Implemented | Windows-only registry |
-| Folder options: type/colors/icons/thumbnails | `folder.type`, `views.apply`, `views.options` | Implemented across typed operations | `views_write_typed_registry_values` |
+| Folder options: type/thumbnails | `folder.type`, `views.apply`, `views.options` | Implemented subset; view text color is separate from folder icon color | Fixture checks; Windows effects pending |
+| Folder icon/color/image composition and recursive removal | No equivalent operation | Unsupported; required consolidation remains incomplete | Source inventory only; no runtime qualification |
+| LNK target/Start in/icon search and replacement | No equivalent operation | Unsupported | Source inventory only; no runtime qualification |
+| General created/modified dates and only-if-older copying | `metadata.photo-date` only handles DateTaken | Unsupported general date actions | Source inventory only; no runtime qualification |
+| User/admin/TrustedInstaller launch selection and WTadmin preference | `launch.custom` has user/admin only | Partial; dedicated launch privilege choices and TrustedInstaller are missing | Launch privilege effects remain unqualified |
 | MoreTools arbitrary launcher and donor INI | `launch.custom` | Implemented as a bounded typed contract: existing absolute executable, JSON string argument vector, optional selected path, working directory, and explicit administrator elevation; arbitrary donor INI/script execution remains outside the contract | `custom_launch_uses_typed_arguments_and_selection`, `custom_launch_rejects_invalid_argument_json` |
 | SnipWithBorder visible capture | `capture.window` in the Studio GUI | Visible capture implementation; the headless host only previews/reports the UI requirement | Human/Windows capture acceptance pending |
 
@@ -202,6 +226,12 @@ provider is implemented but cannot be established by the local fixture run.
 | Per-folder `GroupBy` / `GroupByOrder` | `views.apply` / `views.import-ini` | Implemented | `winsetview_import_applies_installed_folder_view` |
 | Per-folder `SortBy` | `views.apply` / `views.import-ini` | Implemented with three-level bound | `winsetview_import_applies_installed_folder_view` |
 | `FileDialogOption` / `FileDialogView` / `FileDialogNG` | `views.import-ini` | Implemented for ComDlg and ComDlgLegacy variants | `winsetview_import_applies_installed_folder_view` |
+| `ApplyOptions` / `ApplyViews` | `views.import-ini` | Independently gated; Reset exits before views after any enabled options | Donor phase regression; actual registry/Explorer effects pending |
+| `SearchOnly` / `Search.Rank` | `views.import-ini` | Search properties filtered outside Search; Downloads forces Search.Rank shown | Donor property regression; actual columns pending |
+| `SetVirtualFolders` / `SetVirtualFolderColumns` | `views.import-ini` | Column replication requires both switches | `winsetview_import_gates_virtual_columns`; Windows effects pending |
+| `Reset` / `Backup` in imported INI | `views.import-ini` | Reset skips views; Backup=1 is rejected with a separate typed-backup route | Scoped journals do not establish donor full-backup equivalence |
+| `Inherit` and GUI propagation | Already resolved imported section values | Partial: donor GUI inheritance propagation is not reproduced; direct registry Inherit is not that behavior | Completion blocker pending contract and Windows verification |
+| ThemeIndex/Language/Font1/Font2/Size1/Size2/Scroll/Interface/SystemTextColorHex | Accepted donor GUI metadata | Metadata only; not applied as Studio or Explorer settings | No setting parity claim |
 | Global/FolderType/Virtual/Dialogs inspect | `views.inspect` | Implemented | Windows-only registry |
 | View backup | `views.backup` | Implemented as versioned JSON and journaled output | Windows-only registry |
 | View restore | `views.restore` | Implemented with HKCU allow-list and schema/size bounds | `view_restore_rejects_machine_registry_target` |
@@ -266,3 +296,11 @@ No donor binary, donor PowerShell `ExecutionPolicy Bypass` command,
 string is part of the managed backend. Explicit user-script launch remains in
 the unelevated caller with a typed argument vector. Defender cleanup uses the
 separately reviewed, fixed `MyTasks\\DWDH` provider described above.
+
+Additional source differences remain explicit: imported views update selected
+HKCU TopViews rather than clearing per-folder state and reseeding the full HKLM
+FolderTypes tree; Store App Helium/UserClasses view resets are not implemented;
+implicit WinSetViewCustom.reg execution is replaced by an explicit reviewed
+typed registry operation. Missing donor AppParts/helper distributions prevent
+binary comparison. These gaps do not change the approved full-consolidation
+acceptance contract and must be resolved or explicitly reviewed before release.

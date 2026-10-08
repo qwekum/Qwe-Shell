@@ -131,7 +131,7 @@ namespace Nilesoft
 			{
 				skip(false);
 				start_column = l->column;
-				
+
 				error_if(l->eof, TokenError::PropertyValueUnterminated, start_column);
 
 				if(l->tok == quote) break;
@@ -473,7 +473,7 @@ namespace Nilesoft
 								cmd->command.type = COMMAND_SHELL;
 							else if(id[1] == MENU_CMD_EXPLORER)
 								cmd->command.type = COMMAND_EXPLORER;
-							
+
 							error_if(cmd->arguments, TokenError::PropertyCommandAndArgumentsCannotCombine);
 							cmd->arguments = expr->release();
 							break;
@@ -549,12 +549,12 @@ namespace Nilesoft
 				auto verified = verify_command(id, id.signer);
 				if(verified != TokenError::None)
 					return error(verified, start_column);
-				
+
 				std::unique_ptr<Expression> expr;
 				auto col = l->column;
 
 				if(!skip()) return false;
-				
+
 				if(id.signer)
 				{
 				//	auto prarse_as_value = id.front({ MENU_WINDOW });
@@ -578,12 +578,12 @@ namespace Nilesoft
 
 				error_if(!parse_properties_command(cmd, id, &expr),
 					  TokenError::PropertyValue, start_column);
-				
+
 				skip();
 
 				if(l->is({ '}', ',' })) break;
 			}
-			
+
 			//	if(!(cmd->command.expr || cmd->command.console))
 			//		error(TokenError::PropertyCommandExpected, start_column0);
 
@@ -635,7 +635,7 @@ namespace Nilesoft
 				skip();
 
 				if(l->tok == ')') break;
-				
+
 				if(!l->is_ident())
 					error(TokenError::PropertyUnexpected, l->column);
 
@@ -701,7 +701,7 @@ namespace Nilesoft
 						if(id.signer && !id.front(MENU_TYPE))
 							menu->properties--;
 					}
-					
+
 					switch(id[0])
 					{
 						case MENU_TYPE:

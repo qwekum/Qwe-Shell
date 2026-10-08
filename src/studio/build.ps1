@@ -49,7 +49,7 @@ function Invoke-NativeBuild([string]$target, [string]$intDir) {
 
     $arguments = @(
         $solution,
-        '/m', "/t:$target",
+        '/m:1', "/t:$target",
         "/p:Configuration=$Configuration", "/p:Platform=$Architecture",
         # The doubled trailing slash survives cmd.exe's quoted argument
         # parsing and reaches MSBuild as the required single trailing slash.
@@ -74,7 +74,7 @@ function Invoke-StudioNativeBuild([string]$project, [string]$name, [string]$outp
     $languageOut = Join-Path $nativeRoot $name
     $languageInt = Join-Path $nativeRoot "obj\$name"
     $languageArguments = @(
-        $project, '/m', "/p:Configuration=$Configuration", '/p:Platform=x64',
+        $project, '/m:1', "/p:Configuration=$Configuration", '/p:Platform=x64',
         "/p:PlatformToolset=$PlatformToolset", "/p:OutDir=$languageOut\\", "/p:IntDir=$languageInt\\", '/v:minimal'
     )
     $escaped = $languageArguments | ForEach-Object { '"' + ($_ -replace '"', '\"') + '"' }
@@ -117,14 +117,14 @@ try {
     if ($Architecture -eq 'x64') {
         $languageDll = Invoke-StudioNativeBuild $languageProject 'studio-language' 'ShellStudio.Language.dll'
         $previewWorker = Invoke-StudioNativeBuild $previewProject 'preview-worker' 'ShellStudio.PreviewWorker.exe'
-        Invoke-Dotnet @('restore', $studioProject, '-r', 'win-x64')
-        Invoke-Dotnet @('publish', $studioProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-o', $studioPublish, "/p:NativeLanguagePath=$languageDll", "/p:PreviewWorkerPath=$previewWorker")
+        Invoke-Dotnet @('restore', $studioProject, '-r', 'win-x64', '--disable-parallel', '-m:1', '-p:BuildInParallel=false')
+        Invoke-Dotnet @('publish', $studioProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-m:1', '-p:BuildInParallel=false', '-o', $studioPublish, "/p:NativeLanguagePath=$languageDll", "/p:PreviewWorkerPath=$previewWorker")
         if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.exe'))) { throw 'Self-contained Studio publication did not produce ShellStudio.exe.' }
         if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.Language.dll'))) { throw 'Self-contained Studio publication did not include ShellStudio.Language.dll.' }
         if (-not (Test-Path -LiteralPath (Join-Path $studioPublish 'ShellStudio.PreviewWorker.exe'))) { throw 'Studio publication did not include ShellStudio.PreviewWorker.exe.' }
 
-        Invoke-Dotnet @('restore', $toolHostProject, '-r', 'win-x64')
-        Invoke-Dotnet @('publish', $toolHostProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-o', $toolHostPublish)
+        Invoke-Dotnet @('restore', $toolHostProject, '-r', 'win-x64', '--disable-parallel', '-m:1', '-p:BuildInParallel=false')
+        Invoke-Dotnet @('publish', $toolHostProject, '-c', $Configuration, '-r', 'win-x64', '--self-contained', 'true', '--no-restore', '-m:1', '-p:BuildInParallel=false', '-o', $toolHostPublish)
         if (-not (Test-Path -LiteralPath (Join-Path $toolHostPublish 'ShellStudio.ToolHost.exe'))) { throw 'Self-contained ToolHost publication did not produce ShellStudio.ToolHost.exe.' }
 
         # The package directory is a task-owned generated target.  Assert the
@@ -158,11 +158,11 @@ try {
         if (-not (Test-Path -LiteralPath $caSource)) { throw "Custom action output was not produced: $caSource" }
         Copy-Item -LiteralPath $caSource -Destination (Join-Path $packageBin 'ca.dll') -Force
 
-        Invoke-Dotnet @('restore', $wixProject)
+        Invoke-Dotnet @('restore', $wixProject, '--disable-parallel', '-m:1', '-p:BuildInParallel=false')
         $msi = Join-Path $packageBin "setup-$($Architecture.ToLower()).msi"
         Assert-UnderRoot $msi $repoRoot
         if (Test-Path -LiteralPath $msi) { Remove-Item -LiteralPath $msi -Force }
-        Invoke-Dotnet @('build', $wixProject, '-c', $Configuration, '--no-restore', "/p:Platform=$Architecture")
+        Invoke-Dotnet @('build', $wixProject, '-c', $Configuration, '--no-restore', '-m:1', '-p:BuildInParallel=false', "/p:Platform=$Architecture")
         if (-not (Test-Path -LiteralPath $msi)) { throw "WiX build did not produce $msi" }
     }
 }

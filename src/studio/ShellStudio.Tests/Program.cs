@@ -4,6 +4,17 @@ using System.Text.Json;
 using ShellStudio.Core;
 using ShellStudio;
 
+foreach (string prerequisite in new[] { "ShellStudio.Language.dll", "ShellStudio.PreviewWorker.exe" })
+{
+    string prerequisitePath = Path.Combine(AppContext.BaseDirectory, prerequisite);
+    if (!File.Exists(prerequisitePath))
+    {
+        Console.Error.WriteLine("Required native test prerequisite is missing: " + prerequisitePath +
+            ". Build with exact NativeLanguagePath and PreviewWorkerPath values.");
+        return 1;
+    }
+}
+
 int passed = 0, failed = 0;
 var temporaryRoot = Path.Combine(Path.GetTempPath(), "ShellStudio-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporaryRoot);
