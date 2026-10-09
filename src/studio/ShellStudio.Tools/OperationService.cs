@@ -232,14 +232,17 @@ public sealed class OperationService
         return plan;
     }
 
+    internal static string ResolveFieldDefault(OperationRequest request, OperationField field)
+        => request.Id.Equals("views.apply", StringComparison.OrdinalIgnoreCase) && field.Name == "iconSize"
+            ? DirectRawView(GetValue(request, "viewMode", "Details")).IconSize.ToString(CultureInfo.InvariantCulture)
+            : field.DefaultValue;
+
     private static OperationRequest NormalizeRequest(OperationRequest request, OperationDescriptor descriptor, List<Diagnostic> diagnostics)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in descriptor.Fields)
         {
-            var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : field.DefaultValue;
-            if (descriptor.Id == "views.apply" && field.Name == "iconSize" && !request.Values.ContainsKey(field.Name))
-                supplied = DirectRawView(GetValue(request, "viewMode", "Details")).IconSize.ToString(CultureInfo.InvariantCulture);
+            var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : ResolveFieldDefault(request, field);
             values[field.Name] = IsFeatureField(field.Name)
                 ? NormalizeFeatureChoice(field.Name, supplied, diagnostics)
                 : supplied;

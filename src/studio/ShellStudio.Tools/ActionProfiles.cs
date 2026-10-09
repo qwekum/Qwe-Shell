@@ -65,7 +65,7 @@ public sealed class SavedActionProfile
         // when the request is replayed by the GUI or ToolHost.
         var parameters = descriptor.Fields.ToDictionary(
             field => field.Name,
-            field => request.Values.TryGetValue(field.Name, out var value) ? value : field.DefaultValue,
+            field => request.Values.TryGetValue(field.Name, out var value) ? value : OperationService.ResolveFieldDefault(request, field),
             StringComparer.OrdinalIgnoreCase);
         return new SavedActionProfile(name, descriptor.Id, parameters, request.Selection, id, createdUtc);
     }

@@ -17,7 +17,12 @@ internal static class QualificationRegressionTests
             {
                 var values = new List<KeyValuePair<string, string>> { new("scope", "Global"), new("viewMode", expected.Name), new("columns", "System.ItemNameDisplay;System.Size") };
                 if (iconSize == 77) values.Add(new("iconSize", "77"));
-                var plan = await service.PreviewAsync(OperationRequest.Create("views.apply", values));
+                var request = OperationRequest.Create("views.apply", values);
+                var profile = SavedActionProfile.FromRequest("view regression", request);
+                Require(profile.Parameters["iconSize"] == iconSize.ToString(System.Globalization.CultureInfo.InvariantCulture), "saving a view profile changed its effective icon size");
+                var replay = await service.PreviewAsync(profile.ToRequest());
+                Require(replay.CanExecute && replay.Changes.Any(change => change.Contains($"icon size {iconSize}", StringComparison.Ordinal)), "replayed profile changed preview icon size");
+                var plan = await service.PreviewAsync(request);
                 Require(plan.CanExecute, $"view mode preview failed for {expected.Name}");
                 Require(plan.Changes.Any(change => change.Contains($"icon size {iconSize}", StringComparison.Ordinal)), "preview icon size differs from execution");
                 var result = await service.ExecuteAsync(plan);
