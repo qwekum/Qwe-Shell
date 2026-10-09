@@ -854,10 +854,11 @@ namespace Nilesoft::Shell
 			const StudioCaptureEvidence &evidence, const NativeMenu *source,
 			std::string_view entryId)
 		{
+			// Every entry also carries completeness, even without a source or ledger.
+			builder.memberUInt(first, "evidenceVersion", StudioCaptureEvidence::Version);
 			if(!HasSourceIdentity(source) && evidence.empty())
 				return;
 
-			builder.memberUInt(first, "evidenceVersion", StudioCaptureEvidence::Version);
 			if(!evidence.ruleOutcomes.empty())
 			{
 				BeginArray(builder, first, "ruleOutcomes");

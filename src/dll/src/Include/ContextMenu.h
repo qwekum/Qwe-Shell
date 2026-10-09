@@ -309,8 +309,8 @@ namespace Nilesoft
 			{
 				if(!visible_layers)
 				{
-					// SWP_NOOWNERZORDER = Does not change the owner window's position in the Z order. 
-					// SWP_NOZORDER = Retains the current Z order (ignores the hWndInsertAfter parameter). 
+					// SWP_NOOWNERZORDER = Does not change the owner window's position in the Z order.
+					// SWP_NOZORDER = Retains the current Z order (ignores the hWndInsertAfter parameter).
 					// | SWP_NOSENDCHANGING | SWP_NOCOPYBITS | SWP_NOREDRAW
 					auto flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOREDRAW | SWP_NOACTIVATE | SWP_SHOWWINDOW;
 
@@ -655,7 +655,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				Font icon10;
 			}font;
 
-			struct symbole_tag 
+			struct symbole_tag
 			{
 				SIZE size{};
 				HBITMAP normal{};
@@ -677,7 +677,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				symbole_tag checked;
 				symbole_tag bullet;
 			}symbol;
-			
+
 			struct {
 
 				struct {
@@ -689,7 +689,7 @@ plutovg_move_to(pluto, start.x, start.y);
 					bool keys = true;
 					int image = 1;
 					int position = 1;
-					
+
 					struct
 					{
 						bool duplicate = false;
@@ -758,7 +758,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			Visibility _vis = Visibility::Normal;
 
 			std::vector<uint32_t> parent_level;
-			struct 
+			struct
 			{
 				std::vector<MenuItemInfo *> statics;
 				std::vector<MenuItemInfo *>	dynamics;
@@ -923,7 +923,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			void clear_appearance_cache(HMENU hMenu) noexcept;
 			bool Initialize();
 			int Uninitialize();
-			int InvokeCommand(int id);	
+			int InvokeCommand(int id);
 			void build_system_menuitems(HMENU hMenu, menuitem_t *menu,
 				bool is_root = false, bool capture_original = false);
 			void build_main_system_menuitems(menuitem_t *menu, bool is_root = false);
@@ -962,7 +962,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			inline static POINT point = {};
 			inline static std::unordered_map<HWINEVENTHOOK, ContextMenu *> HookMap;
 
-		public: 
+		public:
 			// static functions
 			inline static void draw_rect(DC *dc, const POINT &pt, const SIZE &size, const Color &color, const Color &border = {}, int radius = 0);
 
@@ -1016,7 +1016,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				else
 				{
 					printf("Mouse installed.\n");
-					// Determine whether the buttons are swapped. 
+					// Determine whether the buttons are swapped.
 					fResult = GetSystemMetrics(SM_SWAPBUTTON);
 					if(fResult == 0)
 						printf("Buttons not swapped.\n");

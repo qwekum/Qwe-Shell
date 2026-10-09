@@ -49,6 +49,10 @@ public sealed class PreviewWorkerClient : IAsyncDisposable
 
     public string WorkerPath => workerPath;
 
+    // Tests can observe ownership even when a deadline kills the child before
+    // its managed entry point runs. This does not change the startup deadline.
+    internal event Action<int, DateTime>? WorkerStarted;
+
     public bool CompositionActive
     {
         get
@@ -304,6 +308,7 @@ public sealed class PreviewWorkerClient : IAsyncDisposable
     private void SetActiveProcess(Process process)
     {
         lock (processLock) activeProcess = process;
+        if (WorkerStarted is { } observer) observer(process.Id, process.StartTime.ToUniversalTime());
     }
 
     private void ClearActiveProcess(Process? process)

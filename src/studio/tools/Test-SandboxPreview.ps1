@@ -72,9 +72,14 @@ function Invoke-Preview([string]$Name, [string]$Operation, [hashtable]$Payload) 
     $process = New-Object Diagnostics.Process
     $process.StartInfo = $start
     $started = $false
+    $inputEncoding = [Console]::InputEncoding
     try {
+        # Windows PowerShell's .NET Framework StreamWriter inherits this
+        # encoding and AutoFlush can write its BOM before the binary prefix.
+        [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)
         if (-not $process.Start()) { throw 'Native preview worker did not start.' }
         $started = $true
+        $ownerStartedUtc = $process.StartTime.ToUniversalTime().ToString('o')
         $request = @{ version=1; id=$Name; revision='installed-package'; operation=$Operation; payload=$Payload }
         $bytes = [Text.Encoding]::UTF8.GetBytes(($request | ConvertTo-Json -Depth 24 -Compress))
         $prefix = [BitConverter]::GetBytes([int]$bytes.Length)
@@ -85,6 +90,7 @@ function Invoke-Preview([string]$Name, [string]$Operation, [hashtable]$Payload) 
         $length = [BitConverter]::ToInt32($prefix, 0)
         if ($length -le 0 -or $length -gt 16777216) { throw 'Worker response exceeds the frame contract.' }
         $responseBytes = Read-Exact $process.StandardOutput.BaseStream $length
+        [IO.File]::WriteAllBytes((Join-Path $EvidenceDirectory ($Name + '.json')), $responseBytes)
         $response = [Text.Encoding]::UTF8.GetString($responseBytes) | ConvertFrom-Json
         if ($response.id -ne $Name -or $response.revision -ne 'installed-package' -or $response.operation -ne $Operation) {
             throw 'Worker response identity mismatch.'
@@ -102,17 +108,17 @@ function Invoke-Preview([string]$Name, [string]$Operation, [hashtable]$Payload) 
             $windows = [PreviewGuestWindows]::Visible($process.Id, $true)
             if ($process.HasExited -or $windows -lt 1) { throw 'Composed worker has no owned visible window.' }
         }
-        [IO.File]::WriteAllBytes((Join-Path $EvidenceDirectory ($Name + '.json')), $responseBytes)
         $process.StandardInput.Close()
         if (-not $process.WaitForExit(10000)) { throw 'Native worker did not exit after its owner pipe closed.' }
         if ($process.ExitCode -ne 0 -or [PreviewGuestWindows]::Visible($process.Id, $false) -ne 0) {
             throw 'Native worker or its window survived owner shutdown.'
         }
-        return @{ Name=$Name; Operation=$Operation; Passed=$true; Width=$frame.width; Height=$frame.height; Dpi=$frame.dpi; OwnedWindows=$windows; OwnerExitClosedWindows=$true }
+        return @{ Name=$Name; Operation=$Operation; Passed=$true; Width=$frame.width; Height=$frame.height; Dpi=$frame.dpi; OwnedWindows=$windows; ProcessId=$process.Id; OwnerStartedUtc=$ownerStartedUtc; OwnerExitClosedWindows=$true }
     }
     finally {
         if ($started -and -not $process.HasExited) { $process.Kill(); $null = $process.WaitForExit(5000) }
         $process.Dispose()
+        [Console]::InputEncoding = $inputEncoding
     }
 }
 

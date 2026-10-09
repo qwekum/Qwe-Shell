@@ -26,6 +26,18 @@ string fixture = Path.Combine(AppContext.BaseDirectory, "ShellStudio.PreviewWork
 if (!File.Exists(fixture))
     throw new FileNotFoundException("The fixture worker was not copied beside the client tests.", fixture);
 
+await Test("readiness failure preserves status without diagnostics", async () =>
+{
+    using var evidence = new FixtureEvidence("missing-marker");
+    var response = new PreviewProtocol.Response(PreviewProtocol.Version, "test", "revision", "preview", "failed", JsonSerializer.SerializeToElement(new { }), null!);
+    try
+    {
+        await evidence.WaitForPidAsync(Task.FromResult(response));
+        throw new InvalidOperationException("completed fixture unexpectedly became ready");
+    }
+    catch (InvalidOperationException ex) when (ex.Message.StartsWith("Fixture ended before readiness: failed", StringComparison.Ordinal)) { }
+});
+
 await Test("broker read calls match the native io.file and reg names", () =>
 {
     Equal("io.file.exists", PreviewReadRequest.FileExists(@"C:\Preview\sample.nss").Function);
@@ -39,11 +51,13 @@ await Test("caller cancellation kills the fixture worker", async () =>
 {
     using var evidence = new FixtureEvidence("delay");
     await using var client = new PreviewWorkerClient(fixture, evidence.MarkerPath, TimeSpan.FromSeconds(5));
-    using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
-    var response = await client.ExecuteAsync(Request("cancel", "evaluate"), cancellation.Token);
+    using var cancellation = new CancellationTokenSource();
+    var pending = client.ExecuteAsync(Request("cancel", "evaluate"), cancellation.Token);
+    int pid = await evidence.WaitForPidAsync(pending);
+    cancellation.Cancel();
+    var response = await pending;
     Equal("cancelled", response.Status);
     Equal("PREVIEW_CANCELLED", response.Diagnostics[0].Code);
-    int pid = evidence.ReadPid();
     True(await WaitForExit(pid, TimeSpan.FromSeconds(2)), "cancelled worker did not exit");
 });
 
@@ -51,11 +65,27 @@ await Test("deadline cancellation kills the fixture worker", async () =>
 {
     using var evidence = new FixtureEvidence("delay");
     await using var client = new PreviewWorkerClient(fixture, evidence.MarkerPath, TimeSpan.FromMilliseconds(150));
+    var started = new TaskCompletionSource<(int Pid, DateTime Created)>(TaskCreationOptions.RunContinuationsAsynchronously);
+    client.WorkerStarted += (pid, created) => started.TrySetResult((pid, created));
     var response = await client.ExecuteAsync(Request("timeout", "evaluate"));
     Equal("cancelled", response.Status);
     Equal("PREVIEW_TIMEOUT", response.Diagnostics[0].Code);
-    int pid = evidence.ReadPid();
-    True(await WaitForExit(pid, TimeSpan.FromSeconds(2)), "timed-out worker did not exit");
+    var identity = await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    True(await WaitForExit(identity.Pid, TimeSpan.FromSeconds(2), identity.Created), "timed-out worker did not exit");
+});
+
+await Test("fixture marker failure is an explicit worker failure", async () =>
+{
+    using var evidence = new FixtureEvidence("delay");
+    Directory.CreateDirectory(evidence.MarkerPath);
+    await using var client = new PreviewWorkerClient(fixture, evidence.MarkerPath, TimeSpan.FromSeconds(5));
+    var started = new TaskCompletionSource<(int Pid, DateTime Created)>(TaskCreationOptions.RunContinuationsAsynchronously);
+    client.WorkerStarted += (pid, created) => started.TrySetResult((pid, created));
+    var response = await client.ExecuteAsync(Request("marker-failure", "evaluate"));
+    Equal("error", response.Status);
+    True(response.Diagnostics.Any(d => d.Code == "PREVIEW_FAILED"), "marker failure did not fail the worker protocol");
+    var identity = await started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    True(await WaitForExit(identity.Pid, TimeSpan.FromSeconds(2), identity.Created), "failed fixture worker survived");
 });
 
 await Test("crash after a valid composition marks the retained result stale", async () =>
@@ -112,14 +142,16 @@ await Test("cancelled replacement preserves the last composed window", async () 
     await using var client = new PreviewWorkerClient(fixture, evidence.MarkerPath, TimeSpan.FromSeconds(5));
     Equal("ok", (await client.ComposeAsync(Request("retained", "compose"))).Status);
     int retainedPid = evidence.ReadPid();
-    using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-    var replacement = await client.ComposeAsync(Request("replacement-delay", "compose"), cancellation.Token);
+    using var cancellation = new CancellationTokenSource();
+    var pending = client.ComposeAsync(Request("replacement-delay", "compose"), cancellation.Token);
+    int cancelledPid = await evidence.WaitForPidAsync(pending, retainedPid);
+    cancellation.Cancel();
+    var replacement = await pending;
     Equal("cancelled", replacement.Status);
     True(client.CompositionActive, "the last valid composition was closed by a failed replacement");
     Equal("retained", client.CompositionRevision);
     Equal("retained", client.LastValidResponse?.Revision);
     True(client.LastValidIsStale, "failed replacement did not mark the retained preview stale");
-    int cancelledPid = evidence.ReadPid();
     True(cancelledPid != retainedPid, "replacement did not start its own worker");
     True(await WaitForExit(cancelledPid, TimeSpan.FromSeconds(2)), "cancelled replacement worker survived");
     await client.CloseCompositionAsync();
@@ -155,7 +187,7 @@ static void Equal<T>(T expected, T? actual)
         throw new InvalidOperationException($"expected '{expected}', got '{actual}'");
 }
 
-static async Task<bool> WaitForExit(int pid, TimeSpan timeout)
+static async Task<bool> WaitForExit(int pid, TimeSpan timeout, DateTime? created = null)
 {
     var deadline = DateTime.UtcNow + timeout;
     while (DateTime.UtcNow < deadline)
@@ -163,6 +195,7 @@ static async Task<bool> WaitForExit(int pid, TimeSpan timeout)
         try
         {
             using var process = Process.GetProcessById(pid);
+            if (created.HasValue && process.StartTime.ToUniversalTime() != created.Value) return true;
             if (process.HasExited) return true;
         }
         catch (ArgumentException) { return true; }
@@ -195,6 +228,28 @@ sealed class FixtureEvidence : IDisposable
             Thread.Sleep(10);
         }
         throw new InvalidOperationException("fixture PID marker was not written");
+    }
+
+    public async Task<int> WaitForPidAsync(Task<PreviewProtocol.Response> pending, int? previousPid = null)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        while (DateTime.UtcNow < deadline)
+        {
+            try
+            {
+                string text = await File.ReadAllTextAsync(MarkerPath);
+                if (int.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int pid) && pid != previousPid)
+                    return pid;
+            }
+            catch (IOException) { }
+            if (pending.IsCompleted)
+            {
+                var response = await pending;
+                throw new InvalidOperationException("Fixture ended before readiness: " + response.Status + "; " + string.Join("; ", (response.Diagnostics ?? []).Select(d => d.Code + " " + d.Message)));
+            }
+            await Task.Delay(10);
+        }
+        throw new InvalidOperationException("Fixture readiness was not published within 3 seconds.");
     }
 
     public void Dispose()

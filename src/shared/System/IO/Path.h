@@ -98,7 +98,7 @@ namespace Nilesoft
 					DWORD dwOptions;
 					if(S_OK == pfd->GetOptions(&dwOptions))
 						pfd->SetOptions(dwOptions | FOS_PICKFOLDERS);
-					
+
 					pfd->SetTitle(title.data());
 
 					if(S_OK == pfd->Show(hWndOwner))
@@ -305,13 +305,13 @@ namespace Nilesoft
 					{
 						if(taget)
 							hres = sl->SetPath(taget);
-						
+
 						if(args)
 							hres = sl->SetArguments(args);
 
 						if(iconPath == nullptr)
 							iconPath = taget;
-						
+
 						if(iconPath)
 							hres = sl->SetIconLocation(iconPath, iconIndex);
 
@@ -322,7 +322,7 @@ namespace Nilesoft
 
 						if(comment)
 							hres = sl->SetDescription(comment);
-						
+
 						if(runas)
 						{
 							IComPtr<IShellLinkDataList> sldl;
@@ -620,7 +620,7 @@ namespace Nilesoft
 				}
 				return {};
 			}*/
-			
+
 			static bool IsAbsolute(const std::wstring_view &path)
 			{
 				if(path.length() >= 3)
@@ -983,18 +983,18 @@ namespace Nilesoft
 			static int ParseLocation(string &path, string &id)
 			{
 				int type = 0;
-				if(path.length() > 3) 
+				if(path.length() > 3)
 				{
 					intptr_t p = path.last_index_of(L',', false);
-					if(p > 3) 
+					if(p > 3)
 					{
 						string id0 = path.substr(p + 1).trim().move();
 						path = path.substr(0, p).move();
-						if(id0.starts_with(L'-', false)) 
+						if(id0.starts_with(L'-', false))
 						{
 							id0.remove(0, 1);
 							p = id0.index_of(L'-', false);
-							if(p > 0) 
+							if(p > 0)
 							{
 								id = id0.substr(0, p).move();
 								id0.remove(0, p);
@@ -1006,7 +1006,7 @@ namespace Nilesoft
 								else if(id0.equals(L"-png"))
 									type = 5;
 							}
-							else 
+							else
 							{
 								id = id0;
 								type = 2;
@@ -1028,7 +1028,7 @@ namespace Nilesoft
 			static bool ParseLocation(string &path, int &index)
 			{
 				bool res = false;
-				if(path.length() > 3) 
+				if(path.length() > 3)
 				{
 					auto p = path.last_index_of(L',', false);
 					if(p > 0)

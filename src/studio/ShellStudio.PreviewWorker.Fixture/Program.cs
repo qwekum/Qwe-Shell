@@ -17,8 +17,20 @@ string mode = marker is null
     : Path.GetFileNameWithoutExtension(marker).ToLowerInvariant();
 if (marker is not null)
 {
-    try { File.WriteAllText(marker, Environment.ProcessId.ToString(CultureInfo.InvariantCulture)); }
-    catch { /* The PID is test evidence only; protocol behavior remains primary. */ }
+    try
+    {
+        // Publish readiness atomically; a partial marker must never identify
+        // a worker which has not completed fixture initialization.
+        string stage = marker + "." + Environment.ProcessId + ".tmp";
+        File.WriteAllText(stage, Environment.ProcessId.ToString(CultureInfo.InvariantCulture));
+        File.Move(stage, marker, overwrite: true);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine("FIXTURE_MARKER_FAILED: " + ex.Message);
+        Environment.ExitCode = 2;
+        return;
+    }
 }
 
 if (mode is "delay" or "compose-delay")

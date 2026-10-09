@@ -302,7 +302,7 @@ namespace Nilesoft
 					if(!name.empty())
 					{
 						_result = name.equals(context->font.text);
-						break;						
+						break;
 					}
 					_result = false;
 					break;
@@ -428,7 +428,7 @@ namespace Nilesoft
 						Object arg0 = eval_arg(0).move();
 						if(arg0.is_number())
 							_result = string::ToString(L"0x%x", (int32_t)arg0).move();
-					} 
+					}
 					catch(...)
 					{
 					}
@@ -849,7 +849,7 @@ namespace Nilesoft
 					input_param.prompt = eval_arg(1).to_string().move();
 					input_param.result = eval_arg(2).to_string().move();
 
-					auto hWnd = ::CreateDialogParamW(Path::GetCurrentModule(), MAKEINTRESOURCEW(IDD_INPUTBOX), NULL, 
+					auto hWnd = ::CreateDialogParamW(Path::GetCurrentModule(), MAKEINTRESOURCEW(IDD_INPUTBOX), NULL,
 													 [](HWND hDlg, UINT Msg, WPARAM wParam, LPARAM lParam)->INT_PTR
 					{
 						switch(Msg)
@@ -1044,7 +1044,7 @@ namespace Nilesoft
 						_result = o.to_number<int>();
 					else if(o.is_string())
 						_result = o.to_string().to_int<int>();
-					
+
 					return _result.move();
 				}
 				case IDENT_TYPE:
@@ -1052,7 +1052,7 @@ namespace Nilesoft
 					switch(Id[1])
 					{
 						case IDENT_TYPE_FILE:
-							_result = IO::PathType::File; 
+							_result = IO::PathType::File;
 							break;
 						case IDENT_TYPE_DIR:
 						case IDENT_TYPE_DIRECTORY:
@@ -1078,7 +1078,7 @@ namespace Nilesoft
 							break;
 						case IDENT_TYPE_VHD:
 							_result = IO::PathType::VHD;
-							break; 
+							break;
 						case IDENT_TYPE_REMOTE:
 							_result = IO::PathType::Remote;
 							break;
@@ -1307,7 +1307,7 @@ namespace Nilesoft
 						case IDENT_MODE:
 						{
 							_result = 0;
-							if(context && context->theme) 
+							if(context && context->theme)
 							{
 								if(Id[2] == IDENT_ZERO)
 									_result = context->theme->mode;
@@ -1342,7 +1342,7 @@ namespace Nilesoft
 								{
 									if(Id[4] == IDENT_DISABLE)
 										color = Id[2] == IDENT_BACK ? context->theme->back.color.nor_dis : context->theme->text.color.nor_dis;
-									else 
+									else
 										color = Id[2] == IDENT_BACK ? context->theme->back.color.nor : context->theme->text.color.nor;
 								}
 								else if(Id[3] == IDENT_SELECT)
@@ -1517,7 +1517,7 @@ namespace Nilesoft
 								_result = sel->Window.id;
 								break;
 							case IDENT_IS_CONTEXTMENUHANDLER:
-								_result = sel->loader.contextmenuhandler; 
+								_result = sel->loader.contextmenuhandler;
 								break;
 						}
 					}
@@ -1571,7 +1571,7 @@ namespace Nilesoft
 							_result = false;
 
 							string proc = eval_arg(0).to_string().trim().move();
-							
+
 							if(proc.empty())
 								break;
 
@@ -1600,7 +1600,7 @@ namespace Nilesoft
 
 					auto shellBrowser = context->Selections->ShellBrowser;
 
-					auto shelldisp = [&]()->bool 
+					auto shelldisp = [&]()->bool
 					{
 						return shellDisp.CreateInstance(CLSID_Shell, IID_IDispatch, CLSCTX_SERVER) && shellDisp;
 					};
@@ -1647,7 +1647,7 @@ namespace Nilesoft
 						}
 						::PostMessageW(howner, WM_COMMAND, command, 0);
 					};
-					
+
 					auto Sendkey = [=](int vk)
 					{
 						auto howner = context->wnd.owner;
@@ -1796,12 +1796,12 @@ namespace Nilesoft
 								SendCommand(SFVIDM_SELECT + 2);
 							else if(id == IDENT_ID_SELECT_NONE)
 								SendCommand(SFVIDM_SELECT + 3);
-							
+
 							/*
 							auto sel = context->Selections;
 							if(!sel->ShellBrowser)
 								break;
-							
+
 							COM_INITIALIZER co(true);
 
 							IComPtr<IShellView> sv;
@@ -1815,7 +1815,7 @@ namespace Nilesoft
 							HWND hwnd = 0;
 							sel->ShellBrowser->GetWindow(&hwnd);
 							//MB(Window::class_name(hwnd));
-						
+
 							SHELLEXECUTEINFO sei = { 0 };
 							sei.cbSize = sizeof(sei);
 							sei.nShow = SW_SHOWNORMAL;
@@ -1847,7 +1847,7 @@ namespace Nilesoft
 							IComPtr<IExecuteCommand> executeCommand;
 							IComPtr<IObjectWithSelection>objectWithSelection;
 							IComPtr<IInitializeCommand>initializeCommand;
-							
+
 							IComPtr<IShellItemArray> sia;
 							HRESULT hr = ::CoCreateInstance(CLSID_SelectAllExecute, NULL, CLSCTX_SERVER, IID_IExecuteCommand, executeCommand);
 							if(SUCCEEDED(hr))
@@ -1872,21 +1872,21 @@ namespace Nilesoft
 												MBF(L"%d, %x", cc, executeCommand->Execute());
 												//	Sleep(2000);
 											}
-										}	
-										
+										}
+
 									}
 								}
 							}*/
 						//	Guid iii = __uuidof(IShellWindows), i2= CLSID_ShellWindows;
 
 						//	MBF(L"%s\n%s", iii.to_string(2).c_str(), i2.to_string(2).c_str());
-							
+
 							//CLSID_ExecuteFolder
 							//Guid clsid(L"{11dbb47c-a525-400b-9e80-a54615a090c0}");
 
-							//R&efresh 
+							//R&efresh
 							//SendShellTabCommand(41504);
-							
+
 							/*
 							GetClassName(parent, name, _countof(name));
 							if(_wcsicmp(name, L"SHELLDLL_DefView") == 0)
@@ -1918,7 +1918,7 @@ namespace Nilesoft
 								SendShellTabCommand(28704);
 							if(id == ID_PASTE_SHORTCUT)
 								parent.SendMessage(WM_COMMAND, 28700);
-							
+
 	R&efresh 28931
 							if(id == ID_VIEW_TILES)
 								SendShellTabCommand(28748);
@@ -1940,18 +1940,18 @@ namespace Nilesoft
 							/*auto sel = context->Selections;
 							if(!sel->ShellBrowser)
 								break;
-							
+
 							IComPtr<IShellView> sv;
 							if(S_OK != sel->ShellBrowser->QueryActiveShellView(sv))
 								break;
-							
+
 							IComPtr<IFolderView2> fv;
 							if(S_OK != sv->QueryInterface(IID_IFolderView2, fv))
 								break;
 
 							int all_items = 0;
 							int sel_items = 0;
-							
+
 							fv->ItemCount(SVGIO_ALLVIEW, &all_items);
 							*/
 
@@ -1971,12 +1971,12 @@ namespace Nilesoft
 							{
 								DWORD count = 0;
 								items->GetCount(&count);
-								for(DWORD i = 0; i < count; i++) 
+								for(DWORD i = 0; i < count; i++)
 								{
 									IShellItem *_item;
 									if(SUCCEEDED(items->GetItemAt(i, &_item)))
 									{
-									
+
 										try
 										{
 											if(SUCCEEDED(fv->SelectItem(i, SVSI_FOCUSED | SVSI_SELECT | SVSI_DESELECTOTHERS | SVSI_ENSUREVISIBLE)))
@@ -2002,7 +2002,7 @@ namespace Nilesoft
 									if(S_OK == fv->Item(i, &pidl))
 									{
 										SVSIF state;
-										if(S_OK == fv->GetSelectionState(pidl, (DWORD *)&state)) 
+										if(S_OK == fv->GetSelectionState(pidl, (DWORD *)&state))
 										{
 											if(state == SVSI_DESELECT || state == SVSI_FOCUSED && state != SVSI_SELECT)
 											{
@@ -2274,7 +2274,7 @@ namespace Nilesoft
 			}
 
 			Object arg0;
-			
+
 			auto ev_quote = [&](const Object &o) ->string
 			{
 				string ret;
@@ -2320,7 +2320,7 @@ namespace Nilesoft
 				_result = sel->Sel(quote, sep, argc == 3 ? eval_arg(2).to_string().c_str() : nullptr).move();
 			}*/
 
-				
+
 			if(Id.length() == 1)
 			{
 				if(Array)
@@ -2574,7 +2574,7 @@ namespace Nilesoft
 						case IDENT_TITLE:
 							if(quote)
 								_result = sel->Quote(Path::Title(s)).move();
-							else 
+							else
 								_result = Path::Title(s).move();
 							break;
 						default:
@@ -2699,7 +2699,7 @@ namespace Nilesoft
 					auto warning = L"Unable to interpret 'sel.tofile' File path not found.";
 					string path;
 					sep = L"\n";
-					
+
 					if(argc == 3)
 						path = eval_arg(2).to_string();
 					else
@@ -2749,7 +2749,7 @@ namespace Nilesoft
 					{
 						Logger::Warning(warning);
 					}
-					
+
 					break;
 				}
 				case IDENT_TYPE:
@@ -2843,7 +2843,7 @@ namespace Nilesoft
 					}
 					_result = (int32_t)t;
 					break;
-				}	
+				}
 				case IDENT_MODE:
 					_result = (int8_t)sel->Mode;
 					break;
@@ -2917,7 +2917,7 @@ namespace Nilesoft
 						IComPtr<IShellItemArray> sia;
 						if(S_OK != fv->GetSelection(FALSE, sia))
 							break;
-						
+
 						DWORD sel_count = 0;
 						if(S_OK != sia->GetCount(&sel_count) || sel_count == 0)
 							break;
@@ -2939,7 +2939,7 @@ namespace Nilesoft
 							break;
 
 						/*string path = eval_arg(0).to_string().trim().move();
-						
+
 						if(path.empty())
 							break;
 
@@ -3038,7 +3038,7 @@ namespace Nilesoft
 				{
 					if(argc > 0)
 						_result = ::SetCurrentDirectoryW(arg0);
-					else 
+					else
 					{
 						auto sel = context->Selections;
 						if(sel != nullptr)
@@ -3143,7 +3143,7 @@ namespace Nilesoft
 					_result = Path::RemoveExtension(arg0);
 					break;
 				case IDENT_GETKNOWNFOLDER:
-					CLSID id; 
+					CLSID id;
 					if(S_OK == ::IIDFromString(arg0.c_str(), &id))
 						_result = Path::GetKnownFolder(id).move();
 					break;
@@ -3184,7 +3184,7 @@ namespace Nilesoft
 						}
 
 						string iconPath = argc > 3 ? eval_arg(3).to_string().c_str() : nullptr;
-						
+
 						if(iconPath.empty())
 							iconPath = target;
 
@@ -3193,7 +3193,7 @@ namespace Nilesoft
 						string wdir = argc > 4 ? eval_arg(4).to_string().c_str() : nullptr;
 						if(wdir.empty()/* && argc < 4*/)
 							wdir = Path::Parent(target);
-						
+
 						_result = Path::CreateLnk(arg0, eval_arg(1).to_string(),
 												  argc > 2 ? eval_arg(2).to_string().c_str() : nullptr,
 												  iconPath,
@@ -3203,7 +3203,7 @@ namespace Nilesoft
 												  argc > 6 ? eval_arg(6).to_string().c_str() : nullptr,
 												  argc > 7 ? (bool)eval_arg(7).to_number() : false);
 					}
-					else 
+					else
 					{
 						string target;
 						if(Path::GetLinkInfo(arg0, &target, nullptr) && !target.empty())
@@ -3338,7 +3338,7 @@ namespace Nilesoft
 					bool full_path = false;
 					uint8_t types = 0;
 					uint32_t flags = 0;
-					
+
 					if(argc > 1)
 					{
 						Object obj = eval_arg(1).move();
@@ -3494,7 +3494,7 @@ namespace Nilesoft
 					{
 						string wsl = L"/mnt/";
 						string path = Path::FixSeparator(arg0, L"/").move();
-						
+
 						if(path[1] == L':')
 						{
 							wsl += Char::ToLower(path[0]);
@@ -3605,7 +3605,7 @@ namespace Nilesoft
 
 			if(psfRelease)
 				psfRelease->Release();
-			
+
 
 			if(SUCCEEDED(hr) && (*ppv == NULL))
 			{
@@ -3750,7 +3750,7 @@ namespace Nilesoft
 						auto co = uint32_t(std::filesystem::copy_options::recursive | std::filesystem::copy_options::update_existing);
 						if(argc > 2)
 							co = eval_arg(2).to_number();
-						
+
 						std::error_code err;
 						std::filesystem::copy(arg0.c_str(), eval_arg(1).to_string().c_str(),
 											  (std::filesystem::copy_options)co, err);
@@ -3814,7 +3814,7 @@ namespace Nilesoft
 											if(::WriteFile(hFile, utf8.c_str(), (DWORD)utf8.size(), &lpNumberOfBytesWritten, nullptr))
 												_result = lpNumberOfBytesWritten;
 										}
-										
+
 										bool rename = eval_arg(2);
 										auto sel = context->Selections;
 										if(rename && sel && sel->ShellBrowser)
@@ -4067,11 +4067,11 @@ namespace Nilesoft
 								}
 							}
 						}
-						else 
+						else
 						{
 							fmt = L"y-m-d H.M.S";
 						}
-						
+
 						switch(Id[2])
 						{
 							case IDENT_IO_DATETIME_CREATED:
@@ -4094,7 +4094,7 @@ namespace Nilesoft
 					case IDENT_META:
 					{
 						string path = eval_arg(0).to_string().trim().move();
-						
+
 						if(path.empty())
 							break;
 
@@ -4428,7 +4428,7 @@ namespace Nilesoft
 								break;
 							case IDENT_NAME:
 							{
-								
+
 								auto ret = ::GetLocaleInfoW(locid,
 															LOCALE_SISO639LANGNAME,
 															szISOLang,
@@ -4445,11 +4445,11 @@ namespace Nilesoft
 													   sizeof(szISOLang) / sizeof(wchar_t));
 								if(ret)
 									_result = szISOLang;
-								break; 
+								break;
 							}
 						}
 					}
-					
+
 					/*wchar_t szISOLang[10] = { 0 };
 					wchar_t szISOCountry[10] = { 0 };
 					auto lid = ::GetThreadUILanguage();
@@ -4472,7 +4472,7 @@ namespace Nilesoft
 						}
 					}
 					*/
-					
+
 					break;
 				}
 				case IDENT_DATETIME:
@@ -4644,7 +4644,7 @@ namespace Nilesoft
 
 			Object arg0;
 			string str;
-			
+
 			size_t a = 0;
 
 			if(ischild && Parent)
@@ -4661,7 +4661,7 @@ namespace Nilesoft
 				if(id != IDENT_RES && id != IDENT_GUID)
 					str = arg0.to_string().move();
 			}
-			
+
 			bool eval_cheld = true;
 
 			switch(id)
@@ -4684,11 +4684,11 @@ namespace Nilesoft
 					break;
 				case IDENT_CAPITALIZE:
 					_result = str.capitalize().move();
-					
+
 					break;
 				case IDENT_HASH:
 				{
-					//string fmt; 
+					//string fmt;
 					//fmt.format(L"%0.8X", MenuItemInfo::hashing(str));
 					//_result = fmt.move();
 					_result = MenuItemInfo::hashing(str);
@@ -4871,7 +4871,7 @@ namespace Nilesoft
 									break;
 								}
 							}
-							else 
+							else
 							{
 								resid = string::ParseMUILocation(str);
 							}
@@ -5061,16 +5061,16 @@ namespace Nilesoft
 							it = item->Path;
 							break;
 						}
-						case IDENT_EXTS: 
+						case IDENT_EXTS:
 						{
 							if(!item->IsFile()) continue;
 							it = item->Extension;
 							break;
 						}
-						case IDENT_DIRS: 
+						case IDENT_DIRS:
 						case IDENT_DIRECTORIES:
 							if(!item->IsDirectory()) continue;
-							it = item->Path; 
+							it = item->Path;
 							break;
 						case IDENT_DRIVERS:
 						case IDENT_ROOTS:
@@ -5184,7 +5184,7 @@ namespace Nilesoft
 			string sub_key = eval_arg(0).to_string().trim().move();
 			HKEY root_key = nullptr;
 
-			struct regkey_t 
+			struct regkey_t
 			{
 				string name[2];
 				HKEY value = nullptr;
@@ -5303,7 +5303,7 @@ namespace Nilesoft
 					}
 
 					_result = false;
-					
+
 					string name;
 					Object value;
 
@@ -5356,7 +5356,7 @@ namespace Nilesoft
 								retCode = ::RegEnumKeyExW(key, i, name.data(), &name_length, nullptr, nullptr, nullptr, nullptr);
 							else
 								retCode = ::RegEnumValueW(key, i, name.data(), &name_length, nullptr, nullptr, nullptr, nullptr);
-							
+
 							if(retCode == ERROR_SUCCESS)
 								list.push_back(name.release(name_length).move());
 						}
@@ -5444,7 +5444,7 @@ namespace Nilesoft
 								}
 							}
 						}
-						
+
 						if(!icon_file.empty())
 						{
 							SHFOLDERCUSTOMSETTINGS fcs = { sizeof(fcs) };
@@ -5545,7 +5545,7 @@ namespace Nilesoft
 				}
 			}
 		}
-		
+
 		Object FuncExpression::eval_key()
 		{
 			auto keys = context->Keyboard;
@@ -5663,7 +5663,7 @@ namespace Nilesoft
 			else if(Id[1] == IDENT_BOX)
 			{
 				Object color;
-				
+
 				CHOOSECOLORW cc = { sizeof(cc) };
 				cc.hwndOwner = context->wnd.active;
 
@@ -5706,10 +5706,10 @@ namespace Nilesoft
 				Object color;
 				if(argc == 2)
 				{
-					color = Color(eval_arg(0).to_color(), 
+					color = Color(eval_arg(0).to_color(),
 								  eval_arg(1).to_number<uint8_t>()).to_ABGR();
 				}
-				else 
+				else
 				{
 					color = Color(eval_arg(0).to_number<uint8_t>(),
 								  eval_arg(1).to_number<uint8_t>(),
@@ -5803,7 +5803,7 @@ namespace Nilesoft
 				Object color = Color(ImmersiveColor::GetColorByColorType(7)).to_ABGR();
 				return color.inner(PrimitiveType::Color).move();
 			}
-			
+
 			for(auto &t : ColorTable)
 			{
 				auto id = std::get<0>(t);

@@ -191,8 +191,8 @@ internal sealed class HarnessRunner
                 MenuEntry? child;
                 if (options.Mode == "scroll")
                 {
-                    if (!ValidScrollAppearance(submenuAppearance, menu) || childButtons is null ||
-                        childButtons.Count != submenuAppearance!.Rows.Count)
+                    if (submenuAppearance is null || !ValidScrollAppearance(submenuAppearance, menu) || childButtons is null ||
+                        !ValidScrollHitTargets(submenuAppearance, menu, childButtons))
                     { Finish(false, "Scrollable submenu image did not expose a bounded visible subset of fixture rows."); return; }
                     child = submenuAppearance.Rows.Select(row => menu.Children.FirstOrDefault(value => value.Id == row.EntryId))
                         .FirstOrDefault(value => value is not null && childButtons.ContainsKey(value.Id));
@@ -309,6 +309,32 @@ internal sealed class HarnessRunner
                 return false;
         }
         return rowIds.Count == value.Rows.Count;
+    }
+
+    private static bool ValidScrollHitTargets(MenuAppearance appearance, MenuEntry menu,
+        Dictionary<string, System.Windows.Controls.Button> buttons)
+    {
+        // The preview preserves semantic rows outside the image as separate
+        // controls. Only Canvas children are native image hit targets.
+        if (buttons.Count != menu.Children.Count || menu.Children.Any(entry => !buttons.ContainsKey(entry.Id)))
+            return false;
+        var native = buttons.Where(pair => pair.Value.Parent is System.Windows.Controls.Canvas)
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal);
+        if (!native.Keys.ToHashSet(StringComparer.Ordinal).SetEquals(appearance.Rows.Select(row => row.EntryId)))
+            return false;
+        double scale = 96.0 / appearance.Dpi;
+        static bool Matches(double actual, double expected) => double.IsFinite(actual) &&
+            double.IsFinite(expected) && Math.Abs(actual - expected) <= 0.01;
+        foreach (var row in appearance.Rows)
+        {
+            var button = native[row.EntryId];
+            if (!Matches(System.Windows.Controls.Canvas.GetLeft(button), row.X * scale) ||
+                !Matches(System.Windows.Controls.Canvas.GetTop(button), row.Y * scale) ||
+                !Matches(button.Width, row.Width * scale) ||
+                !Matches(button.Height, row.Height * scale))
+                return false;
+        }
+        return true;
     }
 
     private void Finish(bool success, string message)

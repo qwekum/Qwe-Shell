@@ -1,18 +1,23 @@
 # Build and run Shell Studio
 
+This stack includes the ten original Studio review fixes and the additional
+qualification work; PR2's cloud fixes remain separate. The [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies)
+distinguishes its changes from the combined candidate and from PR2's cloud lane.
+The candidate record's historical package results do not qualify this branch.
+
 These instructions target Windows 11 x64. Run repository commands from the
 repository root in PowerShell. Use a checkout containing `src/studio`; the
 current local implementation must be committed and made available before a
 fresh remote clone can reproduce it.
 
-The current source has passed the [recorded local checks](local-verification.md)
-and compiled through the self-contained Studio and ToolHost publications. The
-package synchronization step stopped before replacing the Explorer-loaded
-`bin\shell.dll`, so the repository's existing application/MSI package predates
-the 2026-09-12 source-backed editing and automatic semantic-capture changes.
-Live Explorer, current-source installer lifecycle, system-operation parity, and
-human acceptance are still pending. Use a disposable Windows 11 x64 VM for
-that qualification work.
+The combined 1.9.20 preparation has built an unsigned Release/x64 package in an
+isolated worktree and passed independent local checks. See the
+[current candidate record](release-candidate-1.9.20.md) for source/package
+identity, exact-package Sandbox results and remaining failures. The
+[older local record](local-verification.md) describes its own historical source;
+it does not qualify this candidate. Full Explorer, installer, donor and human
+acceptance remain incomplete. Persistent reboot, upgrade and recovery scenarios
+require a disposable Windows 11 x64 VM.
 
 ## 1. Install build prerequisites
 
@@ -198,8 +203,11 @@ the [existing-Shell decision and backup procedure](using-shell-studio.md#do-i-ha
 before changing a registration.
 
 1. In the disposable Windows 11 x64 test VM, preserve the existing Shell
-   configuration and take a VM snapshot. Copy the built MSI to the VM and
-   verify its SHA-256 against [local verification](local-verification.md).
+   configuration and take a VM snapshot. Before transferring the newly built
+   MSI, record `Get-FileHash .\bin\setup-x64.msi -Algorithm SHA256` on the build
+   machine. Copy that exact MSI to the VM and compare its SHA-256 with the
+   recorded value. Historical verification hashes apply only to their identified
+   packages.
 2. For the safest current route, remove a normal Shell installation only after
    its configuration/imports/assets are backed up. Then double-click
    `setup-x64.msi`, complete the interactive installer, and accept its elevation
@@ -267,28 +275,64 @@ binaries from another build.
 
 ## 6. Run the local verification suites
 
-After a complete package build, use the packaged language DLL explicitly:
+After a complete package build, build the capture serializer fixture from the
+Visual Studio x64 developer shell with the v145 tools. The UI suite passes this
+native output through the managed capture reader, including ordinary entries
+whose only evidence is branch completeness:
+
+```powershell
+msbuild .\src\studio\native\tests\StudioCaptureSerializationTests.vcxproj /m:1 /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /v:minimal
+```
+
+Use the packaged language DLL and the exact fixture executable explicitly:
 
 ```powershell
 $languageDll = (Resolve-Path .\bin\studio\ShellStudio.Language.dll).Path
+$previewWorker = (Resolve-Path .\bin\studio\ShellStudio.PreviewWorker.exe).Path
+$captureFixture = (Resolve-Path .\src\studio\native\tests\bin\Release\x64\StudioCaptureSerializationTests.exe).Path
 
-dotnet run --project .\src\studio\ShellStudio.Tests\ShellStudio.Tests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll" -- --native
-dotnet run --project .\src\studio\ShellStudio.UiTests\ShellStudio.UiTests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll"
+dotnet run --project .\src\studio\ShellStudio.Tests\ShellStudio.Tests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll" "-p:PreviewWorkerPath=$previewWorker" -- --native
+dotnet run --project .\src\studio\ShellStudio.UiTests\ShellStudio.UiTests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll" "-p:NativeCaptureFixturePath=$captureFixture"
 dotnet run --project .\src\studio\ShellStudio.Tools\Tests\ShellStudio.Tools.Tests.csproj -c Release --no-launch-profile
 dotnet run --project .\src\studio\ShellStudio.NativeTests\ShellStudio.NativeTests.csproj -c Release --no-launch-profile
+dotnet run --project .\src\studio\ShellStudio.PreviewWorker.ClientTests\ShellStudio.PreviewWorker.ClientTests.csproj -c Release --no-launch-profile
 ```
 
-See the [verification record](local-verification.md) for the latest counts and
-the [interface design record](design-system.md) for the UI review gates.
+The [candidate record](release-candidate-1.9.20.md) reports counts for the
+combined local overlay. The qualification draft's PR description reports its
+branch-specific checks separately; its [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies)
+includes the Studio fixes and leaves PR2 separate. See
+the [historical verification record](local-verification.md) for its earlier
+revision, and the [interface design record](design-system.md) for UI review gates.
 Run these sequentially: several projects share build
 outputs. The WPF suite uses an offscreen window; the native resource suite only
 changes its own temporary PE copy.
+
+Core tests fail before build when either explicit native prerequisite is absent;
+UI tests fail before build when the capture serializer fixture is absent.
+Restore each managed project sequentially with `--disable-parallel -m:1
+-p:BuildInParallel=false`, then run with `--no-restore`; retain NuGet audit and
+report any vulnerability-feed failure. Lifecycle fixtures synchronize on bounded
+worker readiness and record process identity before asserting cleanup.
+
+The runtime submenu regression compiles the production `ContextMenu` constructor
+and its dependencies. From the same x64 developer shell, build and run it
+sequentially:
+
+```powershell
+msbuild .\src\studio\native\tests\ContextMenuConstructionTests.vcxproj /m:1 /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v145 /v:minimal
+.\src\studio\native\bin\Release\x64\tests\ContextMenuConstructionTests.exe
+```
+
+It checks dynamic-only construction, capture-owned construction, nested rows,
+settings and disabled-parent gates, invalid null menus, bounds and command nonexecution. Serialization
+fixtures with synthetic children cannot replace this runtime regression.
 
 To retain offscreen UI images, use the WPF command with these application
 arguments:
 
 ```powershell
-dotnet run --project .\src\studio\ShellStudio.UiTests\ShellStudio.UiTests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll" -- --render-artifacts .\src\studio\artifacts\checks\ui
+dotnet run --project .\src\studio\ShellStudio.UiTests\ShellStudio.UiTests.csproj -c Release --no-launch-profile "-p:NativeLanguagePath=$languageDll" "-p:NativeCaptureFixturePath=$captureFixture" -- --render-artifacts .\src\studio\artifacts\checks\ui
 ```
 
 ## Troubleshooting

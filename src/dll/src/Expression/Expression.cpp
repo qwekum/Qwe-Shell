@@ -61,7 +61,7 @@ namespace Nilesoft
 		{
 			return Value;
 		}
-		
+
 		Object StatementExpression::Eval(Context *context)
 		{
 			Object _result;
@@ -70,7 +70,7 @@ namespace Nilesoft
 				_result.type(PrimitiveType::String);
 			else
 			{
-				try 
+				try
 				{
 					if(!HasReturn)
 					{
@@ -104,7 +104,7 @@ namespace Nilesoft
 						_result = str.move();
 					}
 				}
-				catch(...) 
+				catch(...)
 				{
 				}
 			}

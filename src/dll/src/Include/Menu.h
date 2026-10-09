@@ -123,7 +123,7 @@ namespace Nilesoft
 						COLOR color;
 						auto_expr align;
 					} text;
-					
+
 					COLOR back;
 					COLOR border;
 					auto_expr opacity;
@@ -215,7 +215,7 @@ namespace Nilesoft
 				Privileges value = Privileges::None;
 				bool inherit = false;
 			} admin;*/
-		
+
 			auto_expr window;
 			auto_expr directory;
 			auto_expr verb;

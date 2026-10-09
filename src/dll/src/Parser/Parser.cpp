@@ -265,7 +265,7 @@ namespace Nilesoft
 
 			_imports.emplace_back(new Lexer);
 			l = _imports.front().get();
-			
+
 			if(!l->load_File(m_path.c_str()) || l->length < 5)
 			{
 				if(HasError())
@@ -585,7 +585,7 @@ namespace Nilesoft
 
 			auto single = (l->tok == L'/' && l->peek == L'/');	// start single-line comment
 			auto multi = (l->tok == L'/' && l->peek == L'*');	// start multi-line comment
-					
+
 			if(single)
 			{
 				if(!singleLineComment) return false;
@@ -872,7 +872,7 @@ namespace Nilesoft
 
 				const auto source_start = l->index;
 				auto type = parse_ident(false);
-				
+
 				if(type == CONFIG_IMPORT)
 				{
 					auto ret = load_import(l->line, l->column, true, false, source_start);
@@ -943,7 +943,7 @@ namespace Nilesoft
 			if(!menu->is_separator())
 			{
 				error_if(menu->properties <= 0, TokenError::PropertyExpected, l->column - 1);
-				
+
 				if(!menu->title && !menu->image.defined)
 					error(TokenError::PropertyTitleOrImageExpected, col_after_open_paren);
 
@@ -1031,7 +1031,7 @@ namespace Nilesoft
 				return;
 
 			auto has_bracket = eat().l->next_is(L'{');
-			
+
 			if(!has_bracket && !l->is_assign())
 			{
 				if(l->eof && imported)
@@ -1089,7 +1089,7 @@ namespace Nilesoft
 				_ident = id;
 			else if(!parse_ident(_ident, true))
 				return;
-			
+
 			skip();
 
 			col = l->column;
@@ -1111,7 +1111,7 @@ namespace Nilesoft
 				l->next();
 				has_bracket = true;
 			}
-			
+
 			while(true)
 			{
 				skip();
@@ -1135,10 +1135,10 @@ namespace Nilesoft
 
 					if(l->eof && imported)
 						break;
-					
+
 					goto error_undefined;
 				}
-				
+
 				if(ident[0] == IDENT_IMPORT)
 				{
 					if(ident.length() > 1)
@@ -1443,7 +1443,7 @@ namespace Nilesoft
 		{
 			prevCol = l->column - 1;
 			Hash h;
-			
+
 			auto isq = l->is_quote();
 			wchar_t c = 0;
 
@@ -1452,7 +1452,7 @@ namespace Nilesoft
 				return !std::iswpunct(c) and !std::iswcntrl(c) and !iswblank(c);
 			};
 
-			if(isq) 
+			if(isq)
 			{
 				bool last_punct = false;
 				auto q = l->tok;
@@ -1551,7 +1551,7 @@ namespace Nilesoft
 
 			if(l->tok != L'@')
 				return false;
-			
+
 			l->next(); // skip @
 			skip();
 
@@ -1567,7 +1567,7 @@ namespace Nilesoft
 					ids.push_back(ident);
 				}
 				skip();
-				if(l->next_is(L',')) 
+				if(l->next_is(L','))
 				{
 					skip();
 					if(l->tok == L'@')
@@ -1598,7 +1598,7 @@ namespace Nilesoft
 			skip();
 			if(source_start == static_cast<std::size_t>(-1)) source_start = l ? l->index : 0;
 			StudioNodeGuard studio_node(*this, "import", "import", source_start);
-			
+
 			if(parse_import)
 			{
 				if(!l->skip_import())
@@ -1701,7 +1701,7 @@ namespace Nilesoft
 
 			if(path.empty())
 				return 0;
-			
+
 			if(path.length() > 2)
 			{
 				if(!((path[1] == L':' && path[2] == L'\\') || (path[0] == L'\\' && path[1] == L'\\')))
@@ -1711,7 +1711,7 @@ namespace Nilesoft
 			path = Path::FixSeparator(path).move();
 
 			auto hash = path.hash();
-			
+
 			if(hash)
 			{
 				for(auto &h : m_imports)
@@ -1786,7 +1786,7 @@ namespace Nilesoft
 				skip();
 				preview_query_boundary();
 				prevCol = l->column;
-				
+
 				if(l->peek_ident(IDENT_THEME))
 				{
 					parse_theme();
@@ -1905,7 +1905,7 @@ namespace Nilesoft
 
 				if(_imports.empty() || (l->length == 0 && !m_error))
 					return true;
-			
+
 				context.Runtime = false;
 
 				auto cache = context.Cache;

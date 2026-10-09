@@ -232,12 +232,17 @@ public sealed class OperationService
         return plan;
     }
 
+    internal static string ResolveFieldDefault(OperationRequest request, OperationField field)
+        => request.Id.Equals("views.apply", StringComparison.OrdinalIgnoreCase) && field.Name == "iconSize"
+            ? DirectRawView(GetValue(request, "viewMode", "Details")).IconSize.ToString(CultureInfo.InvariantCulture)
+            : field.DefaultValue;
+
     private static OperationRequest NormalizeRequest(OperationRequest request, OperationDescriptor descriptor, List<Diagnostic> diagnostics)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var field in descriptor.Fields)
         {
-            var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : field.DefaultValue;
+            var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : ResolveFieldDefault(request, field);
             values[field.Name] = IsFeatureField(field.Name)
                 ? NormalizeFeatureChoice(field.Name, supplied, diagnostics)
                 : supplied;
@@ -517,12 +522,15 @@ public sealed class OperationService
         var recursive = GetBool(request, "recursive");
         var dirs = OperationHelpers.EnumerateDirectories(_environment, root, recursive, diagnostics, cancellationToken);
         var type = GetValue(request, "folderType", "Generic");
+        var forceDelete = remove && GetBool(request, "forceDelete");
         foreach (var dir in dirs)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var ini = Path.Combine(dir, "desktop.ini");
-            var current = _environment.Files.FileExists(ini) ? TryReadDesktopIni(ini, diagnostics)?.Get("ViewState", "FolderType") : null;
-            changes.Add(remove
+            var exists = _environment.Files.FileExists(ini);
+            var current = exists ? TryReadDesktopIni(ini, diagnostics)?.Get("ViewState", "FolderType") : null;
+            changes.Add(forceDelete && exists ? $"Delete entire {ini}, including unrelated settings."
+                : remove
                 ? (current is null ? $"Leave {ini} unchanged (FolderType is absent)." : $"Remove ViewState/FolderType from {ini}.")
                 : $"Set ViewState/FolderType={type} in {ini} (current: {current ?? "<absent>"}).");
             if (changes.Count >= _environment.Options.MaxItems) break;
@@ -1028,7 +1036,7 @@ public sealed class OperationService
             else
                 key = $@"Software\Microsoft\Windows\CurrentVersion\Explorer\FolderTypes\{folderGuid}\TopViews";
         }
-        changes.Add($"Back up and update HKCU\\{key} with view mode {GetValue(request, "viewMode", "Details")}, icon size {GetInt(request, "iconSize", 32)}, columns '{GetValue(request, "columns")}', sort '{GetValue(request, "sortProperty", "System.ItemNameDisplay")}', and group '{GetValue(request, "groupProperty")}'.");
+        changes.Add($"Back up and update HKCU\\{key} with view mode {GetValue(request, "viewMode", "Details")}, icon size {GetInt(request, "iconSize", DirectRawView(GetValue(request, "viewMode", "Details")).IconSize)}, columns '{GetValue(request, "columns")}', sort '{GetValue(request, "sortProperty", "System.ItemNameDisplay")}', and group '{GetValue(request, "groupProperty")}'.");
         if (scope.Equals("Virtual", StringComparison.OrdinalIgnoreCase) || scope.Equals("Dialogs", StringComparison.OrdinalIgnoreCase))
             changes.Add("Propagate the reviewed column definition to the corresponding virtual/file-dialog bag.");
         diagnostics.Add(new Diagnostic("TOOL-VIEWS-RESTART", "Explorer may need a reviewed refresh before the view is visible.", Severity: "warning"));
@@ -1120,12 +1128,17 @@ public sealed class OperationService
         }
         ValidateImportedKeys(settings, diagnostics);
         var options = settings.Sections["Options"];
+        if (ReadIniBool(options, "Backup", false, diagnostics, "Options"))
+            diagnostics.Add(new Diagnostic("TOOL-VIEWS-INI-BACKUP", "Options/Backup requests WinSetView's full registry export, which this importer does not create. Its recovery journal covers only this operation's changes.",
+                File: path, NodeId: "Options/Backup", Remedy: "Run the typed Back up Explorer views operation with a reviewed destination, then set Backup=0 in the INI before importing."));
         var applyOptions = ReadIniBool(options, "ApplyOptions", false, diagnostics, "Options");
         var applyViews = ReadIniBool(options, "ApplyViews", true, diagnostics, "Options");
         var reset = ReadIniBool(options, "Reset", false, diagnostics, "Options");
-        if (reset) changes.Add("Reset the imported Explorer view state through the journaled registry path.");
+        if (reset) PreviewViewsReset(OperationRequest.Create("views.reset", [new("scope", "All")]), changes, diagnostics);
         if (applyOptions) changes.Add("Apply the supported [Options] settings through the typed Explorer options backend.");
-        if (applyViews)
+        if (reset)
+            changes.Add("Skip all folder view sections, global view defaults, This PC and virtual-folder views, and virtual-column replication because [Options]Reset is enabled.");
+        else if (applyViews)
         {
             var sections = settings.Sections.Keys
                 .Where(section => !section.Equals("Options", StringComparison.OrdinalIgnoreCase))
@@ -1254,8 +1267,11 @@ public sealed class OperationService
             {
                 doc.Set("ViewState", "FolderType", type);
                 _environment.Files.WriteAllBytes(ini, doc.ToBytes());
-                var attributes = _environment.Files.GetAttributes(ini);
-                _environment.Files.SetAttributes(ini, attributes | FileAttributes.Hidden | FileAttributes.System);
+                if (!existed)
+                {
+                    var attributes = _environment.Files.GetAttributes(ini);
+                    _environment.Files.SetAttributes(ini, attributes | FileAttributes.Hidden | FileAttributes.System);
+                }
             }
             journal.RecordFile(ini, _environment.Files.FileExists(ini) ? _environment.Files.GetSha256(ini) : null);
             progress?.Report(new OperationProgress(i + 1, dirs.Count, remove ? "Removed folder type" : "Set folder type", dir));
@@ -1695,13 +1711,14 @@ public sealed class OperationService
     private void WriteViewValues(OperationRequest request, string key)
     {
         var viewMode = GetValue(request, "viewMode", "Details");
+        var (logicalViewMode, mode, defaultIconSize) = DirectRawView(viewMode);
         var groupProperty = NormalizeShellProperty(GetValue(request, "groupProperty"));
         var sortProperty = NormalizeShellProperty(GetValue(request, "sortProperty", "System.ItemNameDisplay"));
         var sortDirection = GetValue(request, "sortDirection", "Ascending").Equals("Descending", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
         var groupDirection = GetValue(request, "groupDirection", "Ascending").Equals("Ascending", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
-        _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", ViewModeId(viewMode), RegistryValueKind.DWord);
-        _environment.Registry.SetValue("HKCU", key, "IconSize", GetInt(request, "iconSize", 32), RegistryValueKind.DWord);
-        _environment.Registry.SetValue("HKCU", key, "Mode", ShellModeId(viewMode), RegistryValueKind.DWord);
+        _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
+        _environment.Registry.SetValue("HKCU", key, "IconSize", GetInt(request, "iconSize", defaultIconSize), RegistryValueKind.DWord);
+        _environment.Registry.SetValue("HKCU", key, "Mode", mode, RegistryValueKind.DWord);
         var flags = 0x43000000 | (GetBool(request, "autoArrange") ? 1 : 0) | (GetBool(request, "alignToGrid") ? 4 : 0);
         _environment.Registry.SetValue("HKCU", key, "FFlags", flags, RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "GroupView", string.IsNullOrWhiteSpace(groupProperty) ? 0 : 1, RegistryValueKind.DWord);
@@ -1857,9 +1874,12 @@ public sealed class OperationService
     {
         var trimmed = value.Trim();
         if (trimmed.Length == 0) return string.Empty;
-        if (trimmed.StartsWith("System.", StringComparison.OrdinalIgnoreCase)) return trimmed;
         if (trimmed.StartsWith("prop:", StringComparison.OrdinalIgnoreCase)) trimmed = trimmed[5..];
-        return "System." + trimmed;
+        if (!trimmed.StartsWith("System.", StringComparison.OrdinalIgnoreCase)) trimmed = "System." + trimmed;
+        // WinSetView AdjustPrefix preserves third-party Icaros properties and
+        // the leading-dot escape for property names outside the System namespace.
+        return trimmed.Replace("System.Icaros.", "Icaros.", StringComparison.OrdinalIgnoreCase)
+            .Replace("System..", "", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string NormalizeImportedSort(string value)
@@ -1870,9 +1890,8 @@ public sealed class OperationService
             var sign = part.StartsWith('-') ? '-' : '+';
             var property = part.TrimStart('+', '-').Trim();
             if (property.StartsWith("prop:", StringComparison.OrdinalIgnoreCase)) property = property[5..];
-            if (property.StartsWith("System.", StringComparison.OrdinalIgnoreCase)) property = property[7..];
-            return $"{sign}System.{property}";
-        }).Where(part => !part.EndsWith("System.", StringComparison.OrdinalIgnoreCase)).ToArray();
+            return property.Length == 0 ? string.Empty : sign + NormalizeImportedProperty(property);
+        }).Where(part => part.Length > 1).ToArray();
         return normalized.Length == 0 ? string.Empty : "prop:" + string.Join(';', normalized);
     }
 
@@ -1889,16 +1908,16 @@ public sealed class OperationService
             var width = parts[1].Trim();
             var property = parts[2].Trim();
             if (property.StartsWith("prop:", StringComparison.OrdinalIgnoreCase)) property = property[5..];
-            if (searchOnly && !sectionName.Contains("Search", StringComparison.OrdinalIgnoreCase)
-                && pathProperties.Contains(property) && !property.Equals("Search.Rank", StringComparison.OrdinalIgnoreCase))
+            if (property.StartsWith("System.", StringComparison.OrdinalIgnoreCase)) property = property[7..];
+            if (!sectionName.Contains("Search", StringComparison.OrdinalIgnoreCase)
+                && ((searchOnly && pathProperties.Contains(property)) || property.Equals("Search.Rank", StringComparison.OrdinalIgnoreCase)))
             {
                 if (!sectionName.Contains("Downloads", StringComparison.OrdinalIgnoreCase)) continue;
                 show = "1";
             }
-            if (property.StartsWith("System.", StringComparison.OrdinalIgnoreCase)) property = property[7..];
             if (property.Length == 0) continue;
             var widthText = width.Length == 0 ? string.Empty : $"({width})";
-            entries.Add($"{show}{widthText}System.{property}");
+            entries.Add($"{show}{widthText}{NormalizeImportedProperty(property)}");
         }
         return "prop:" + string.Join(';', entries);
     }
@@ -2292,9 +2311,12 @@ public sealed class OperationService
         var settings = WinSetViewIniParser.Read(_environment.Files, path);
         if (!settings.Sections.ContainsKey("Options")) throw new InvalidDataException("WinSetView settings must contain an [Options] section.");
         var options = settings.Sections["Options"];
+        if (ReadIniBool(options, "Backup", false, [], "Options"))
+            throw new InvalidDataException("Options/Backup requires a separate typed views.backup operation with a reviewed destination. Set Backup=0 before importing.");
         _environment.DemandRegistryMutation("HKCU");
 
-        if (ReadIniBool(options, "Reset", false, [], "Options"))
+        var reset = ReadIniBool(options, "Reset", false, [], "Options");
+        if (reset)
             ExecuteViewsReset(OperationRequest.Create("views.reset", [new("scope", "All")]), journal, token);
 
         var applyOptions = ReadIniBool(options, "ApplyOptions", false, [], "Options");
@@ -2305,6 +2327,10 @@ public sealed class OperationService
             // ApplyViews phase below and must remain untouched when that phase
             // is disabled.
             ExecuteViewsOptions(BuildImportedOptionsRequest(settings, []), journal, token, applyViewDefaults: false);
+
+        // The donor exits after Reset, following its optional ApplyOptions
+        // phase. Do not repopulate views or replicate virtual columns afterward.
+        if (reset) return;
 
         if (applyViews)
         {
@@ -2686,9 +2712,11 @@ public sealed class OperationService
         if (scope.Equals("All", StringComparison.OrdinalIgnoreCase)) yield return ("HKCU", @"Software\Microsoft\Windows\Shell\Bags");
     }
 
-    private static int ViewModeId(string value) => value.ToLowerInvariant() switch { "smallicons" => 1, "list" => 3, "details" => 4, "tiles" => 6, "content" => 7, _ => 2 };
-
-    private static int ShellModeId(string value) => value.ToLowerInvariant() switch { "smallicons" => 4, "list" => 6, "details" => 3, "tiles" => 8, "content" => 1, _ => 1 };
+    private static (int LogicalViewMode, int Mode, int IconSize) DirectRawView(string value)
+        => ImportedRawView(value.ToLowerInvariant() switch
+        {
+            "details" => 1, "list" => 2, "tiles" => 3, "content" => 4, "smallicons" => 5, _ => 6
+        });
 
     private static string NormalizeShellProperty(string value)
     {

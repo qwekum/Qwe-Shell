@@ -116,7 +116,7 @@ function Write-TextFixture {
 
     $target = [IO.Path]::GetFullPath((Join-Path $Root $RelativePath))
     Assert-UnderRoot -Root $Root -Target $target -Description "Fixture path"
-    $parent = Split-Path -LiteralPath $target -Parent
+    $parent = [IO.Path]::GetDirectoryName($target)
     if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
     }
@@ -226,6 +226,7 @@ function Start-BoundedHiddenProcess {
         if ($_ -match '[\s"]') { '"' + $_.Replace('"', '\"') + '"' } else { $_ }
     })
     $process = Start-Process -FilePath $FilePath -ArgumentList $quotedArguments -WindowStyle Hidden -PassThru
+    $null = $process.Handle
     $receipt = [ordered]@{
         Description = $Description
         FilePath = $FilePath
@@ -349,7 +350,7 @@ try {
         Assert-UnderRoot -Root $installPath -Target $target -Description 'Move source path'
         Assert-UnderRoot -Root $fixtureDirectory -Target $destination -Description 'Move destination path'
         if (Test-Path -LiteralPath $destination) { throw "Damage fixture target already exists: $destination" }
-        $destinationParent = Split-Path -LiteralPath $destination -Parent
+        $destinationParent = [IO.Path]::GetDirectoryName($destination)
         New-Item -ItemType Directory -Force -Path $destinationParent | Out-Null
         Move-Item -LiteralPath $target -Destination $destination
         if (Test-Path -LiteralPath $target) { throw "Damaged binary was not moved: $target" }
@@ -419,6 +420,7 @@ catch {
         Type = $_.Exception.GetType().FullName
         Message = $_.Exception.Message
         Detail = $_.Exception.ToString()
+        ScriptStackTrace = $_.ScriptStackTrace
     }
 }
 finally {

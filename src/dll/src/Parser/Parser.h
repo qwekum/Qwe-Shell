@@ -15,7 +15,7 @@ namespace Nilesoft
 	{
 		using namespace Windows;
 		using namespace Drawing;
-		
+
 		class Parser
 		{
 			static constexpr auto error_format0 = L"error %s";
@@ -158,7 +158,7 @@ namespace Nilesoft
 			Expression *parse_property__();
 			bool parse_property_ident(Ident &id, bool singleLineComment = true);
 
-			
+
 			bool parse_ident(Ident &id, bool allow_dash = false);
 			uint32_t parse_ident(bool multiple = true);
 
@@ -321,7 +321,7 @@ namespace Nilesoft
 							if(id == ident[0])
 								return argc == arg;
 						}
-						else 
+						else
 						{
 							for(auto &func : idents)
 							{

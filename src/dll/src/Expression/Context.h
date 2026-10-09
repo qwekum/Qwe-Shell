@@ -153,7 +153,7 @@ namespace Nilesoft
 			Application *Application{};
 			Shell::Selections *Selections{};
 
-			struct 
+			struct
 			{
 				Scope *global{};
 				Scope *local{};
@@ -178,7 +178,7 @@ namespace Nilesoft
 				bool is_primary_monitor = true;
 			}helper;
 
-			struct 
+			struct
 			{
 				HWND owner{};
 				HWND active{};
@@ -205,7 +205,7 @@ namespace Nilesoft
 			template<typename T = uint32_t>
 			T eval_number(Expression *e, T default_value)
 			{
-				if(e) 
+				if(e)
 				{
 					Object obj = Eval(e).move();
 					if(obj.not_default())

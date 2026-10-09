@@ -976,7 +976,7 @@ namespace Nilesoft
 			{
 				if(!construction_consume_item())
 					break;
-				try 
+				try
 				{
 					StudioCaptureTrace trace;
 					StudioCaptureEvidence evidence;
@@ -1017,7 +1017,7 @@ namespace Nilesoft
 						types_match ? L"accepted" : L"rejected");
 					if(!types_match)
 						continue;
-					
+
 					/*
 					if(Selected.Window.id >= WINDOW_TASKBAR && !Selected.Check(item->fso))
 						continue;
@@ -1177,7 +1177,7 @@ namespace Nilesoft
 									continue;
 							}
 						}
-						catch(...) 
+						catch(...)
 						{
 						}
 						if(!title_evaluated)
@@ -1225,7 +1225,7 @@ namespace Nilesoft
 						mii->indexof.def = indexof_def;
 
 						mii->set_title(title.move());
-						
+
 						mii->id = authoredId != 0 ? authoredId : mii->hash;
 
 						mii->privileges = privileges;
@@ -1336,7 +1336,7 @@ namespace Nilesoft
 											}
 
 											path.trim(str_trim);
-											
+
 											if(!path.empty())
 											{
 												Hash hash = path.hash();
@@ -1391,7 +1391,7 @@ namespace Nilesoft
 						{
 							if(owner)
 								mii->path = (owner->path + L'/' + owner->title.normalize).trim(L'/').move();
-						
+
 							//_log.info(mii->path);
 
 							///else
@@ -1433,7 +1433,7 @@ namespace Nilesoft
 						}
 					}
 				}
-				catch(...) 
+				catch(...)
 				{
 				}
 			}
@@ -1766,13 +1766,13 @@ namespace Nilesoft
 					auto m_sub = &construction_menus()[mii->hSubMenu];
 					m_sub->handle = mii->hSubMenu;
 					m_sub->destory = true;
-					
+
 					m_sub->id = mii->id;
 					m_sub->hash = mii->hash;
 
 					if(mii->ui)
 						m_sub->id = mii->ui->id;
-					
+
 					m_sub->owner = mii;
 					m_sub->std_items = &item->items;
 
@@ -1799,8 +1799,12 @@ namespace Nilesoft
 
 		bool ContextMenu::prepare_system_items(PositionList &list, menu_t *menu)
 		{
-			if(!menu || !menu->std_items)
+			if(!menu)
 				return false;
+			// Dynamic-only popups retain definitions without a system-item vector.
+			// An absent system source is empty, not a failed popup construction.
+			if(!menu->std_items)
+				return true;
 
 			//int _index = 0;
 			for(auto item : *menu->std_items)
@@ -2516,7 +2520,7 @@ namespace Nilesoft
 
 							if(menu->draw.popups)
 								item->size.cx += _theme.image.gap + symbol.chevron.size.cx;
-							
+
 							item->size.cx += rc.right;
 							item->size.cy = rc.bottom;
 
@@ -2525,7 +2529,7 @@ namespace Nilesoft
 						}
 
 						menu->popup_height += item->size.cy +
-							_theme.back.padding.top + _theme.back.padding.bottom + 
+							_theme.back.padding.top + _theme.back.padding.bottom +
 							_theme.back.margin.top + _theme.back.margin.bottom;
 
 						_items.push_back(item);
@@ -2565,7 +2569,7 @@ namespace Nilesoft
 				menu->draw.height++;
 
 			menu->popup_height += _theme.border.padding.top + _theme.border.padding.bottom + _theme.border.size + _theme.border.size;
-			
+
 
 			MENUINFO mi = { sizeof(mi), MIM_STYLE | MIM_BACKGROUND | MIM_MAXHEIGHT };
 			if(m.get(&mi))
@@ -2696,9 +2700,9 @@ namespace Nilesoft
 			::DestroyMenu(hMenu);
 			_studio_final_entries.erase(hMenu);
 			clear_appearance_cache(hMenu);
-			
+
 			__trace(L"ContextMenu.UninitMenuPopup");
-			
+
 			current.hMenu = nullptr;
 			menu->wnd = nullptr;
 			return ret;
@@ -2860,7 +2864,7 @@ namespace Nilesoft
 				auto rect = *rc;
 				rect.left += _theme.separator.margin.left;
 				rect.right -= _theme.separator.margin.right;
-				//rect.top += _theme.separator.margin.top;		
+				//rect.top += _theme.separator.margin.top;
 				rect.top += _theme.separator.margin.top;
 				rect.bottom = rect.top + _theme.separator.size;
 				//dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
@@ -2875,7 +2879,7 @@ namespace Nilesoft
 				rectF.right = (float)rect.width();
 				rectF.top = ((float)(rc->height() + _theme.separator.size) / 2.f) - _theme.separator.size;
 				rectF.bottom = rectF.top + (float)_theme.separator.size;
-				
+
 				d2d2.render->FillRectangle(rectF, d2d2.brush);
 
 				d2d2.end(true);
@@ -2896,7 +2900,7 @@ namespace Nilesoft
 				dc.set_back(back_color);
 				dc.set_text(text_color);
 				//dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
-				
+
 				d2d2.end(true);
 				dc.exclude_clip_rect(*rc);
 				return lret;
@@ -2910,7 +2914,7 @@ namespace Nilesoft
 			{
 				mii->index = MENU::get_index(hMenu, mii->wID);
 				::GetMenuItemRect(0, hMenu, mii->index, &mii->rect);
-				
+
 				//dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
 			}
 			else
@@ -3033,10 +3037,10 @@ namespace Nilesoft
 					{
 						d2d2.render->FillRectangle(rectF, d2d2.brush);
 					}
-					else 
+					else
 					{
 						auto radius = (float)_theme.back.radius;
-						
+
 						d2d2.render->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 						d2d2.render->FillRoundedRectangle({ rectF,radius, radius }, d2d2.brush);
 					}
@@ -3044,7 +3048,7 @@ namespace Nilesoft
 			}
 
 			auto has_checked_image = menu->draw.checks && menu->draw.images && (_theme.image.display >= 2);
-			
+
 			if(!mii->title.empty())
 			{
 				Color clrtext = text_color;
@@ -3094,8 +3098,8 @@ namespace Nilesoft
 							float(rcText.width()),
 							float(rcText.height())
 						};
-						
-					
+
+
 						d2d2.render->DrawTextW(mii->title.normalize, mii->title.normalize.length<uint32_t>(),
 											   tf,
 											   rect_,
@@ -3192,7 +3196,7 @@ namespace Nilesoft
 					{ rect.width(), _theme.separator.size }, _theme.separator.color);
 				return true;
 			}
-			
+
 			if(!input.menu || !input.item)
 				return false;
 
@@ -3235,7 +3239,7 @@ namespace Nilesoft
 				{
 					return true;
 				}
-				
+
 				dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
 			}
 
@@ -3252,7 +3256,7 @@ namespace Nilesoft
 			const long image_size = _theme.image.size;
 
 			auto rcblock = *rc;
-			
+
 			rcblock.top += _theme.back.margin.top;
 			rcblock.bottom -= _theme.back.margin.bottom;
 
@@ -3281,7 +3285,7 @@ namespace Nilesoft
 				if(mii->cch == 0)
 				{
 				}
-				else 
+				else
 				{
 					rcimg.left = rcblock.left + _theme.back.padding.left;
 					rcimg.right = rcimg.left + image_size;
@@ -3313,7 +3317,7 @@ namespace Nilesoft
 					if(disabled)
 						border_color = _theme.back.border.nor_dis;
 				}
-				
+
 				//dc.draw_fill_rounded_rect(rcblock, _theme.back.radius+2, 0,0);
 				//draw_rect(&dc, rcblock.point(), { width, height }, 0xff000000, {}, _theme.back.radius);
 				//draw_rect(&dc, rcblock.point(), { width, height }, _theme.background.color, {}, _theme.back.radius);
@@ -3341,7 +3345,7 @@ namespace Nilesoft
 				{
 					auto sy = mii->is_popup() ? &symbol.chevron : mii->is_radiocheck() ? &symbol.bullet : &symbol.checked;
 					auto hbitmap = plan.selected ? sy->select : sy->normal;
-					
+
 					if(disabled)
 						hbitmap = plan.selected ? sy->select_disabled : sy->normal_disabled;
 
@@ -3374,7 +3378,7 @@ namespace Nilesoft
 							Rect rcim = { rcimg.left + ((image_size - image->size.cx) / 2),
 								(rcblock.top + (rcblock.bottom - image->size.cy)) / 2,
 								image->size.cx, image->size.cy };
-							
+
 							//if(image->bitsPixel < 32)
 							//	dc.bitblt({ rcim.left,rcim.top,size.cx,size.cy }, memDC, 0, 0);
 							//else
@@ -3447,7 +3451,7 @@ namespace Nilesoft
 						{
 							if(size.cx > image_size) size.cx = image_size;
 							if(size.cy > image_size) size.cy = image_size;
-							
+
 							color_[0] = g->color[0];
 							color_[1] = g->color[1];
 
@@ -3555,7 +3559,7 @@ namespace Nilesoft
 					}
 				}
 			}
-			
+
 			// exlude menu item rectangle to prevent drawing by windows after us
 
 			return TRUE;
@@ -3847,7 +3851,7 @@ namespace Nilesoft
 			_theme.systemUsesLightTheme = systemUsesLightTheme;
 			_theme.appsUseLightTheme = appsUseLightTheme;
 			_theme.isHighContrast = isHighContrast;
-			
+
 
 			auto is_sys_dark = Selected.Window.isTaskbar() ? !systemUsesLightTheme : !appsUseLightTheme;// Theme::IsDarkMode(Selected.Window.isTaskbar());
 
@@ -3861,7 +3865,7 @@ namespace Nilesoft
 				obj = _context.Eval(th->dark).move();
 				if(obj.not_default())
 					is_dark = obj.to_bool();
-				
+
 				_theme.mode = is_dark;
 			}
 
@@ -4002,7 +4006,7 @@ namespace Nilesoft
 					break;
 				case ThemeType::Modern:
 					_theme = is_dark ? Theme::Modern(ThemeType::Dark, 1, transparency.effect) : Theme::Modern(ThemeType::Light, 0, transparency.effect);
-					
+
 					if(enableTransparency and transparency.effect == 3)
 					{
 						if(!is_dark)
@@ -4070,17 +4074,17 @@ namespace Nilesoft
 								{
 									nor.from(::GetSysColor(COLOR_MENUTEXT), 100);
 								}
-								
+
 								if (!get_clr(sel, MENU_POPUPITEM, MPI_HOT, TMT_TEXTCOLOR))
 								{
 									sel.from(::GetSysColor(COLOR_HIGHLIGHTTEXT), 100);
 								}
-								
+
 								if (!get_clr(dis, MENU_POPUPITEM, MPI_DISABLED, TMT_TEXTCOLOR))
 								{
 									dis.from(::GetSysColor(COLOR_GRAYTEXT), 100);
 								}
-								
+
 								if (!get_clr(dis_sel, MENU_POPUPITEM, MPI_DISABLEDHOT, TMT_TEXTCOLOR))
 								{
 									dis_sel.from(::GetSysColor(COLOR_GRAYTEXT), 100);
@@ -4110,22 +4114,22 @@ namespace Nilesoft
 										_theme.background.color.from(::GetSysColor(COLOR_MENU), 100);
 									}
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.sel, MENU_POPUPITEM, MPI_HOT))
 								{
 									_theme.back.color.sel.from(::GetSysColor(COLOR_HIGHLIGHT), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.nor_dis, MENU_POPUPITEM, MPI_DISABLED))
 								{
 									_theme.back.color.nor_dis.from(::GetSysColor(COLOR_MENU), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.sel_dis, MENU_POPUPITEM, MPI_DISABLEDHOT))
 								{
 									_theme.back.color.sel_dis.from(::GetSysColor(COLOR_BTNFACE), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.separator.color, MENU_POPUPSEPARATOR, 0, -1, -1, 3))
 								{
 									_theme.separator.color.from(::GetSysColor(COLOR_GRAYTEXT), 100);
@@ -4278,7 +4282,7 @@ namespace Nilesoft
 			if(_context.eval_number(sets->theme.image.enabled, obj))
 			{
 				_theme.image.enabled = obj.to_bool();
-				
+
 				if(!_theme.image.enabled)
 				{
 					_settings.modify_items.image = 0;
@@ -4331,12 +4335,12 @@ namespace Nilesoft
 					if(_context.eval_number(sets->modify_items.image, obj))
 						_settings.modify_items.image = obj.to_number<int>();
 				}
-				else 
+				else
 				{
 					_settings.modify_items.image = 0;
 				}
 			}
-			else 
+			else
 			{
 				_settings.modify_items.image = 0;
 				_settings.modify_items.position = 0;
@@ -4349,7 +4353,7 @@ namespace Nilesoft
 				_settings.modify_items.remove.disabled = false;
 				_settings.modify_items.remove.separator = false;
 			}
-			
+
 			// new items
 			if(_context.eval_number(sets->new_items.enabled, obj))
 				_settings.new_items.enabled = obj.to_bool();
@@ -4429,7 +4433,7 @@ namespace Nilesoft
 			if(transparency.tintcolor)
 				_theme.background.tintcolor = transparency.tintcolor;
 
-			
+
 			if(transparency.effect == 0)
 				_theme.background.color.a = 0xFF;
 			else
@@ -4928,7 +4932,7 @@ namespace Nilesoft
 
 			if(_context.Eval(th->font.name, obj) && !obj.is_empty())
 				__font.name = obj.move();
-			
+
 			_context.eval_number(th->font.size, __font.size);
 
 			_context.eval_number(th->font.weight, __font.weight);
@@ -4951,15 +4955,15 @@ namespace Nilesoft
 				string::Copy(_theme.font.lfFaceName, L"Segoe UI");
 			}
 
-			if(ver->IsWindows11OrGreater()) 
+			if(ver->IsWindows11OrGreater())
 			{
 				DWORD dwTextScaleFactor = 100, cbData;
-				::RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility", 
+				::RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility",
 							   L"TextScaleFactor", RRF_RT_DWORD, nullptr, &dwTextScaleFactor, &cbData);
 				long scale = ((dpi.val + 24) * dwTextScaleFactor) / 100;
 				_theme.font.lfHeight = 12 * scale / 100;
 			}
-					
+
 			if(__font.name.is_string())
 			{
 				string value = __font.name.to_string().trim().move();
@@ -4980,7 +4984,7 @@ namespace Nilesoft
 				}
 				_context.font.text = _theme.font.lfFaceName;
 			}
-			
+
 			if(__font.size.not_default())
 			{
 				long value = __font.size;
@@ -5014,8 +5018,8 @@ namespace Nilesoft
 					//MBF(L"%d, %d, %d", dpi.val, (font_size * dpi.val) / of, di);
 				}
 			}
-			
-			if(_theme.image.enabled) 
+
+			if(_theme.image.enabled)
 			{
 				if(th->image.color)
 				{
@@ -5050,7 +5054,7 @@ namespace Nilesoft
 			}
 
 			//_theme.image.size = _theme.text.size;//16 //_theme.SystemMetrics<uint32_t>(SM_CXSMICON, 96/*dpi.val*/);
-			
+
 			_theme.scale();
 
 			_theme.text.size = std::abs(_theme.font.lfHeight);
@@ -5105,12 +5109,12 @@ namespace Nilesoft
 				if(!_theme.gradient.enabled)
 					_theme.transparent = false;
 			}
-			
-			std::string ll[]  
+
+			std::string ll[]
 			{
 				// Chevron Right
 				"M7 16.82L6.17 16L12.17 10L6.17 3.99L7 3.17L13.82 10Z",
-				// Chevron Left 
+				// Chevron Left
 				"M12.99 16.82L13.82 16L7.82 10L13.82 3.99L12.99 3.17L6.17 10Z",
 				// Checked Mark
 				"M2.68 11.06C2.56 10.94 2.5 10.79 2.5 10.62C2.5 10.45 2.56 10.30 2.68 10.18C2.80 10.06 2.95 10 3.12 10C3.29 10 3.44 10.06 3.56 10.18L7.5 14.11L16.43 5.18C16.55 5.06 16.70 5 16.87 5C17.04 5 17.19 5.06 17.31 5.18C17.43 5.30 17.5 5.45 17.5 5.62C17.5 5.79 17.43 5.94 17.31 6.06L7.93 15.43C7.81 15.56 7.66 15.62 7.5 15.62C7.33 15.62 7.18 15.56 7.06 15.43Z",
@@ -5141,7 +5145,7 @@ namespace Nilesoft
 			esvg(&ll[3], _theme.symbols.bullet, symbol.bullet);
 
 			esvg(&ll[is_layoutRTL ? 1 : 0], _theme.symbols.chevron, symbol.chevron);
-			
+
 			if(symbol.chevron.normal)
 			{
 				symbol.chevron.size.cx = _theme.image.size;
@@ -5157,7 +5161,7 @@ namespace Nilesoft
 						auto b = (uint8_t *)bmp.bmBits;
 
 						int bottom = 0;
-						int left = w; 
+						int left = w;
 						int right = 0;
 						int top = h;
 
@@ -5176,7 +5180,7 @@ namespace Nilesoft
 							}
 							b += (w * 4);
 						}
-	
+
 						if(left < right && top < bottom)
 						{
 							SIZE trim = { right - left, bottom - top };
@@ -5201,7 +5205,7 @@ namespace Nilesoft
 			}
 		}
 
-		bool ContextMenu::is_excluded() 
+		bool ContextMenu::is_excluded()
 		{
 			auto initializer = Initializer::instance;
 			auto sets = &_cache->settings;
@@ -6322,7 +6326,7 @@ namespace Nilesoft
 					auto item = items->at(i);
 					CaptureEvaluationScope captureEvaluation{this, item};
 					CaptureEvidenceScope evidenceScope(&item->evidence);
-					try 
+					try
 					{
 						string location;
 						this_item _this;
@@ -6610,7 +6614,7 @@ namespace Nilesoft
 							if(!capture_original)
 								continue;
 						}
-						
+
 						if(mii.cch > 0)
 						{
 							item->title = title.release(mii.cch).move();
@@ -6673,7 +6677,7 @@ namespace Nilesoft
 								}
 								indexof++;
 							}
-							
+
 							if(found_duplicate == 1)
 							{
 								CaptureTrace(item->trace, L"remove.duplicate", true, L"removed");
@@ -6688,7 +6692,7 @@ namespace Nilesoft
 						if(mii.hSubMenu)
 							build_system_menuitems(mii.hSubMenu, itemPtr, false, capture_original);
 					}
-					
+
 					if(capture_original || found_duplicate != 2)
 					{
 						if(!capture_original && item->is_menu())
@@ -6738,7 +6742,7 @@ namespace Nilesoft
 				//	return false;
 
 				auto sets = &_cache->settings;
-				
+
 				/*if(auto h = hWnd_owner ? hWnd_owner : hWnd; h)
 					_result = Window::class_name(h);
 				*/
@@ -6804,15 +6808,15 @@ namespace Nilesoft
 
 				composition.activated = ::IsCompositionActive();
 				::DwmIsCompositionEnabled(reinterpret_cast<BOOL *>(&composition.DwmEnabled));
-				
+
 				init_cfg();
-				
+
 				if(!_windowSubclass.hook(hwnd.owner, WindowSubclassProc, CONTEXTMENUSUBCLASS, this))
 				{
 					__trace(L"WindowSubclass");
 					return false;
 				}
-			
+
 				Prop::Set(hwnd.owner, this);
 
 				if(_winEventHook.hook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, Initializer::HInstance,
@@ -6924,7 +6928,7 @@ namespace Nilesoft
 				}
 
 				_keyboardHook.unhook();
-				
+
 				if(_winEventHook)
 				{
 					HookMap.erase(_winEventHook.get());
@@ -6959,7 +6963,7 @@ namespace Nilesoft
 
 			if(id != 0)
 			{
-				if(ident.equals(id)) 
+				if(ident.equals(id))
 				{
 					for(auto item : _items_command)
 					{
@@ -7045,7 +7049,7 @@ namespace Nilesoft
 				//ctx->variables.runtime = &menu->owner->variables;
 				ctx->variables.local = &menu->owner->variables;
 				ctx->Keyboard->get_keys_state(true);
-				
+
 				set00(cm);
 
 				if(cm->mouse_button)
@@ -7074,7 +7078,7 @@ namespace Nilesoft
 										ctx->Break = false;
 										__leave;
 									}
-									
+
 									if(invoke > 1)
 										::Sleep(invoke);
 									ctx->invoked++;
@@ -7120,7 +7124,7 @@ namespace Nilesoft
 				string value;
 
 				cmd.admin = invoke_item->privileges;
-				
+
 				if(cmd_prop->admin)
 					cmd.admin = _context.parse_privileges(cmd_prop);
 
@@ -7183,7 +7187,7 @@ namespace Nilesoft
 			}
 			return FALSE;
 		}
-		
+
 		bool Tip::show()
 		{
 			if(handle && enabled)
@@ -7305,7 +7309,7 @@ namespace Nilesoft
 
 							pluto.rect(2, 2, size.cx - 4, size.cy - 4, radius)
 								.fill(bgclr.to_RGB(), theme->tip.opacity);
-							
+
 							auto_gdi<HBITMAP> bitmap(pluto.tobitmap());
 							DC dc_layer(dc.CreateCompatibleDC(), 1);
 							dc_layer.set_font(ctx->font.handle);
@@ -7422,7 +7426,7 @@ namespace Nilesoft
 
 			if(!ex_style.equals(ex_style_old))
 				::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, ex_style);
-						
+
 			//::SetClassLongPtrW(hWnd, GCL_STYLE, 0);
 			//::SetWindowLongPtrW(hWnd, GWL_STYLE, WS_POPUP);
 			//::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, WS_EX_NOREDIRECTIONBITMAP);
@@ -7518,13 +7522,13 @@ namespace Nilesoft
 					pt1.x = std::max<long>(rc.right, pt1.x);
 					pt1.y = std::max<long>(rc.bottom, pt1.y);
 				}
-				
+
 				pt0.x = std::max<long>(0, pt0.x);
 				pt0.y = std::max<long>(0, pt0.y);
 
 				pt1.x = std::min<long>(sz.cx, pt1.x);
 				pt1.y = std::min<long>(sz.cy, pt1.y);
-				
+
 				sz = { (pt1.x - pt0.x) + 100, (pt1.y - pt0.y) + 100 };
 
 				bits = nullptr;
@@ -7535,9 +7539,9 @@ namespace Nilesoft
 					dc0.select_bitmap(hbitmap0.get());
 					dc0.draw_image({ }, sz, dc_dst, pt0, sz);
 				}
-				
+
 				auto w = sz.cx, h = sz.cy;
-				
+
 				auto p = bits;
 				if(bits)
 				{
@@ -7569,10 +7573,10 @@ namespace Nilesoft
 
 					if(location.empty())
 						location = IO::Path::GetKnownFolder(FOLDERID_Screenshots).move();
-					
+
 					if(location.empty())
 						location = Initializer::instance->application.Dirctory;
-					
+
 					location = Path::Combine(location, L"screenshot_" + tf + L".png");
 
 					plutovg_stbi_write_png(location, w, h, flip.get());
@@ -7717,7 +7721,7 @@ namespace Nilesoft
 
 					if(y1 > 0) y1 += fyy * 2;
 					if(y2 > 0) y2 += fyy * 2;
-					
+
 					render = x1 != 0.0 || y1 != 0.0 || x2 != 0.0 || y2 != 0.0;
 					if(render)
 						gradient.create_linear(x1, y1, x2, y2);
@@ -7739,7 +7743,7 @@ namespace Nilesoft
 				{
 					for(auto &s : _theme.gradient.stpos)
 						gradient.add_stop(s.offset, s.color.to_RGB(), s.color.a);
-					
+
 					pluto.rect(back_rect.left, back_rect.top, w, h, radius).fill(gradient);
 				}
 			}
@@ -7840,13 +7844,13 @@ namespace Nilesoft
 
 					uint32_t tintColor = _theme.background.tintcolor;
 
-					if(_theme.background.effect == 2) // blur effect 
+					if(_theme.background.effect == 2) // blur effect
 					{
 						accent.state = accent.BlurBehind;
 						if(_theme.border.radius > 0)
 							accent.flags = accent.AllowSetWindowRgn;
 					}
-					else if(_theme.background.effect >= 3) // acrylic effect 
+					else if(_theme.background.effect >= 3) // acrylic effect
 					{
 						// Windows 10 build 17134
 						accent.state = accent.AcrylicBlurBehind;
@@ -7907,7 +7911,7 @@ namespace Nilesoft
 				auto pMSG = (MSG *)lParam;
 
 				//_log.info(L"0x%04x %s", pMSG->message, msg_map[pMSG->message]);
-				
+
 				switch(pMSG->message)
 				{
 					case WM_CREATE:
@@ -7933,7 +7937,7 @@ namespace Nilesoft
 					}
 					break;
 					case WM_LBUTTONDBLCLK:
-						// just set WM_NULL to get rid of all default processing 
+						// just set WM_NULL to get rid of all default processing
 						//pMSG->message = WM_NULL;
 						break;
 					case 485:  // HACK to handle popup menus
@@ -8073,7 +8077,7 @@ namespace Nilesoft
 					//_log.info(L"MN_SIZEWINDOW");
 					if(wParam & MNSW_DRAWFRAME)
 						wParam &= ~MNSW_DRAWFRAME;
-					
+
 					lret = defSubclassProc();
 					return lret;
 				}
@@ -8198,7 +8202,7 @@ namespace Nilesoft
 
 							//if(wp->cy > 450)
 								//wp->cy += 16;
-							
+
 						}
 						else if(!flags.has(SWP_NOMOVE))
 						{
@@ -8325,10 +8329,10 @@ namespace Nilesoft
 						int h = ctx->dpi(14);
 						Rect rc = { 0, 0, wnd->width, h };
 						::FillRect(wnd->hdc, rc, hbblack.get());
-						
+
 						rc = { 0, wnd->height - h, wnd->width, wnd->height };
 						::FillRect(wnd->hdc, rc, hbblack.get());
-						
+
 						ctx->draw_scroll_arrows(wnd->hdc, wnd->width, wnd->height);
 
 						//::ExcludeClipRect(wnd->hdc, 0, 0, wnd->width, 20);
@@ -8350,9 +8354,9 @@ namespace Nilesoft
 					{
 						Rect r = hWnd;
 						D2D d2d;
-						
+
 						d2d.begin(wnd->hdc, { 0, 0, r.width(), r.height() });
-						
+
 						//auto z = (float)theme->border.size*2;
 						D2D1_RECT_F rect = { 0.0f, 0.0f, float(r.width()), float(r.height()) };
 
@@ -8520,7 +8524,7 @@ namespace Nilesoft
 					}
 					// We need to prevent the system default menu fade out animation
 					// and begin a re-implemented one
-					// 
+					//
 					// Windows does not show animation if the selection was done
 					// with keyboard (i.e. Enter)
 
@@ -8649,7 +8653,7 @@ namespace Nilesoft
 			int scancode = static_cast<int> ((lParam >> 16) & 0xFF);
 
 			// Code < 0 is windows telling us 'don't process this message'.
-			if(nCode != 0)  // do not process message 
+			if(nCode != 0)  // do not process message
 				goto skip;
 
 			//::GetWindow(GetActiveWindow(), GW_ENABLEDPOPUP))
@@ -8905,7 +8909,7 @@ namespace Nilesoft
 					case WM_UAHDRAWMENUITEM:
 					case WM_UAHNCPAINTMENUPOPUP:
 						//_log.info(L"%0.4x", uMsg);
-						
+
 						break;
 					case WM_CAPTURECHANGED:
 						break;
