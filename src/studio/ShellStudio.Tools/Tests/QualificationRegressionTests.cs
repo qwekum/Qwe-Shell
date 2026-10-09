@@ -7,18 +7,19 @@ internal static class QualificationRegressionTests
     public static async Task ViewModesMatchPinnedDonor()
     {
         // Pinned WinSetView SetViewValues indices 1..6: independent semantic expectations.
-        (string Name, int Logical, int Mode)[] modes = [("Details", 1, 4), ("List", 4, 3), ("Tiles", 2, 6), ("Content", 5, 8), ("SmallIcons", 3, 1), ("Icons", 3, 1)];
+        (string Name, int Logical, int Mode, int IconSize)[] modes = [("Details", 1, 4, 16), ("List", 4, 3, 16), ("Tiles", 2, 6, 48), ("Content", 5, 8, 32), ("SmallIcons", 3, 1, 16), ("Icons", 3, 1, 48)];
         foreach (var expected in modes)
         {
             using var scope = new Scope();
             var environment = new InMemoryToolEnvironment(Path.Combine(scope.Root, "journal"), ToolMutationMode.AllowUserData);
             var service = new OperationService(environment);
-            foreach (var iconSize in new[] { 77, 32 })
+            foreach (var iconSize in new[] { 77, expected.IconSize })
             {
                 var values = new List<KeyValuePair<string, string>> { new("scope", "Global"), new("viewMode", expected.Name), new("columns", "System.ItemNameDisplay;System.Size") };
                 if (iconSize == 77) values.Add(new("iconSize", "77"));
                 var plan = await service.PreviewAsync(OperationRequest.Create("views.apply", values));
                 Require(plan.CanExecute, $"view mode preview failed for {expected.Name}");
+                Require(plan.Changes.Any(change => change.Contains($"icon size {iconSize}", StringComparison.Ordinal)), "preview icon size differs from execution");
                 var result = await service.ExecuteAsync(plan);
                 Require(result.Success, $"view mode execution failed for {expected.Name}");
                 const string key = @"Software\Classes\Local Settings\Software\Microsoft\Windows\Shell\Bags\AllFolders\Shell";

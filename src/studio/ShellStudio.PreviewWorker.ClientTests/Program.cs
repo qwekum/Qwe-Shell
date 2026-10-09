@@ -26,6 +26,18 @@ string fixture = Path.Combine(AppContext.BaseDirectory, "ShellStudio.PreviewWork
 if (!File.Exists(fixture))
     throw new FileNotFoundException("The fixture worker was not copied beside the client tests.", fixture);
 
+await Test("readiness failure preserves status without diagnostics", async () =>
+{
+    using var evidence = new FixtureEvidence("missing-marker");
+    var response = new PreviewProtocol.Response(PreviewProtocol.Version, "test", "revision", "preview", "failed", JsonSerializer.SerializeToElement(new { }), null!);
+    try
+    {
+        await evidence.WaitForPidAsync(Task.FromResult(response));
+        throw new InvalidOperationException("completed fixture unexpectedly became ready");
+    }
+    catch (InvalidOperationException ex) when (ex.Message.StartsWith("Fixture ended before readiness: failed", StringComparison.Ordinal)) { }
+});
+
 await Test("broker read calls match the native io.file and reg names", () =>
 {
     Equal("io.file.exists", PreviewReadRequest.FileExists(@"C:\Preview\sample.nss").Function);
@@ -233,7 +245,7 @@ sealed class FixtureEvidence : IDisposable
             if (pending.IsCompleted)
             {
                 var response = await pending;
-                throw new InvalidOperationException("Fixture ended before readiness: " + response.Status + "; " + string.Join("; ", response.Diagnostics.Select(d => d.Code + " " + d.Message)));
+                throw new InvalidOperationException("Fixture ended before readiness: " + response.Status + "; " + string.Join("; ", (response.Diagnostics ?? []).Select(d => d.Code + " " + d.Message)));
             }
             await Task.Delay(10);
         }

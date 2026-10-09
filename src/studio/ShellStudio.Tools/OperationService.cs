@@ -1031,7 +1031,7 @@ public sealed class OperationService
             else
                 key = $@"Software\Microsoft\Windows\CurrentVersion\Explorer\FolderTypes\{folderGuid}\TopViews";
         }
-        changes.Add($"Back up and update HKCU\\{key} with view mode {GetValue(request, "viewMode", "Details")}, icon size {GetInt(request, "iconSize", 32)}, columns '{GetValue(request, "columns")}', sort '{GetValue(request, "sortProperty", "System.ItemNameDisplay")}', and group '{GetValue(request, "groupProperty")}'.");
+        changes.Add($"Back up and update HKCU\\{key} with view mode {GetValue(request, "viewMode", "Details")}, icon size {GetInt(request, "iconSize", DirectRawView(GetValue(request, "viewMode", "Details")).IconSize)}, columns '{GetValue(request, "columns")}', sort '{GetValue(request, "sortProperty", "System.ItemNameDisplay")}', and group '{GetValue(request, "groupProperty")}'.");
         if (scope.Equals("Virtual", StringComparison.OrdinalIgnoreCase) || scope.Equals("Dialogs", StringComparison.OrdinalIgnoreCase))
             changes.Add("Propagate the reviewed column definition to the corresponding virtual/file-dialog bag.");
         diagnostics.Add(new Diagnostic("TOOL-VIEWS-RESTART", "Explorer may need a reviewed refresh before the view is visible.", Severity: "warning"));
@@ -1706,13 +1706,13 @@ public sealed class OperationService
     private void WriteViewValues(OperationRequest request, string key)
     {
         var viewMode = GetValue(request, "viewMode", "Details");
-        var (logicalViewMode, mode, _) = DirectRawView(viewMode);
+        var (logicalViewMode, mode, defaultIconSize) = DirectRawView(viewMode);
         var groupProperty = NormalizeShellProperty(GetValue(request, "groupProperty"));
         var sortProperty = NormalizeShellProperty(GetValue(request, "sortProperty", "System.ItemNameDisplay"));
         var sortDirection = GetValue(request, "sortDirection", "Ascending").Equals("Descending", StringComparison.OrdinalIgnoreCase) ? "-" : "+";
         var groupDirection = GetValue(request, "groupDirection", "Ascending").Equals("Ascending", StringComparison.OrdinalIgnoreCase) ? 1 : 0;
         _environment.Registry.SetValue("HKCU", key, "LogicalViewMode", logicalViewMode, RegistryValueKind.DWord);
-        _environment.Registry.SetValue("HKCU", key, "IconSize", GetInt(request, "iconSize", 32), RegistryValueKind.DWord);
+        _environment.Registry.SetValue("HKCU", key, "IconSize", GetInt(request, "iconSize", defaultIconSize), RegistryValueKind.DWord);
         _environment.Registry.SetValue("HKCU", key, "Mode", mode, RegistryValueKind.DWord);
         var flags = 0x43000000 | (GetBool(request, "autoArrange") ? 1 : 0) | (GetBool(request, "alignToGrid") ? 4 : 0);
         _environment.Registry.SetValue("HKCU", key, "FFlags", flags, RegistryValueKind.DWord);
