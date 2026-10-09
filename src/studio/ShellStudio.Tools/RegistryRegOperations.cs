@@ -73,6 +73,9 @@ public sealed class RegistryRegParseException : Exception
 /// </summary>
 public static class RegistryRegParser
 {
+    internal static readonly Encoding StrictUtf16 = new UnicodeEncoding(false, true, true);
+    private static readonly Encoding StrictUtf16Be = new UnicodeEncoding(true, true, true);
+    private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
     public const int CurrentVersion = 5;
     public const int MaxTextBytes = 4 * 1024 * 1024;
     public const int MaxKeys = 100_000;
@@ -91,7 +94,7 @@ public static class RegistryRegParser
     public static RegistryRegDocument Parse(string text)
     {
         ArgumentNullException.ThrowIfNull(text);
-        if (Encoding.UTF8.GetByteCount(text) > MaxTextBytes)
+        if (StrictUtf8.GetByteCount(text) > MaxTextBytes)
             throw new InvalidDataException($"The registry file exceeds the {MaxTextBytes} byte limit.");
 
         var document = new RegistryRegDocument();
@@ -152,13 +155,20 @@ public static class RegistryRegParser
 
     private static string Decode(byte[] bytes)
     {
-        if (bytes.AsSpan().StartsWith(Encoding.Unicode.GetPreamble()))
-            return Encoding.Unicode.GetString(bytes, Encoding.Unicode.GetPreamble().Length, bytes.Length - Encoding.Unicode.GetPreamble().Length);
-        if (bytes.AsSpan().StartsWith(Encoding.BigEndianUnicode.GetPreamble()))
-            return Encoding.BigEndianUnicode.GetString(bytes, Encoding.BigEndianUnicode.GetPreamble().Length, bytes.Length - Encoding.BigEndianUnicode.GetPreamble().Length);
-        if (bytes.AsSpan().StartsWith(Encoding.UTF8.GetPreamble()))
-            return Encoding.UTF8.GetString(bytes, Encoding.UTF8.GetPreamble().Length, bytes.Length - Encoding.UTF8.GetPreamble().Length);
-        return Encoding.UTF8.GetString(bytes);
+        try
+        {
+            if (bytes.AsSpan().StartsWith(Encoding.Unicode.GetPreamble()))
+                return StrictUtf16.GetString(bytes, 2, bytes.Length - 2);
+            if (bytes.AsSpan().StartsWith(Encoding.BigEndianUnicode.GetPreamble()))
+                return StrictUtf16Be.GetString(bytes, 2, bytes.Length - 2);
+            if (bytes.AsSpan().StartsWith(Encoding.UTF8.GetPreamble()))
+                return StrictUtf8.GetString(bytes, 3, bytes.Length - 3);
+            return StrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException ex)
+        {
+            throw new InvalidDataException("The registry file contains corrupt text encoding.", ex);
+        }
     }
 
     private static IEnumerable<(string Text, int Line)> LogicalLines(string text)
@@ -236,13 +246,15 @@ public static class RegistryRegParser
     {
         var colon = value.IndexOf(':');
         if (colon < 0) throw new RegistryRegParseException("A hex value must contain ':'.", line);
-        var type = 0;
+        var type = 3;
         var prefix = value[..colon];
-        if (prefix.Length > 3)
+        if (!prefix.Equals("hex", StringComparison.OrdinalIgnoreCase))
         {
-            if (prefix[3] != '(' || !prefix.EndsWith(')') || !int.TryParse(prefix[4..^1], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out type))
+            if (!prefix.StartsWith("hex(", StringComparison.OrdinalIgnoreCase) || !prefix.EndsWith(')') || !int.TryParse(prefix[4..^1], NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture, out type))
                 throw new RegistryRegParseException("The typed hex value marker is invalid.", line);
         }
+        if (type is not (1 or 2 or 3 or 4 or 7 or 11))
+            throw new RegistryRegParseException($"Unsupported registry hex type '{type:x}'.", line);
         var bytes = ParseHexBytes(value[(colon + 1)..], line);
         return type switch
         {
@@ -251,14 +263,15 @@ public static class RegistryRegParser
             4 => new RegistryRegValue(name, RegistryValueKind.DWord, DecodeDword(bytes, line)),
             7 => new RegistryRegValue(name, RegistryValueKind.MultiString, DecodeRegMultiString(bytes, line)),
             11 => new RegistryRegValue(name, RegistryValueKind.QWord, DecodeQword(bytes, line)),
-            _ => new RegistryRegValue(name, RegistryValueKind.Binary, bytes)
+            3 => new RegistryRegValue(name, RegistryValueKind.Binary, bytes),
+            _ => throw new RegistryRegParseException("Unsupported registry hex type.", line)
         };
     }
 
     private static byte[] ParseHexBytes(string raw, int line)
     {
         if (raw.Trim().Length == 0) return [];
-        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var parts = raw.Split(',', StringSplitOptions.TrimEntries);
         var bytes = new byte[parts.Length];
         for (var i = 0; i < parts.Length; i++)
         {
@@ -283,7 +296,8 @@ public static class RegistryRegParser
     private static string DecodeRegString(byte[] bytes, int line)
     {
         if (bytes.Length % 2 != 0) throw new RegistryRegParseException("A UTF-16 registry value must contain an even number of bytes.", line);
-        return Encoding.Unicode.GetString(bytes).TrimEnd('\0');
+        try { return StrictUtf16.GetString(bytes).TrimEnd('\0'); }
+        catch (DecoderFallbackException) { throw new RegistryRegParseException("A registry value contains corrupt UTF-16.", line); }
     }
 
     private static string[] DecodeRegMultiString(byte[] bytes, int line)
@@ -388,6 +402,8 @@ public static class RegistryRegOperations
                     changes.Add(new RegistryRegChange(key.Hive, key.KeyPath, "", "delete-key"));
                 continue;
             }
+            if (!registry.KeyExists(key.Hive, key.KeyPath))
+                changes.Add(new RegistryRegChange(key.Hive, key.KeyPath, "", "create-key"));
             foreach (var after in key.Values)
             {
                 current.TryGetValue(after.Name, out var before);
@@ -423,7 +439,7 @@ public static class RegistryRegOperations
         ValidateDocument(document);
         if (!allowDeletes && ContainsDeletes(document))
             throw new InvalidOperationException("The registry import contains key or value deletes, but deletes are disabled.");
-        var roots = BackupRoots(document.Keys);
+        var roots = BackupRoots(document.Keys.Select(key => BackupRoot(key, environment.Registry)));
         foreach (var key in roots)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -443,6 +459,7 @@ public static class RegistryRegOperations
                     environment.Registry.DeleteTree(key.Hive, key.KeyPath);
                     continue;
                 }
+                environment.Registry.CreateKey(key.Hive, key.KeyPath);
                 foreach (var value in key.Values)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -497,6 +514,20 @@ public static class RegistryRegOperations
         return result;
     }
 
+    private static RegistryRegKey BackupRoot(RegistryRegKey key, IToolRegistry registry)
+    {
+        // CreateKey also creates missing ancestors. Capture the first missing
+        // ancestor so recovery removes precisely the entire newly created tree.
+        if (key.DeleteKey) return key;
+        var parts = key.KeyPath.Split('\\');
+        for (var count = 1; count <= parts.Length; count++)
+        {
+            var path = string.Join("\\", parts.Take(count));
+            if (!registry.KeyExists(key.Hive, path)) return new RegistryRegKey(key.Hive, path);
+        }
+        return key;
+    }
+
     private static bool IsSameOrDescendant(string path, string parent)
         => path.Equals(parent, StringComparison.OrdinalIgnoreCase)
             || path.StartsWith(parent.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase);
@@ -540,8 +571,9 @@ public static class RegistryRegOperations
             RegistryValueKind.ExpandString => EncodeUtf16(2, value.Value as string ?? ""),
             RegistryValueKind.MultiString => EncodeMultiString(value.Value as string[] ?? []),
             RegistryValueKind.DWord => $"dword:{unchecked((uint)Convert.ToInt32(value.Value, CultureInfo.InvariantCulture)):x8}",
-            RegistryValueKind.QWord => $"qword:{unchecked((ulong)Convert.ToInt64(value.Value, CultureInfo.InvariantCulture)):x16}",
-            _ => EncodeBinary(value.Value as byte[] ?? [])
+            RegistryValueKind.QWord => EncodeQword(Convert.ToInt64(value.Value, CultureInfo.InvariantCulture)),
+            RegistryValueKind.Binary => EncodeBinary(value.Value as byte[] ?? []),
+            _ => throw new InvalidDataException($"Unsupported registry export kind '{value.Kind}'.")
         };
     }
 
@@ -551,13 +583,20 @@ public static class RegistryRegOperations
     private static string EncodeUtf16(int type, string value)
     {
         var body = value + "\0";
-        return EncodeHex(type, Encoding.Unicode.GetBytes(body));
+        return EncodeHex(type, RegistryRegParser.StrictUtf16.GetBytes(body));
     }
 
     private static string EncodeMultiString(string[] values)
-        => EncodeHex(7, Encoding.Unicode.GetBytes(string.Join("\0", values) + "\0\0"));
+        => EncodeHex(7, RegistryRegParser.StrictUtf16.GetBytes(string.Join("\0", values) + "\0\0"));
 
     private static string EncodeBinary(byte[] bytes) => EncodeHex(null, bytes);
+
+    private static string EncodeQword(long value)
+    {
+        var bytes = new byte[8];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt64LittleEndian(bytes, value);
+        return EncodeHex(11, bytes);
+    }
 
     private static string EncodeHex(int? type, byte[] bytes)
     {
@@ -571,7 +610,7 @@ public static class RegistryRegOperations
             var addition = current.EndsWith(':') ? part : "," + part;
             if (current.Length + addition.Length > 78)
             {
-                lines.Add(current + "\\");
+                lines.Add(current + ",\\");
                 current = "  " + part;
             }
             else current += addition;
@@ -598,6 +637,9 @@ public static class RegistryRegOperations
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var value in key.Values)
             {
+                if (!value.Delete && value.Kind is not (RegistryValueKind.String or RegistryValueKind.ExpandString or RegistryValueKind.Binary
+                    or RegistryValueKind.DWord or RegistryValueKind.MultiString or RegistryValueKind.QWord))
+                    throw new InvalidDataException($"Unsupported registry value kind '{value.Kind}'.");
                 if (value.Name.IndexOf('\0') >= 0 || value.Name.Length > 16_384) throw new InvalidDataException("A registry value name is invalid or too long.");
                 if (!names.Add(value.Name)) throw new InvalidDataException($"Registry value '{value.Name}' is duplicated.");
             }

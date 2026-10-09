@@ -4,11 +4,40 @@ using System.Text.Json;
 using ShellStudio.Core;
 using ShellStudio;
 
+foreach (string prerequisite in new[] { "ShellStudio.Language.dll", "ShellStudio.PreviewWorker.exe" })
+{
+    string prerequisitePath = Path.Combine(AppContext.BaseDirectory, prerequisite);
+    if (!File.Exists(prerequisitePath))
+    {
+        Console.Error.WriteLine("Required native test prerequisite is missing: " + prerequisitePath +
+            ". Build with exact NativeLanguagePath and PreviewWorkerPath values.");
+        return 1;
+    }
+}
+
 int passed = 0, failed = 0;
 var temporaryRoot = Path.Combine(Path.GetTempPath(), "ShellStudio-tests-" + Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(temporaryRoot);
 try
 {
+    Test("unreadable workspace roots retain diagnostics across refresh and can retry", () =>
+    {
+        string path = Path.Combine(NewDirectory(), "missing-root.nss");
+        var workspace = new Workspace(path, new NativeLanguage());
+        void AssertReadFailure()
+        {
+            True(!workspace.Files.ContainsKey(path), "The missing root became an editable document.");
+            True(workspace.Diagnostics.Any(d => d.Code == "IMPORT_READ" && d.File == path && d.Severity == "error"),
+                "The root read diagnostic was cleared by import graph refresh.");
+        }
+        AssertReadFailure();
+        workspace.RefreshImports();
+        AssertReadFailure();
+        File.WriteAllText(path, "item(title='Recovered root')\n");
+        workspace.RefreshImports();
+        True(workspace.Files.ContainsKey(path), "Refresh did not retry the previously unreadable root.");
+        True(!workspace.Diagnostics.Any(d => d.Code == "IMPORT_READ" && d.File == path), "Recovered root retained a stale read diagnostic.");
+    });
     Test("recovery requires canonical backup filenames", () =>
     {
         foreach (string name in new[] { ".", "..", "0000.original:stream", "0000.original.", "CON", "other.original" })
@@ -1061,6 +1090,20 @@ try
             workspace.Redo();
             True(workspace.DetachedFiles.Contains(fullChild) && workspace.ImportOccurrences.Count == 0,
                 "Redo did not detach the dirty file after removing its import again.");
+            var edits = workspace.Edits();
+            Equal(1, edits.Count);
+            Equal(root, edits[0].Path);
+            var applied = new ConfigurationTransactions(root, workspace.Files.Keys).Apply(edits);
+            True(applied.Success, string.Join("; ", applied.Diagnostics.Select(d => d.Message)));
+            workspace.AcceptSaved(edits.Select(edit => edit.Path));
+            True(!rootFile.IsDirty && childFile.IsDirty && workspace.IsDirty, "Apply marked detached edits saved.");
+            True(workspace.Files.ContainsKey(fullChild) && workspace.DetachedFiles.Contains(fullChild), "Apply lost the detached buffer.");
+            Equal("item(title='Original')\n", File.ReadAllText(child));
+            Equal(0, workspace.Edits().Count);
+            workspace.Files[root].SetText("import 'child.nss'\n");
+            True(!workspace.DetachedFiles.Contains(fullChild), "Reimport did not reattach the retained buffer.");
+            Equal("item(title='Unsaved')\n", workspace.Files[fullChild].Text);
+            True(workspace.Edits().Any(edit => edit.Path == fullChild), "Reattached edit was not available for review.");
         });
         Test("native localization imports retain role through edit undo and redo", () =>
         {

@@ -4,8 +4,24 @@ using Microsoft.Win32;
 using ShellStudio.Core;
 using ShellStudio.Tools;
 
+if (args.Length > 0)
+{
+    if (args.Length != 2 || args[0] != "--native-selection-fixtures")
+    {
+        Console.WriteLine("Usage: ShellStudio.Tools.Tests.exe [--native-selection-fixtures ABSOLUTE_MANIFEST_PATH]");
+        return 1;
+    }
+    try { NativeSelectionFixtureTests.Check(args[1]); return 0; }
+    catch (Exception ex) { Console.WriteLine($"FAIL native_selection_fixture_route: {ex.Message}"); return 1; }
+}
+
 var tests = new List<(string Name, Func<Task> Test)>
 {
+    ("pr1_batch_literals_and_selection", PR1RegressionTests.BatchLiteralsAndSelection),
+    ("pr1_registry_encodings_and_rejections", PR1RegressionTests.RegistryEncodingsAndRejections),
+    ("pr1_empty_registry_keys_and_recovery", PR1RegressionTests.EmptyRegistryKeysAndRecovery),
+    ("pr1_native_snapshot_consumption", PR1RegressionTests.NativeSnapshotConsumption),
+    ("pr1_old_journals_preserve_incompatible_backups", PR1RegressionTests.OldJournalsPreserveIncompatibleBackups),
     ("thumbnail_native_resource_round_trip", ShellStudio.Tools.Tests.FolderThumbnailResourcesTests.RunAsync),
     ("thumbnail_noop_refresh_uses_only_user_permission", FolderThumbnailSettingTests.NoOpRefreshDoesNotRequireSystemPermission),
     ("thumbnail_slow_inspection_can_be_cancelled", FolderThumbnailSettingTests.SlowInspectionCanBeCancelled),

@@ -176,7 +176,7 @@ namespace
 		const auto *version = Member(value, "version");
 		Require(version->kind == ShellStudio::PreviewJson::Kind::Number && version->text == "1",
 			"snapshot version is not 1");
-		RequireString(value, "context", "explorer.background");
+		RequireString(value, "context", "desktop");
 		RequireString(value, "parentPath", "C:\\Root\\\"quoted\"");
 		RequireBool(value, "isBackground", true);
 		RequireBool(value, "isDesktop", true);
@@ -213,6 +213,41 @@ namespace
 		std::cout << "PASS unique-output\n";
 	}
 
+	void TestSupportedContexts()
+	{
+		const auto check = [](SelectionFixture &fixture, std::string_view expected)
+		{
+			std::wstring output;
+			Require(Nilesoft::Shell::SelectionSnapshot::TryWrite(*fixture.selection, output), "context snapshot failed");
+			const auto value = ParseSnapshot(output);
+			RequireString(value, "context", expected);
+			RequireBool(value, "isBackground", fixture.selection->Background);
+			RequireBool(value, "isDesktop", fixture.selection->Window.desktop || fixture.selection->Types[Nilesoft::Shell::FSO_DESKTOP] != 0);
+			RemoveSnapshot(output);
+		};
+		SelectionFixture desktop;
+		desktop.selection->Window.id = Nilesoft::Shell::WINDOW_DESKTOP;
+		check(desktop, "desktop");
+		desktop.selection->Background = true;
+		check(desktop, "desktop");
+		SelectionFixture background;
+		background.selection->Window.id = Nilesoft::Shell::WINDOW_EXPLORER;
+		background.selection->Background = true;
+		check(background, "explorer.background");
+		SelectionFixture folder;
+		folder.selection->Window.id = Nilesoft::Shell::WINDOW_EXPLORER;
+		folder.AddPath(L"C:\\folder");
+		folder.items[0]->Group = Nilesoft::IO::PathType::Directory;
+		check(folder, "explorer.folder");
+		folder.AddPath(L"C:\\second-folder");
+		folder.items[1]->Group = Nilesoft::IO::PathType::Directory;
+		check(folder, "explorer.selection");
+		SelectionFixture file;
+		file.AddPath(L"C:\\file.txt");
+		check(file, "explorer.selection");
+		std::cout << "PASS supported-contexts\n";
+	}
+
 	void TestCreateNewOwnership()
 	{
 		std::wstring collision;
@@ -237,6 +272,57 @@ namespace
 		Require(::DeleteFileW(collision.c_str()) != FALSE,
 			"collision test file cleanup failed");
 		std::cout << "PASS create-new-ownership\n";
+	}
+
+	void TestExplicitUserSecurity()
+	{
+		SelectionFixture fixture;
+		fixture.AddPath(L"C:\\SnapshotFixture\\security.txt");
+		std::wstring path;
+		Require(Nilesoft::Shell::SelectionSnapshot::TryWrite(*fixture.selection, path),
+			"explicit-owner snapshot creation failed");
+		try
+		{
+			HANDLE token = nullptr;
+			Require(::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token) != FALSE,
+				"current user token query failed");
+			alignas(TOKEN_USER) std::array<BYTE, sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE> userBytes{};
+			DWORD returned = 0U;
+			const auto queried = ::GetTokenInformation(token, TokenUser, userBytes.data(),
+				static_cast<DWORD>(userBytes.size()), &returned) != FALSE;
+			::CloseHandle(token);
+			Require(queried, "current user SID query failed");
+			const auto user = reinterpret_cast<const TOKEN_USER *>(userBytes.data())->User.Sid;
+			alignas(SECURITY_DESCRIPTOR) std::array<BYTE, 1024> securityBytes{};
+			Require(::GetFileSecurityW(path.c_str(), OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+				securityBytes.data(), static_cast<DWORD>(securityBytes.size()), &returned) != FALSE,
+				"emitted snapshot security query failed");
+			PSID owner = nullptr;
+			BOOL defaulted = FALSE;
+			Require(::GetSecurityDescriptorOwner(securityBytes.data(), &owner, &defaulted) != FALSE &&
+				owner && ::EqualSid(user, owner), "emitted snapshot owner differs from TokenUser (including elevated tokens)");
+			SECURITY_DESCRIPTOR_CONTROL control = 0U;
+			DWORD revision = 0U;
+			Require(::GetSecurityDescriptorControl(securityBytes.data(), &control, &revision) != FALSE &&
+				(control & SE_DACL_PROTECTED) != 0U, "emitted snapshot inherits its directory ACL");
+			BOOL present = FALSE;
+			PACL acl = nullptr;
+			Require(::GetSecurityDescriptorDacl(securityBytes.data(), &present, &acl, &defaulted) != FALSE &&
+				present && acl && acl->AceCount == 1U, "emitted snapshot does not have a user-only ACL");
+			void *rawAce = nullptr;
+			Require(::GetAce(acl, 0U, &rawAce) != FALSE, "emitted snapshot user ACE missing");
+			const auto ace = static_cast<const ACCESS_ALLOWED_ACE *>(rawAce);
+			Require(ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE && ace->Header.AceFlags == 0U &&
+				ace->Mask == FILE_ALL_ACCESS && ::EqualSid(user, const_cast<DWORD *>(&ace->SidStart)),
+				"emitted snapshot grants unrelated or inherited access");
+		}
+		catch(...)
+		{
+			::DeleteFileW(path.c_str());
+			throw;
+		}
+		Require(::DeleteFileW(path.c_str()) != FALSE, "explicit-owner test cleanup failed");
+		std::cout << "PASS explicit-user-owner-protected-acl\n";
 	}
 
 	void TestItemBounds()
@@ -294,18 +380,115 @@ namespace
 			output.empty(), "an oversized UTF-8 snapshot was accepted");
 		std::cout << "PASS input-and-json-failures\n";
 	}
+
+	void ExportManagedFixtures(const std::wstring &manifestPath)
+	{
+		Require(!manifestPath.empty() && !std::filesystem::path(manifestPath).is_relative(),
+			"fixture manifest path must be absolute");
+		namespace Snapshot = Nilesoft::Shell::SelectionSnapshot;
+		std::vector<std::wstring> outputs;
+		std::string manifest = R"({"version":1,"producer":"SelectionSnapshot::TryWrite","fixtures":[)";
+		const auto append = [&manifest](std::string_view text)
+		{
+			Require(Snapshot::detail::Append(manifest, text), "fixture manifest exceeds its bound");
+		};
+		const auto text = [&manifest](const wchar_t *value, std::size_t length)
+		{
+			Require(Snapshot::detail::AppendJsonString(manifest, value, length), "fixture manifest text is invalid");
+		};
+		const auto add = [&](std::string_view id, SelectionFixture &fixture, std::string_view context,
+			std::string_view supported, std::string_view rejected)
+		{
+			std::wstring output;
+			Require(Snapshot::TryWrite(*fixture.selection, output), "native fixture emission failed");
+			outputs.push_back(output);
+			if(outputs.size() > 1U) append(",");
+			append(R"({"id":")"); append(id); append(R"(","snapshotPath":)"); text(output.data(), output.size());
+			append(R"(,"expectedContext":")"); append(context); append(R"(","expectedPaths":[)");
+			bool first = true;
+			for(const auto *item : fixture.selection->Items)
+			{
+				if(!first) append(",");
+				first = false;
+				text(item->Path.c_str(), item->Path.length());
+			}
+			append(R"(],"expectedTypes":[)"); first = true;
+			for(const auto *item : fixture.selection->Items)
+			{
+				if(!first) append(",");
+				first = false;
+				append(item->IsDirectory() ? "\"directory\"" : "\"file\"");
+			}
+			append(R"(],"expectedParentPath":)");
+			text(fixture.selection->Parent.c_str(), fixture.selection->Parent.length());
+			append(R"(,"expectedIsBackground":)"); append(fixture.selection->Background ? "true" : "false");
+			append(R"(,"expectedIsDesktop":)"); append(fixture.selection->Window.desktop ? "true" : "false");
+			append(R"(,"supportedOperation":")"); append(supported);
+			append(R"(","rejectedOperation":")"); append(rejected); append("\"}");
+		};
+		try
+		{
+			const auto initialize = [](SelectionFixture &fixture)
+			{
+				fixture.selection->Window.id = Nilesoft::Shell::WINDOW_EXPLORER;
+				fixture.SetParent(L"C:\\SnapshotFixture");
+			};
+			SelectionFixture folder;
+			initialize(folder); folder.AddPath(L"C:\\SnapshotFixture\\folder \x4f8b\x5b50");
+			folder.items[0]->Group = Nilesoft::IO::PathType::Directory;
+			add("folder-one", folder, "explorer.folder", "folder.type.set", "capture.window");
+			folder.AddPath(L"C:\\SnapshotFixture\\second folder");
+			folder.items[1]->Group = Nilesoft::IO::PathType::Directory;
+			add("folder-many", folder, "explorer.selection", "files.unblock", "folder.type.set");
+			SelectionFixture files;
+			initialize(files); files.AddPath(L"C:\\SnapshotFixture\\file \x4f8b.txt");
+			files.items[0]->Group = Nilesoft::IO::PathType::File;
+			add("file-one", files, "explorer.selection", "files.unblock", "folder.type.set");
+			files.AddPath(L"C:\\SnapshotFixture\\second \xD83D\xDE00.txt");
+			files.items[1]->Group = Nilesoft::IO::PathType::File;
+			add("file-many", files, "explorer.selection", "launch.user-script", "launch.terminal");
+			SelectionFixture mixed;
+			initialize(mixed); mixed.AddPath(L"C:\\SnapshotFixture\\file \x4f8b.txt");
+			mixed.items[0]->Group = Nilesoft::IO::PathType::File;
+			mixed.AddPath(L"C:\\SnapshotFixture\\folder \x4f8b\x5b50");
+			mixed.items[1]->Group = Nilesoft::IO::PathType::Directory;
+			add("mixed", mixed, "explorer.selection", "launch.custom", "folder.type.set");
+			SelectionFixture desktop;
+			initialize(desktop); desktop.selection->Window.id = Nilesoft::Shell::WINDOW_DESKTOP;
+			desktop.selection->Window.desktop = true; desktop.selection->Background = true;
+			desktop.AddPath(L"C:\\SnapshotFixture\\Desktop"); desktop.items[0]->Group = Nilesoft::IO::PathType::Directory;
+			add("desktop", desktop, "desktop", "launch.user-script", "files.unblock");
+			SelectionFixture background;
+			initialize(background); background.selection->Background = true;
+			background.AddPath(L"C:\\SnapshotFixture\\Background"); background.items[0]->Group = Nilesoft::IO::PathType::Directory;
+			add("explorer-background", background, "explorer.background", "launch.terminal", "folder.type.set");
+			append("]}");
+			Require(Snapshot::detail::WriteFileBytes(manifestPath, manifest), "fixture manifest could not be created (use a new path)");
+			std::cout << "PASS exported-managed-fixtures (7 native snapshots)\n";
+		}
+		catch(...)
+		{
+			for(const auto &output : outputs) ::DeleteFileW(output.c_str());
+			throw;
+		}
+	}
 }
 
-int main()
+int wmain(int argc, wchar_t **argv)
 {
 	try
 	{
+		if(argc != 1 && (argc != 3 || std::wstring_view(argv[1]) != L"--export-managed-fixtures"))
+			throw std::runtime_error("Usage: SelectionSnapshotTests.exe [--export-managed-fixtures ABSOLUTE_NEW_MANIFEST_PATH]");
 		TestUnicodeAndCompleteSelection();
 		TestUniqueOutputs();
+		TestSupportedContexts();
 		TestCreateNewOwnership();
+		TestExplicitUserSecurity();
 		TestItemBounds();
 		TestJsonAndInputFailures();
 		std::cout << "Selection snapshot tests passed\n";
+		if(argc == 3) ExportManagedFixtures(argv[2]);
 		return 0;
 	}
 	catch(const std::exception &error)

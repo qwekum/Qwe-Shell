@@ -36,6 +36,14 @@ internal static class Program
             {
                 var workspace = Field<Workspace>(window, "workspace");
                 var tree = (TreeView)window.FindName("MenuTree");
+                Test("declining replacement preserves the current workspace", () => WorkspaceReplacement(directory, "discard-declined"));
+                Test("declining recovery preserves editing state", () => WorkspaceReplacement(directory, "recovery-declined"));
+                Test("failed recovery preserves editing state", () => WorkspaceReplacement(directory, "recovery-failed"));
+                Test("malformed recovery preserves editing state", () => WorkspaceReplacement(directory, "recovery-malformed"));
+                Test("unreadable replacement preserves editing state", () => WorkspaceReplacement(directory, "open-failed"));
+                Test("recovery followed by open failure preserves editing state", () => WorkspaceReplacement(directory, "recovered-open-failed"));
+                Test("successful recovery activates the prepared replacement", () => WorkspaceReplacement(directory, "success"));
+                Test("pending recovery on the current root blocks apply", () => WorkspaceReplacement(directory, "current-pending"));
                 Test("native fixed-DPI pixels and hit targets share physical screen geometry", () =>
                 {
                     var pane = new NativePreviewPane();
@@ -1714,14 +1722,18 @@ internal static class Program
         var traced = new TaskCompletionSource<MenuSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var submenu = new TaskCompletionSource<MenuSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
         var lateRoot = new TaskCompletionSource<MenuSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
-        capture.Start(snapshot =>
+        bool started = capture.Start(snapshot =>
         {
             received.TrySetResult(snapshot);
             if (snapshot.Original.Any(e => e.Trace.Contains("vis.remove: true"))) traced.TrySetResult(snapshot);
             if (snapshot.SubmenuAppearances.ContainsKey("After")) submenu.TrySetResult(snapshot);
             if (snapshot.Appearance?.Pixels == "/////w==") lateRoot.TrySetResult(snapshot);
         }, diagnostic => { received.TrySetException(new Exception(diagnostic.Message)); traced.TrySetException(new Exception(diagnostic.Message)); submenu.TrySetException(new Exception(diagnostic.Message)); lateRoot.TrySetException(new Exception(diagnostic.Message)); });
-        await using var native = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut, System.IO.Pipes.PipeOptions.Asynchronous);
+        Assert(started && capture.IsListening, "The unique fixture capture endpoint did not start.");
+        // CurrentUserOnly verifies the connecting token. Anonymous is the
+        // client constructor's default and cannot supply that identity.
+        await using var native = new System.IO.Pipes.NamedPipeClientStream(".", name, System.IO.Pipes.PipeDirection.InOut,
+            System.IO.Pipes.PipeOptions.Asynchronous, System.Security.Principal.TokenImpersonationLevel.Identification);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await native.ConnectAsync(timeout.Token);
         byte[] prefix = new byte[4]; await native.ReadExactlyAsync(prefix, timeout.Token);
@@ -1782,6 +1794,83 @@ internal static class Program
             "A capture collision did not identify the existing Studio instance.");
         Assert(!stopped.IsSet, "A listener that never started reported an asynchronous stop.");
         capture.DisposeAsync().AsTask().GetAwaiter().GetResult();
+    }
+
+    private static void WorkspaceReplacement(string directory, string scenario)
+    {
+        string currentPath = Path.Combine(directory, scenario + "-current.nss");
+        string replacementPath = Path.Combine(directory, scenario + "-replacement.nss");
+        File.WriteAllText(currentPath, "item(title='Current')\n");
+        if (scenario is not "open-failed" and not "recovered-open-failed")
+            File.WriteAllText(replacementPath, "item(title='Replacement')\n");
+        var testWindow = new MainWindow(["--render-to"]);
+        static void Set(object target, string name, object? value) => target.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(target, value);
+        bool Open(string candidate, bool discard = true, bool recover = true) => InvokeValue<bool>(testWindow, "TryOpenWorkspace", candidate,
+            (Func<bool>)(() => discard), (Func<string[], bool>)(_ => recover));
+        string marker = (scenario == "current-pending" ? currentPath : replacementPath) + ".studio-transaction.json";
+        try
+        {
+            Assert(Open(currentPath), "Initial workspace did not open.");
+            var current = Field<Workspace>(testWindow, "workspace");
+            var beforeSnapshot = Field<MenuSnapshot>(testWindow, "snapshot");
+            var beforeResolver = Field<PreviewWorkspaceSemanticResolver>(testWindow, "semanticResolver");
+            var beforeState = Field<EditorState>(testWindow, "editorState");
+            Invoke(testWindow, "SelectMenuEntry", beforeSnapshot.Entries[0]);
+            var beforeSelected = Field<MenuEntry>(testWindow, "selected");
+            var beforeTree = ((TreeView)testWindow.FindName("MenuTree")).ItemsSource;
+            var beforeExpression = ((ContentControl)testWindow.FindName("ExpressionContent")).Content;
+            var beforeProperties = ((StackPanel)testWindow.FindName("PropertyPanel")).Children.Cast<object>().ToArray();
+            current.Checkpoint();
+            current.Files[currentPath].SetText("item(title='Unsaved current')\n");
+            var assets = Field<Dictionary<string, FileEdit>>(testWindow, "assets");
+            assets.Add(Path.Combine(directory, scenario + ".png"), new(Path.Combine(directory, scenario + ".png"), "MISSING", [1]));
+            Set(testWindow, "automaticWorkspace", true);
+            Set(testWindow, "awaitingGeneration", "retained-generation");
+            if (scenario is not "open-failed" and not "discard-declined")
+            {
+                var journal = new TransactionJournal { Id = scenario == "recovery-failed" ? "invalid" : Guid.NewGuid().ToString("N") };
+                File.WriteAllText(marker, scenario == "recovery-malformed" ? "{" : JsonSerializer.Serialize(journal, Protocol.Json));
+            }
+            bool opened = Open(scenario == "current-pending" ? currentPath : replacementPath,
+                scenario != "discard-declined", scenario is not "recovery-declined" and not "current-pending");
+            if (scenario == "success")
+            {
+                Assert(opened && Field<Workspace>(testWindow, "workspace").RootPath == replacementPath, "Recovered replacement did not activate.");
+                Assert(!File.Exists(marker), "Successful recovery retained the journal.");
+                Assert(!ReferenceEquals(beforeResolver, Field<PreviewWorkspaceSemanticResolver>(testWindow, "semanticResolver")), "Replacement reused the old resolver.");
+                Assert(!Field<bool>(testWindow, "automaticWorkspace") && assets.Count == 0 && !Field<Workspace>(testWindow, "workspace").CanUndo, "Activation retained the previous edit state.");
+                return;
+            }
+            Assert(!opened, "Declined or failed replacement reported success.");
+            Assert(ReferenceEquals(current, Field<Workspace>(testWindow, "workspace")) && current.IsDirty && current.CanUndo, "Current workspace buffers or undo state were lost.");
+            Assert(ReferenceEquals(beforeSnapshot, Field<MenuSnapshot>(testWindow, "snapshot")) && ReferenceEquals(beforeSelected, Field<MenuEntry>(testWindow, "selected")), "Current preview or selection was replaced.");
+            Assert(ReferenceEquals(beforeResolver, Field<PreviewWorkspaceSemanticResolver>(testWindow, "semanticResolver")) && ReferenceEquals(beforeState, Field<EditorState>(testWindow, "editorState")), "Current resolver or layout state was replaced.");
+            Assert(ReferenceEquals(beforeTree, ((TreeView)testWindow.FindName("MenuTree")).ItemsSource) && ReferenceEquals(beforeExpression, ((ContentControl)testWindow.FindName("ExpressionContent")).Content), "The current editing UI was cleared.");
+            Assert(beforeProperties.SequenceEqual(((StackPanel)testWindow.FindName("PropertyPanel")).Children.Cast<object>()), "Current property controls were replaced.");
+            Assert(Field<bool>(testWindow, "automaticWorkspace") && Field<string>(testWindow, "awaitingGeneration") == "retained-generation" && assets.Count == 1 && Field<Stack<MenuSnapshot>>(testWindow, "snapshotUndo").Count == 1, "Current mode, assets, generation or snapshot undo were lost.");
+            if (scenario != "discard-declined") Assert(Field<List<Diagnostic>>(testWindow, "operationDiagnostics").Count > 0, "Failure diagnostics were lost.");
+            if (scenario is "open-failed" or "recovered-open-failed")
+            {
+                var readFailure = Field<List<Diagnostic>>(testWindow, "operationDiagnostics").SingleOrDefault(d => d.Code == "IMPORT_READ" && d.File == replacementPath);
+                Assert(readFailure is not null && readFailure.Severity == "error", "The replacement root read failure was not reported with its exact source path.");
+                Assert(Field<System.Collections.ObjectModel.ObservableCollection<Diagnostic>>(testWindow, "diagnostics").Contains(readFailure!), "The replacement failure did not reach the diagnostics UI.");
+            }
+            if (scenario == "current-pending")
+            {
+                Assert(!((Button)testWindow.FindName("ApplyButton")).IsEnabled, "Pending current-root recovery left Apply enabled.");
+                Assert(!InvokeValue<bool>(testWindow, "RequireWorkspace"), "The pending recovery barrier allowed editing.");
+                Assert(File.Exists(marker), "Declining recovery discarded its barrier.");
+            }
+        }
+        finally
+        {
+            if (File.Exists(marker)) File.Delete(marker);
+            Field<PreviewWorkspaceSemanticResolver>(testWindow, "semanticResolver").DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Field<PreviewWorkerClient>(testWindow, "semanticWorker").DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Field<NativePreviewPane>(testWindow, "nativePreview").DisposeAsync().AsTask().GetAwaiter().GetResult();
+            Set(testWindow, "workspace", null);
+            testWindow.Close();
+        }
     }
 
     private static IEnumerable<ExpressionNode> Descendants(ExpressionNode node)

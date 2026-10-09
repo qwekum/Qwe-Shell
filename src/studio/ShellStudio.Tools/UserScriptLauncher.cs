@@ -55,6 +55,23 @@ public static class UserScriptLauncher
             return false;
         }
 
+        if (extension.Equals(".bat", StringComparison.OrdinalIgnoreCase) || extension.Equals(".cmd", StringComparison.OrdinalIgnoreCase))
+        {
+            if (workingDirectory is not null && workingDirectory.Any(character => char.IsControl(character) || character == '"'))
+            {
+                error = "Batch working directories cannot contain control characters or embedded quotes.";
+                return false;
+            }
+            if (!CmdBatchEncoder.TryEncode(scriptPath, arguments.Concat(selection).ToArray(), out var command, out error))
+                return false;
+            specification = new ProcessLaunchSpec(Path.Combine(Environment.SystemDirectory, "cmd.exe"), [], workingDirectory)
+            {
+                Mode = ProcessLaunchMode.CmdBatch,
+                BatchCommand = command
+            };
+            return true;
+        }
+
         var launchArguments = new List<string>(interpreter.Prefix.Length + 1 + arguments.Count + selection.Count);
         launchArguments.AddRange(interpreter.Prefix);
         launchArguments.Add(scriptPath);

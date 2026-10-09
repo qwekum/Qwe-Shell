@@ -145,6 +145,13 @@ public sealed class InMemoryRegistryStore : IToolRegistry
 {
     private readonly ConcurrentDictionary<string, Dictionary<string, RegistryValue>> _keys = new(StringComparer.OrdinalIgnoreCase);
     private static string Id(string hive, string path) => $"{hive.ToUpperInvariant()}\\{path}";
+    public void CreateKey(string hive, string keyPath)
+    {
+        // Windows creates intermediate keys too; fixtures must model their existence.
+        var parts = keyPath.Split('\\');
+        for (var count = 1; count <= parts.Length; count++)
+            _keys.GetOrAdd(Id(hive, string.Join("\\", parts.Take(count))), _ => new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase));
+    }
 
     public IReadOnlyDictionary<string, RegistryValue> Read(string hive, string keyPath)
         => _keys.TryGetValue(Id(hive, keyPath), out var values) ? values.ToDictionary(x => x.Key, x => x.Value with { Value = Clone(x.Value.Value) }, StringComparer.OrdinalIgnoreCase) : new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase);
@@ -157,6 +164,7 @@ public sealed class InMemoryRegistryStore : IToolRegistry
     public RegistryValueKind? GetValueKind(string hive, string keyPath, string valueName) => Read(hive, keyPath).TryGetValue(valueName, out var value) ? value.Kind : null;
     public void SetValue(string hive, string keyPath, string valueName, object? value, RegistryValueKind kind)
     {
+        CreateKey(hive, keyPath);
         var values = _keys.GetOrAdd(Id(hive, keyPath), _ => new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase));
         lock (values) values[valueName] = new RegistryValue(valueName, Clone(value), kind);
     }

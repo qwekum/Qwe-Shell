@@ -67,13 +67,19 @@ public interface IToolRegistry
     IReadOnlyList<string> EnumerateSubKeys(string hive, string keyPath);
     object? GetValue(string hive, string keyPath, string valueName);
     RegistryValueKind? GetValueKind(string hive, string keyPath, string valueName);
+    void CreateKey(string hive, string keyPath);
     void SetValue(string hive, string keyPath, string valueName, object? value, RegistryValueKind kind);
     void DeleteValue(string hive, string keyPath, string valueName);
     void DeleteTree(string hive, string keyPath);
     bool KeyExists(string hive, string keyPath);
 }
 
-public sealed record ProcessLaunchSpec(string FileName, IReadOnlyList<string> Arguments, string? WorkingDirectory = null, bool Elevate = false);
+public enum ProcessLaunchMode { ArgumentVector, CmdBatch }
+public sealed record ProcessLaunchSpec(string FileName, IReadOnlyList<string> Arguments, string? WorkingDirectory = null, bool Elevate = false)
+{
+    public ProcessLaunchMode Mode { get; init; }
+    public CmdBatchCommand? BatchCommand { get; init; }
+}
 public sealed record ProcessLaunchResult(bool Started, int? ProcessId, int? ExitCode, string? Error);
 
 public interface IToolProcessController
@@ -360,6 +366,12 @@ public sealed class WindowsFileSystem : IToolFileSystem
 
 public sealed class WindowsRegistryStore : IToolRegistry
 {
+    public void CreateKey(string hive, string keyPath)
+    {
+        using var root = Hive(hive, true);
+        using var key = root?.CreateSubKey(keyPath)
+            ?? throw new InvalidOperationException($"Unable to create registry key {hive}\\{keyPath}.");
+    }
     public IReadOnlyList<string> EnumerateSubKeys(string hive, string keyPath)
     {
         using var key = Open(hive, keyPath, false);
@@ -372,7 +384,7 @@ public sealed class WindowsRegistryStore : IToolRegistry
         if (key is null) return new Dictionary<string, RegistryValue>(StringComparer.OrdinalIgnoreCase);
         return key.GetValueNames().ToDictionary(
             name => name,
-            name => new RegistryValue(name, key.GetValue(name), key.GetValueKind(name)),
+            name => new RegistryValue(name, key.GetValue(name, null, RegistryValueOptions.DoNotExpandEnvironmentNames), key.GetValueKind(name)),
             StringComparer.OrdinalIgnoreCase);
     }
 
@@ -404,7 +416,11 @@ public sealed class WindowsRegistryStore : IToolRegistry
         root.DeleteSubKeyTree(keyPath, throwOnMissingSubKey: false);
     }
 
-    public bool KeyExists(string hive, string keyPath) => Open(hive, keyPath, false) is not null;
+    public bool KeyExists(string hive, string keyPath)
+    {
+        using var key = Open(hive, keyPath, false);
+        return key is not null;
+    }
 
     private static RegistryKey? Open(string hive, string path, bool writable)
     {
@@ -438,8 +454,24 @@ public sealed class WindowsProcessController : IToolProcessController
                 UseShellExecute = true,
                 Verb = specification.Elevate ? "runas" : string.Empty
             };
-            foreach (var argument in specification.Arguments) psi.ArgumentList.Add(argument);
-            var process = Process.Start(psi);
+            if (specification.Mode == ProcessLaunchMode.CmdBatch)
+            {
+                if (specification.Elevate || specification.Arguments.Count != 0 || specification.BatchCommand is null
+                    || !specification.FileName.Equals(Path.Combine(Environment.SystemDirectory, "cmd.exe"), StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Batch launches require the non-elevated system CMD encoder contract.");
+                psi.UseShellExecute = false;
+                // CMD syntax is already encoded. ArgumentList would apply CRT quoting a second time.
+                psi.Arguments = "/d /v:off /s /c " + specification.BatchCommand.Command;
+                foreach (var (name, value) in specification.BatchCommand.Environment)
+                    psi.Environment[name] = value;
+            }
+            else
+            {
+                if (specification.Mode != ProcessLaunchMode.ArgumentVector || specification.BatchCommand is not null)
+                    throw new InvalidOperationException("An argv launch requires the argument-vector contract.");
+                foreach (var argument in specification.Arguments) psi.ArgumentList.Add(argument);
+            }
+            using var process = Process.Start(psi);
             return new ProcessLaunchResult(process is not null, process?.Id, null, process is null ? "Process.Start returned no process." : null);
         }
         catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception)
