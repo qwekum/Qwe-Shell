@@ -238,6 +238,8 @@ public sealed class OperationService
         foreach (var field in descriptor.Fields)
         {
             var supplied = request.Values.TryGetValue(field.Name, out var value) ? value : field.DefaultValue;
+            if (descriptor.Id == "views.apply" && field.Name == "iconSize" && !request.Values.ContainsKey(field.Name))
+                supplied = DirectRawView(GetValue(request, "viewMode", "Details")).IconSize.ToString(CultureInfo.InvariantCulture);
             values[field.Name] = IsFeatureField(field.Name)
                 ? NormalizeFeatureChoice(field.Name, supplied, diagnostics)
                 : supplied;
