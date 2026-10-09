@@ -170,9 +170,11 @@ namespace Nilesoft::Shell::SelectionSnapshot
 				return false;
 			}
 
+			const auto desktop = selection.Window.id == WINDOW_DESKTOP || selection.Window.desktop || selection.Types[FSO_DESKTOP] != 0;
+			const std::string_view context = desktop ? "desktop" : selection.Background ? "explorer.background" :
+				(selection.Items.size() == 1U && selection.Items[0] && selection.Items[0]->IsDirectory()) ? "explorer.folder" : "explorer.selection";
 			if(!Append(json, R"({"version":1,"context":")") ||
-				!Append(json, ContextName(selection.Window.id)) ||
-				!Append(json, selection.Background ? ".background\"" : ".selection\""))
+				!Append(json, context) || !Append(json, '"'))
 				return false;
 			if(!Append(json, R"(,"paths":[)"))
 				return false;
@@ -263,10 +265,52 @@ namespace Nilesoft::Shell::SelectionSnapshot
 			}
 		}
 
+		inline HANDLE CreateCurrentUserFile(const std::wstring &path) noexcept
+		{
+			// Elevated tokens may default the owner to Administrators. The hand-off
+			// must instead belong to the effective user, including when impersonating.
+			HANDLE token = nullptr;
+			if(!::OpenThreadToken(::GetCurrentThread(), TOKEN_QUERY, TRUE, &token))
+			{
+				if(::GetLastError() != ERROR_NO_TOKEN ||
+					!::OpenProcessToken(::GetCurrentProcess(), TOKEN_QUERY, &token))
+					return INVALID_HANDLE_VALUE;
+			}
+			alignas(TOKEN_USER) std::array<BYTE, sizeof(TOKEN_USER) + SECURITY_MAX_SID_SIZE> userBytes{};
+			DWORD returned = 0U;
+			const auto queried = ::GetTokenInformation(token, TokenUser, userBytes.data(),
+				static_cast<DWORD>(userBytes.size()), &returned) != FALSE;
+			const auto queryError = ::GetLastError();
+			::CloseHandle(token);
+			if(!queried)
+			{
+				::SetLastError(queryError);
+				return INVALID_HANDLE_VALUE;
+			}
+			const auto user = reinterpret_cast<const TOKEN_USER *>(userBytes.data())->User.Sid;
+			if(!::IsValidSid(user) || ::GetLengthSid(user) > SECURITY_MAX_SID_SIZE)
+			{
+				::SetLastError(ERROR_INVALID_SID);
+				return INVALID_HANDLE_VALUE;
+			}
+			alignas(ACL) std::array<BYTE, sizeof(ACL) + sizeof(ACCESS_ALLOWED_ACE) - sizeof(DWORD) + SECURITY_MAX_SID_SIZE> aclBytes{};
+			const auto acl = reinterpret_cast<PACL>(aclBytes.data());
+			SECURITY_DESCRIPTOR descriptor{};
+			if(!::InitializeAcl(acl, static_cast<DWORD>(aclBytes.size()), ACL_REVISION) ||
+				!::AddAccessAllowedAce(acl, ACL_REVISION, FILE_ALL_ACCESS, user) ||
+				!::InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) ||
+				!::SetSecurityDescriptorOwner(&descriptor, user, FALSE) ||
+				!::SetSecurityDescriptorDacl(&descriptor, TRUE, acl, FALSE) ||
+				!::SetSecurityDescriptorControl(&descriptor, SE_DACL_PROTECTED, SE_DACL_PROTECTED))
+				return INVALID_HANDLE_VALUE;
+			SECURITY_ATTRIBUTES attributes{ sizeof(SECURITY_ATTRIBUTES), &descriptor, FALSE };
+			return ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, &attributes,
+				CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+		}
+
 		inline bool WriteFileBytes(const std::wstring &path, const std::string &json) noexcept
 		{
-			const auto file = ::CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr,
-				CREATE_NEW, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_WRITE_THROUGH, nullptr);
+			const auto file = CreateCurrentUserFile(path);
 			if(file == INVALID_HANDLE_VALUE)
 				return false;
 

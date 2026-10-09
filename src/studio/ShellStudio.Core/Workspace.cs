@@ -60,7 +60,6 @@ public sealed class Workspace
         this.language = language ?? throw new ArgumentNullException(nameof(language));
         this.semanticResolver = semanticResolver;
         explicitlyOpenedFiles.Add(RootPath);
-        EnsureLoaded(RootPath, SourceParseRole.Configuration, []);
         RefreshImportGraphCore();
         revision = 1;
     }
@@ -129,7 +128,10 @@ public sealed class Workspace
             detachedFiles.Clear();
 
             var reachable = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (Files.TryGetValue(RootPath, out var root))
+            // Root loading belongs to this refresh so its failure survives
+            // the diagnostic reset and can be retried if the file reappears.
+            var root = EnsureLoaded(RootPath, SourceParseRole.Configuration, []);
+            if (root is not null)
             {
                 reachable.Add(root.Path);
                 WalkFile(root, null, "", "", new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), [],
@@ -695,12 +697,14 @@ public sealed class Workspace
         file.Replace(start, length, replacement);
     }
 
-    public List<FileEdit> Edits() => Files.Values.Where(f => f.IsDirty).Select(f => new FileEdit(
+    public List<FileEdit> Edits() => EffectiveFiles.Where(f => f.IsDirty).Select(f => new FileEdit(
         f.Path, f.ExistedAtOpen ? f.OriginalHash : "MISSING", f.Bytes())).ToList();
 
-    public void AcceptSaved()
+    public void AcceptSaved(IEnumerable<string> savedPaths)
     {
-        foreach (var file in Files.Values) file.AcceptSaved();
+        ArgumentNullException.ThrowIfNull(savedPaths);
+        var saved = savedPaths.Select(System.IO.Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in Files.Values.Where(file => saved.Contains(file.Path))) file.AcceptSaved();
         undo.Clear();
         redo.Clear();
         RefreshImports();

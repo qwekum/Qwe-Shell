@@ -110,7 +110,7 @@ public partial class MainWindow : Window
                 string parent = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "shell.nss"));
                 config = File.Exists(adjacent) ? adjacent : File.Exists(parent) ? parent : null;
             }
-            if (config is not null) { OpenWorkspace(config); automaticWorkspace = useRuntimeConfiguration; }
+            if (config is not null && OpenWorkspace(config)) automaticWorkspace = useRuntimeConfiguration;
             InitializeTools();
             int profileIndex = Array.IndexOf(args, "--profile");
             if (profileIndex >= 0)
@@ -119,7 +119,8 @@ public partial class MainWindow : Window
                 var profile = ActionProfileStore.Load(args[profileIndex + 1]);
                 int selectionIndex = Array.IndexOf(args, "--selection-file");
                 if (selectionIndex < 0 || selectionIndex + 1 >= args.Length) throw new InvalidDataException("A generated action requires its current selection snapshot.");
-                var invocation = SelectionSnapshotStore.Load(args[selectionIndex + 1]);
+                var invocation = SelectionSnapshotStore.ConsumeNative(args[selectionIndex + 1], out var cleanupDiagnostic);
+                if (cleanupDiagnostic is not null) Report(cleanupDiagnostic);
                 ((ToolsPage)ToolsContent.Content).LoadProfile(profile, invocation);
                 Pages.SelectedIndex = 3;
             }
@@ -167,21 +168,70 @@ public partial class MainWindow : Window
     private void ClearDiagnostics_Click(object sender, RoutedEventArgs e) { operationDiagnostics.Clear(); diagnostics.Clear(); Refresh(); UpdateCommandState(); if (diagnostics.Count == 0) DiagnosticsExpander.IsExpanded = false; }
     private bool RequireWorkspace()
     {
+        if (CurrentRecoveryPending)
+        {
+            Report(new("RECOVERY_PENDING", "An interrupted transaction needs recovery before editing or applying this configuration.", File: workspace!.RootPath + ".studio-transaction.json"));
+            return false;
+        }
         if (workspace is not null && workspace.Files.ContainsKey(workspace.RootPath)) return true;
         Report(new("WORKSPACE_REQUIRED", "Open a Shell configuration before editing.", "warning")); return false;
     }
-    private void OpenWorkspace(string path)
+    private bool CurrentRecoveryPending => workspace is not null && File.Exists(workspace.RootPath + ".studio-transaction.json");
+
+    private bool OpenWorkspace(string path) => TryOpenWorkspace(path,
+        () => MessageBox.Show(this, "Discard the current unsaved edits?", "Open configuration", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes,
+        targets => Dialogs.Review(this, "Recover interrupted apply", "Restore the retained originals for these transaction targets?\n\n" +
+            string.Join("\n", targets) + "\n\nNewer external edits will be preserved.", "Recover"));
+
+    private bool TryOpenWorkspace(string path, Func<bool> confirmDiscard, Func<string[], bool> confirmRecovery)
     {
-        if (workspace?.IsDirty == true && MessageBox.Show(this, "Discard the current unsaved edits?", "Open configuration", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+        if ((workspace?.IsDirty == true || assets.Count > 0) && !confirmDiscard()) return false;
+        Workspace candidate;
+        EditorState candidateState;
+        MenuSnapshot candidateSnapshot;
+        PreviewWorkspaceSemanticResolver? candidateResolver = null;
+        try
+        {
+            if (!RecoverBeforeOpen(path, confirmRecovery)) return false;
+            candidate = new Workspace(path, language, new PendingNativeSemantics());
+            if (!candidate.Files.ContainsKey(candidate.RootPath))
+            {
+                foreach (var diagnostic in candidate.Diagnostics) Report(diagnostic);
+                return false;
+            }
+            candidateResolver = new(candidate, semanticWorker);
+            candidate.SemanticResolver = candidateResolver;
+            try { candidateState = EditorStateStore.Load(path); }
+            catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
+            { candidateState = new(); Report(new("LAYOUT_RESET", "Layout metadata could not be loaded: " + ex.Message, "warning")); }
+            candidateSnapshot = MenuEditing.FromConfiguration(candidate);
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            candidateResolver?.DisposeAsync().GetAwaiter().GetResult();
+            Report(new("WORKSPACE_OPEN_FAILED", ex.Message, File: path));
+            return false;
+        }
+
+        // Transfer ownership only after recovery, source loading and snapshot
+        // preparation have succeeded. Failed replacement leaves the live view.
+        var previousWorkspace = workspace;
+        var previousResolver = semanticResolver;
+        workspace = candidate;
+        semanticResolver = candidateResolver;
+        if (previousWorkspace is not null) previousWorkspace.CheckpointCreating -= Remember;
+        previousResolver?.DisposeAsync().GetAwaiter().GetResult();
+        workspace.CheckpointCreating += Remember;
+        editorState = candidateState;
         automaticWorkspace = false;
-        if (!RecoverBeforeOpen(path)) return;
-        workspace = new(path, language, new PendingNativeSemantics()); workspace.CheckpointCreating += Remember; awaitingGeneration = null;
-        if (semanticResolver is not null) semanticResolver.DisposeAsync().GetAwaiter().GetResult();
-        semanticResolver = new(workspace, semanticWorker);
-        workspace.SemanticResolver = semanticResolver;
-        try { editorState = EditorStateStore.Load(path); }
-        catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException or UnauthorizedAccessException)
-        { editorState = new(); Report(new("LAYOUT_RESET", "Layout metadata could not be loaded: " + ex.Message, "warning")); }
+        awaitingGeneration = null;
+        awaitingExpectation = null;
+        selected = null;
+        selectedPresentationOnly = false;
+        canvas = null;
+        settingsWorkspace = null;
+        PropertyPanel.Children.Clear();
+        ExpressionContent.Content = null;
         if (!renderOnly)
         {
             Width = Math.Clamp(editorState.WindowWidth, MinWidth, Math.Max(MinWidth, SystemParameters.WorkArea.Width));
@@ -189,12 +239,13 @@ public partial class MainWindow : Window
             if (lightTheme != editorState.LightTheme) Theme_Click(this, new RoutedEventArgs());
         }
         assets.Clear(); snapshotUndo.Clear(); snapshotRedo.Clear(); assetsUndo.Clear(); assetsRedo.Clear();
-        snapshot = MenuEditing.FromConfiguration(workspace);
+        snapshot = candidateSnapshot;
         Refresh();
         StatusLabel.Text = "Configuration loaded. Runtime conditions have not been evaluated.";
+        return true;
     }
 
-    private bool RecoverBeforeOpen(string path)
+    private bool RecoverBeforeOpen(string path, Func<string[], bool> confirmRecovery)
     {
         string root = Path.GetFullPath(path), marker = root + ".studio-transaction.json";
         if (!File.Exists(marker)) return true;
@@ -205,16 +256,8 @@ public partial class MainWindow : Window
         if (journal.Files is null || journal.Files.Count > 256 || journal.Files.Any(file => file is null || !Path.IsPathFullyQualified(file.Path)))
             throw new InvalidDataException("The recovery journal target set is invalid.");
         var targets = journal.Files.Select(file => file.Path).ToArray();
-        workspace = null; selected = null; selectedPresentationOnly = false; snapshot = new(); MenuTree.ItemsSource = null;
-        nativePreview.Bind(null, null);
-        entryOverview.ShowEmpty("Recovery required", "Resolve the interrupted transaction before editing this configuration.");
-        PropertyPanel.Children.Clear(); SettingsPanel.Children.Clear(); ExpressionContent.Content = null;
-        menuPreview.ShowMenu(snapshot, _ => { });
-        MenuPreviewState.Text = "Recovery required before editing";
-        UpdateCommandState();
-        if (!Dialogs.Review(this, "Recover interrupted apply", "Restore the retained originals for these transaction targets?\n\n" +
-            string.Join("\n", targets) + "\n\nNewer external edits will be preserved.", "Recover"))
-        { Report(new("RECOVERY_PENDING", "Recovery remains pending. Editing is blocked; reopen the configuration to retry.", File: marker)); return false; }
+        if (!confirmRecovery(targets))
+        { Report(new("RECOVERY_PENDING", "Recovery remains pending for the requested configuration; reopen it to retry.", File: marker)); return false; }
         var result = new ConfigurationTransactions(root, targets).Recover();
         foreach (var diagnostic in result.Diagnostics) Report(diagnostic);
         return result.Success;
@@ -925,12 +968,12 @@ public partial class MainWindow : Window
     };
     private void UpdateCommandState()
     {
-        bool opened = workspace is not null;
+        bool opened = workspace is not null && !CurrentRecoveryPending;
         TemplateWorkspacePrompt.Visibility = opened ? Visibility.Collapsed : Visibility.Visible;
         SaveTemplateButton.IsEnabled = opened;
         SaveSelectionTemplateButton.IsEnabled = opened && selected is not null && !selectedPresentationOnly && IsCurrentEntry(selected);
         AddCommandButton.IsEnabled = AddMenuButton.IsEnabled = AddSeparatorButton.IsEnabled = opened;
-        ApplyButton.IsEnabled = workspace?.IsDirty == true;
+        ApplyButton.IsEnabled = opened && (workspace!.Edits().Count > 0 || assets.Count > 0);
         ApplyButton.ToolTip = ApplyButton.IsEnabled ? "Review pending changes (Ctrl+S)" : "No pending changes to apply";
         bool hasSelection = opened && selected is not null;
         InspectorEmptyHint.Visibility = hasSelection ? Visibility.Collapsed : Visibility.Visible;
@@ -1432,7 +1475,7 @@ public partial class MainWindow : Window
         {
             awaitingGeneration = result.TransactionId;
             awaitingExpectation = expectation is null ? null : expectation with { RuntimeGeneration = result.TransactionId };
-            workspace.AcceptSaved(); assets.Clear(); snapshotUndo.Clear(); snapshotRedo.Clear(); assetsUndo.Clear(); assetsRedo.Clear();
+            workspace.AcceptSaved(edits.Select(edit => edit.Path)); assets.Clear(); snapshotUndo.Clear(); snapshotRedo.Clear(); assetsUndo.Clear(); assetsRedo.Clear();
             StatusLabel.Text = "Saved. Capture the menu again to verify the runtime result. Backup: " + result.BackupDirectory;
             PhaseLabel.Text = "SAVED · AWAITING CAPTURE";
         }

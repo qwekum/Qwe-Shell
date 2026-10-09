@@ -520,8 +520,7 @@ public sealed class RecoveryJournal
             return;
         }
 
-        if (!current.Exists && backup.Values.Count == 0 && (backup.Children?.Length ?? 0) == 0)
-            return;
+        environment.Registry.CreateKey(backup.Hive, backup.KeyPath);
 
         foreach (var value in current.Values.Values)
         {
@@ -544,6 +543,8 @@ public sealed class RecoveryJournal
 
     private static object? RegistryObject(RegistryValue value)
     {
+        if (value.Kind == Microsoft.Win32.RegistryValueKind.Binary && value.Value is JsonElement binary && binary.ValueKind == JsonValueKind.String)
+            return binary.GetBytesFromBase64();
         if (value.Value is JsonElement element && element.ValueKind == JsonValueKind.Array)
         {
             if (value.Kind == Microsoft.Win32.RegistryValueKind.MultiString)
