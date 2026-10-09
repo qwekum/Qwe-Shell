@@ -7,34 +7,23 @@ Replace their final source/package identity only with observed evidence from the
 
 ## Qualification draft scope and dependencies
 
-The requested third pull request is published as draft [PR4](https://github.com/qwekum/Qwe-Shell/pull/4).
+The owner authorized addressing PR4's review and merging the PR1/PR4 stack into
+current main. The ten original Studio findings are now integrated with the
+additional runtime/build/harness work and PR4's mode-default and readiness fixes.
+PR4 is merged into PR1 before PR1 is merged into main, preserving the feature
+ancestor, source history and fork branding. See [integration status](stack-integration-2026-10-08.md).
 
-The owner authorized a separate qualification draft containing today's work
-beyond the twelve original findings, including the additional runtime fixes.
-Its review base is PR1's `codex/preserve-studio` at
-`b8ee65cc73cc1d21db76bd1c419dbe5daec3ef2c`; it is not based on merged main.
-PR1 and PR2 remain unchanged preservation drafts. This draft does not replace PR2's
-offline cloud lane and does not contain its staged-index or README-LF fixes.
+PR2 remains a separate offline cloud lane. Its README-LF and staged-index fixes
+are outside this stack and remain local. This stack does not replace PR2.
+Final source-specific checks and merge revisions are recorded in the PR
+descriptions and external handoff. Historical combined candidate package hashes
+and guest results cannot qualify this newly combined source revision.
 
-It includes intermediate parser spans; evidence versions on source-free capture
-entries; valid dynamic-only submenu construction with actual production tests;
-five donor behavior regressions/corrections; sequential audited builds;
-test prerequisites and worker readiness; finite native-scroll assertions;
-Sandbox driver repairs; unsigned 1.9.20 metadata and legacy-MSI removal ordering;
-source whitespace/inventory provenance and current documentation.
-
-The original twelve fixes remain outside this PR: batch command encoding,
-selection contexts and snapshot consumption, registry import/export and recovery
-corrections, strict encoding, detached source edits, atomic recovery replacement,
-README LF, and cloud index verification. They must reach the appropriate PRs
-and pass independent review before those PRs can be merged safely.
-
-The candidate record's package hashes and tests describe the combined local
-overlay. The qualification draft's checks are reported separately in its PR description;
-they cannot inherit unrelated combined checks as proof of this narrower branch.
-Full-plan review remains **revise** for the named omissions and acceptance gates.
-Publication of this draft does not authorize merges, retargeting other PRs,
-Actions enablement, signing, distribution or active-desktop changes.
+Release acceptance remains incomplete for the documented donor omissions,
+automatic unopened-submenu capture and Windows/language/installer/ARM64/Linux
+matrices. Persistent VM and human gates remain held. Merge authorization does
+not authorize signing, package distribution, Actions enablement, or changes to
+the active desktop.
 
 ## PR1: Repair Studio contracts and prepare unsigned 1.9.20 candidate
 

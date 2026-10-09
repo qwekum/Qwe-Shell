@@ -1,9 +1,9 @@
 # Managed Studio tool parity
 
 This ledger records the combined implementation and its remaining parity gaps.
-The narrower qualification draft intentionally excludes the twelve original
-review fixes; see [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies).
-Registry and launch behavior in its isolated branch still needs those fixes.
+The stack includes the ten original Studio review fixes; PR2 remains separate.
+See [publication scope](pr-remediation.md#qualification-draft-scope-and-dependencies)
+and [integration status](stack-integration-2026-10-08.md).
 
 This ledger records the source evidence used to consolidate the four pinned
 donors into `ShellStudio.Tools`.  Donor identifiers are evidence, not runtime

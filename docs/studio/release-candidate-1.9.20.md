@@ -1,12 +1,11 @@
 # Unsigned 1.9.20 candidate preparation — 2026-10-08
 
 Status: **combined local candidate record; release acceptance blocked**.
-The twelve original corrections are implemented in that combined local overlay,
-but are intentionally excluded from the separate [qualification draft](https://github.com/qwekum/Qwe-Shell/pull/4).
-That draft contains the additional runtime, build, harness and documentation work and
-is stacked on the original Studio PR head. Neither PR1 nor PR2 is updated by
-publishing the qualification draft. Results below identify the combined candidate's source and
-package; they do not qualify the narrower qualification branch or its excluded fixes.
+This historical record describes the larger combined local overlay, including
+cloud fixes. The current PR1/PR4 stack includes the ten Studio fixes and the
+additional qualification work; PR2 remains separate. See
+[integration status](stack-integration-2026-10-08.md) for the new source scope.
+The packages and results below qualify only their identified historical inputs.
 
 This is a local, uncommitted combined snapshot targeting main. It is not a
 published release or a merged revision. Public distribution and signing are
@@ -138,7 +137,7 @@ are in [PR remediation notes](pr-remediation.md).
 | Installer lifecycle | Build-6 scoped clean install, damaged repair, uninstall and reinstall passed, with seven preserved user-data categories. Old normal-MSI upgrade, equal/newer rejection, registration-failure recovery and failed upgrade recovery remain incomplete |
 | Persistent VM/physical session | Reboot, startup cleanup, legacy upgrade/recovery and physical-session scenarios blocked by unavailable approved VM |
 | Human/UI | Keyboard, Narrator, themes/high contrast, 100/150/200% DPI, monitor transitions, large graphs and direct editing acceptance blocked pending recorded human testing |
-| Publication | The separate qualification branch and [draft PR4](https://github.com/qwekum/Qwe-Shell/pull/4) are published. Publishing the combined candidate/original fixes, changing PR1/PR2, retargeting, review publication, merges, Actions, signing and distribution still require separate authorization |
+| Publication | The separate qualification branch and [draft PR4](https://github.com/qwekum/Qwe-Shell/pull/4) are published. The owner now authorizes fixing and merging PR1/PR4 into main. PR2 changes/merge, review publication, Actions enablement, signing and distribution remain outside that authorization |
 
 ## Backup and rollback
 
