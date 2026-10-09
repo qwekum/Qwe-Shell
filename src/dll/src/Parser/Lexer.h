@@ -1,5 +1,10 @@
 #pragma once
 
+#include <wincrypt.h>
+#include <limits>
+
+#pragma comment(lib, "advapi32.lib")
+
 namespace Nilesoft
 {
 	namespace Shell
@@ -176,6 +181,10 @@ namespace Nilesoft
 			wchar_t peek = 0;
 			TokenError error = TokenError::None;
 			Lexer *parent{};
+			// SHA-256 of the exact bytes read from disk.  This is retained with
+			// the lexer so parsed menu nodes can be bound back to the same source
+			// version by Studio instead of relying on a mutable path and offset.
+			std::string source_hash;
 
 			Lexer() 
 			{
@@ -202,12 +211,50 @@ namespace Nilesoft
 				tok = 0;
 				prev = 0;
 				peek = 0;
+				source_hash.clear();
 			}
 
 			bool load_File(const wchar_t *path, bool ignore_failed = false)
 			{
 				this->path = path;
 				return load_File(ignore_failed);
+			}
+
+			// Load caller-owned source without touching the filesystem.  The
+			// lexer keeps its own copy so a syntax-only Parser can safely outlive
+			// the editor buffer that supplied the view.
+			bool load_buffer(const wchar_t *source, size_t source_length,
+				const wchar_t *source_path = L"<studio>")
+			{
+				clear();
+				path = source_path ? source_path : L"<studio>";
+				location = path;
+				error = TokenError::None;
+
+				if(source_length > 0 && source == nullptr)
+				{
+					error = TokenError::InvalidFile;
+					return false;
+				}
+
+				try
+				{
+					length = source_length;
+					buffer = new wchar_t[length + 4]{};
+					if(source_length > 0)
+						::memcpy(buffer, source, source_length * sizeof(wchar_t));
+
+					tok = length > 0 ? buffer[0] : 0;
+					peek = length > 1 ? buffer[1] : 0;
+					eof = tok == 0;
+					return true;
+				}
+				catch(...)
+				{
+					clear();
+					error = TokenError::InvalidFile;
+					return false;
+				}
 			}
 
 			bool load_File(bool ignore_failed = false)
@@ -236,6 +283,7 @@ namespace Nilesoft
 					std::unique_ptr<uint8_t[]> buf(new uint8_t[numbytes + 4]{ 0 });
 
 					numbytes = file.Read(&buf[0], sizeof(uint8_t), numbytes);
+					source_hash = Sha256(buf.get(), numbytes);
 					size_t headerSz = 0;
 					auto encodeType = Encoding::GetType(buf.get(), numbytes);
 					switch(encodeType)
@@ -337,6 +385,57 @@ namespace Nilesoft
 				error = TokenError::None;
 				return false;
 			}
+
+		private:
+			static std::string Sha256(const uint8_t *data, size_t size)
+			{
+				if(size > 0 && data == nullptr)
+					return {};
+
+				HCRYPTPROV provider = 0;
+				HCRYPTHASH hash = 0;
+				if(!::CryptAcquireContextW(&provider, nullptr, nullptr, PROV_RSA_AES,
+					CRYPT_VERIFYCONTEXT | CRYPT_SILENT))
+					return {};
+
+				std::string result;
+				if(::CryptCreateHash(provider, CALG_SHA_256, 0, 0, &hash))
+				{
+					constexpr size_t maxChunk = (std::numeric_limits<DWORD>::max)();
+					bool valid = true;
+					size_t offset = 0;
+					while(offset < size)
+					{
+						const size_t remaining = size - offset;
+						const DWORD chunk = static_cast<DWORD>(remaining > maxChunk ? maxChunk : remaining);
+						if(!::CryptHashData(hash, data + offset, chunk, 0))
+						{
+							valid = false;
+							break;
+						}
+						offset += chunk;
+					}
+
+					BYTE digest[32]{};
+					DWORD digestSize = static_cast<DWORD>(sizeof(digest));
+					if(valid && ::CryptGetHashParam(hash, HP_HASHVAL, digest, &digestSize, 0) &&
+						digestSize == sizeof(digest))
+					{
+						static constexpr char digits[] = "0123456789abcdef";
+						result.reserve(static_cast<size_t>(digestSize) * 2);
+						for(DWORD index = 0; index < digestSize; ++index)
+						{
+							result.push_back(digits[(digest[index] >> 4) & 0x0f]);
+							result.push_back(digits[digest[index] & 0x0f]);
+						}
+					}
+					::CryptDestroyHash(hash);
+				}
+				::CryptReleaseContext(provider, 0);
+				return result;
+			}
+
+		public:
 
 			wchar_t next()
 			{

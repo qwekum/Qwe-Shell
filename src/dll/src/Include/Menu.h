@@ -123,7 +123,7 @@ namespace Nilesoft
 						COLOR color;
 						auto_expr align;
 					} text;
-					
+
 					COLOR back;
 					COLOR border;
 					auto_expr opacity;
@@ -215,7 +215,7 @@ namespace Nilesoft
 				Privileges value = Privileges::None;
 				bool inherit = false;
 			} admin;*/
-		
+
 			auto_expr window;
 			auto_expr directory;
 			auto_expr verb;
@@ -244,6 +244,25 @@ namespace Nilesoft
 		{
 		public:
 			uint32_t sign = NILESOFTSHELL_SIGN + 1;
+
+			// Source identity is retained on parsed definitions so a captured
+			// custom entry can be resolved back to the lossless Studio document.
+			// The parser owns the format of source_node_id (currently n<UTF-16
+			// start offset>); runtime menu construction only carries this data.
+			string source_file;
+			string source_node_id;
+			// Optional import occurrence identity. Older parser paths do not have
+			// occurrence-aware loading and intentionally leave this empty.
+			string source_occurrence_id;
+			// Imported declarations without occurrence-aware loading must remain
+			// visible as semantic entries, but their file/hash/span is not an
+			// edit-capable source reference.  Serialization uses this flag to
+			// suppress partial provenance and report the limitation explicitly.
+			bool source_occurrence_unavailable = false;
+			// SHA-256 of the exact source-file bytes loaded by the parser.  Studio
+			// must compare this with its opened document before applying an edit.
+			std::string source_hash;
+			std::size_t source_end = 0;
 
 			static constexpr auto TYPE_NONE = 0;
 			static constexpr auto TYPE_MAIN = 1;
@@ -275,6 +294,8 @@ namespace Nilesoft
 			auto_expr keys;
 			auto_expr moveto;
 			auto_expr title;
+			// Optional authored identity, evaluated with the entry's native scope.
+			auto_expr explicit_id;
 			auto_expr checked;
 			auto_expr column;
 			// static item property

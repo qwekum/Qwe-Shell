@@ -14,7 +14,14 @@ constexpr auto Windows_UI_FileExplorer = L"Windows.UI.FileExplorer.dll";
 #include "Include/Theme.h"
 #include <Library/PlutoVGWrap.h>
 #include "Include/Tip.h"
+#include "Include/StudioCapture.h"
+#include "Include/ContextMenuPaint.h"
+#include <cstddef>
 #include <stack>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #define MF_ALLSTATE         0x00FF
 #define MF_MAINMENU         0xFFFF
@@ -90,14 +97,31 @@ namespace Nilesoft
 			bool disabled = false;
 			bool radio_check = false;
 			int checked = 0;
+			// Raw menu flags are retained for original capture.  The semantic
+			// fields above are still used by runtime construction, while these
+			// values let Studio distinguish default, owner-draw, and other native
+			// state without reconstructing it from a filtered row.
+			uint32_t native_fType = 0;
+			uint32_t native_fState = 0;
+			bool is_default = false;
+			bool owner_draw = false;
 			ULONG_PTR dwItemData = 0;
 			HBITMAP image = nullptr;
+			// The source HMENU and native ordinal remain stable while this context
+			// owns the Explorer menu.  They let capture overlay static evaluations
+			// onto the lossless getter tree even when display filtering or moveto
+			// changes the real tree's order.
+			HMENU native_menu = nullptr;
+			uint32_t native_index = 0;
 			menuitem_t *parent = nullptr;
 			string path;
 			Position position = Position::Auto;
 			Visibility visibility = Visibility::Enabled;
 			std::vector<NativeMenu*> native_items;
 			std::vector<menuitem_t *> items;
+			StudioCaptureTrace trace;
+			StudioCaptureEvidence evidence;
+			StudioCaptureCompleteness studio_completeness;
 			bool is_toplevel = false;
 			~menuitem_t()
 			{
@@ -109,6 +133,75 @@ namespace Nilesoft
 			bool is_menu() const { return type == 1; }
 
 			uint32_t uid() const { return ui ? ui->id : hash; }
+		};
+
+		struct StudioCaptureTraceKey
+		{
+			HMENU menu = nullptr;
+			uint32_t index = 0;
+
+			bool operator==(const StudioCaptureTraceKey &other) const noexcept
+			{
+				return menu == other.menu && index == other.index;
+			}
+		};
+
+		struct StudioCaptureTraceKeyHash
+		{
+			size_t operator()(const StudioCaptureTraceKey &key) const noexcept
+			{
+				const auto menuHash = std::hash<uintptr_t>{}(
+					reinterpret_cast<uintptr_t>(key.menu));
+				const auto indexHash = std::hash<uint32_t>{}(key.index);
+				return menuHash ^ (indexHash + static_cast<size_t>(0x9e3779b9) +
+					(menuHash << 6) + (menuHash >> 2));
+			}
+		};
+
+		struct StudioAppearanceRowCache
+		{
+			RECT rect{};
+			std::vector<uint8_t> pixels;
+			UINT itemId{};
+			uint32_t position = UINT32_MAX;
+			long pixelWidth{};
+			long pixelHeight{};
+			bool painted = false;
+			bool visible = false;
+		};
+
+		struct StudioAppearanceCache
+		{
+			uint64_t epoch{};
+			HMENU menu{};
+			long width{};
+			long height{};
+			long scrollInset{};
+			POINT clientOrigin{};
+			uint32_t dpi{};
+			size_t pixelCount{};
+			bool inPaint = false;
+			bool geometryReady = false;
+			bool failed = false;
+			std::string failure;
+			std::vector<StudioAppearanceRowCache> rows;
+
+			void clear() noexcept
+			{
+				epoch = 0;
+				menu = nullptr;
+				width = 0;
+				height = 0;
+				scrollInset = 0;
+				clientOrigin = {};
+				dpi = 0;
+				pixelCount = 0;
+				inPaint = false;
+				geometryReady = false;
+				failed = false;
+				failure.clear();
+				rows.clear();
+			}
 		};
 
 		struct WND
@@ -183,6 +276,7 @@ namespace Nilesoft
 			HWND dr = 0;
 
 			D2D d2d;
+			StudioAppearanceCache studio_appearance;
 			WND(HWND hWnd = nullptr) : handle{ hWnd }
 			{
 				//cs.lock();
@@ -215,8 +309,8 @@ namespace Nilesoft
 			{
 				if(!visible_layers)
 				{
-					// SWP_NOOWNERZORDER = Does not change the owner window's position in the Z order. 
-					// SWP_NOZORDER = Retains the current Z order (ignores the hWndInsertAfter parameter). 
+					// SWP_NOOWNERZORDER = Does not change the owner window's position in the Z order.
+					// SWP_NOZORDER = Retains the current Z order (ignores the hWndInsertAfter parameter).
 					// | SWP_NOSENDCHANGING | SWP_NOCOPYBITS | SWP_NOREDRAW
 					auto flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOREDRAW | SWP_NOACTIVATE | SWP_SHOWWINDOW;
 
@@ -381,6 +475,17 @@ plutovg_move_to(pluto, start.x, start.y);
 				{
 					return owner ? owner->dynamic : false;
 				}
+			};
+
+			struct ShellRowPaintInput
+			{
+				HDC hdc{};
+				RECT rect{};
+				UINT itemId{};
+				UINT itemAction{};
+				UINT itemState{};
+				const menu_t *menu{};
+				MenuItemInfo *item{};
 			};
 
 			struct PositionList
@@ -550,7 +655,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				Font icon10;
 			}font;
 
-			struct symbole_tag 
+			struct symbole_tag
 			{
 				SIZE size{};
 				HBITMAP normal{};
@@ -572,7 +677,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				symbole_tag checked;
 				symbole_tag bullet;
 			}symbol;
-			
+
 			struct {
 
 				struct {
@@ -584,7 +689,7 @@ plutovg_move_to(pluto, start.x, start.y);
 					bool keys = true;
 					int image = 1;
 					int position = 1;
-					
+
 					struct
 					{
 						bool duplicate = false;
@@ -653,7 +758,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			Visibility _vis = Visibility::Normal;
 
 			std::vector<uint32_t> parent_level;
-			struct 
+			struct
 			{
 				std::vector<MenuItemInfo *> statics;
 				std::vector<MenuItemInfo *>	dynamics;
@@ -693,6 +798,10 @@ plutovg_move_to(pluto, start.x, start.y);
 			DWORD ThreadId{};
 
 			std::vector<WND *> _level;
+			// HWND order is kept separately from _level so capture can select the
+			// currently visible, last-created popup without retaining pointers into
+			// _map across popup destruction.
+			std::vector<HWND> _studio_popup_order;
 			std::unordered_map<HWND, WND> _map;
 			GC<MenuItemInfo> _gc;
 			bool _uninitialized = false;
@@ -701,6 +810,69 @@ plutovg_move_to(pluto, start.x, start.y);
 			std::unordered_map<uint32_t, menuitem_t *> __map_system_menu;
 
 			std::vector<menuitem_t *> __movable_system_items;
+			// Automatic capture redirects only these construction dependencies to
+			// request-owned state. Ordinary popup construction remains unchanged.
+			Context *_studio_construction_context{};
+			GC<MenuItemInfo> *_studio_construction_gc{};
+			std::unordered_map<HMENU, menu_t> *_studio_construction_menus{};
+			std::vector<MenuItemInfo *> *_studio_construction_moved_dynamics{};
+			size_t *_studio_construction_item_budget{};
+			bool *_studio_construction_budget_exhausted{};
+			StudioCapture _studio_capture;
+			uint64_t _studio_original_published_epoch = 0;
+			uint64_t _studio_automatic_capture_published_epoch = 0;
+			bool _studio_real_enumeration_complete = false;
+			bool _studio_static_evaluation_complete = false;
+			bool _studio_capture_active_during_static_evaluation = false;
+			std::unordered_map<StudioCaptureTraceKey, StudioCaptureTrace,
+				StudioCaptureTraceKeyHash> _studio_evaluated_traces;
+			std::unordered_map<StudioCaptureTraceKey, StudioCaptureEvidence,
+				StudioCaptureTraceKeyHash> _studio_evaluated_evidence;
+			std::unordered_map<HMENU, std::vector<MenuItemInfo *>> _studio_final_entries;
+			std::unordered_set<HWND> _studio_appearance_published;
+			HWND _studio_appearance_timer_owner{};
+			HWND _studio_appearance_timer_hwnd{};
+			UINT_PTR _studio_appearance_timer_id{};
+
+		void retain_capture_evaluation(menuitem_t *item) noexcept;
+		void overlay_capture_evaluations(menuitem_t *item);
+		struct CaptureEvaluationScope
+		{
+			ContextMenu *owner;
+			menuitem_t *item;
+			~CaptureEvaluationScope() noexcept;
+		};
+
+		Context &construction_context() noexcept
+		{
+			return _studio_construction_context ? *_studio_construction_context : _context;
+		}
+		GC<MenuItemInfo> &construction_gc() noexcept
+		{
+			return _studio_construction_gc ? *_studio_construction_gc : _gc;
+		}
+		std::unordered_map<HMENU, menu_t> &construction_menus() noexcept
+		{
+			return _studio_construction_menus ? *_studio_construction_menus : _menus;
+		}
+		std::vector<MenuItemInfo *> &construction_moved_dynamics() noexcept
+		{
+			return _studio_construction_moved_dynamics
+				? *_studio_construction_moved_dynamics : _moved_items.dynamics;
+		}
+		bool construction_consume_item() noexcept
+		{
+			if(!_studio_construction_item_budget)
+				return true;
+			if(*_studio_construction_item_budget == 0)
+			{
+				if(_studio_construction_budget_exhausted)
+					*_studio_construction_budget_exhausted = true;
+				return false;
+			}
+			--*_studio_construction_item_budget;
+			return true;
+		}
 
 		public:// functions
 
@@ -713,6 +885,9 @@ plutovg_move_to(pluto, start.x, start.y);
 			bool prepare_system_items2(PositionList &list, menu_t *menu);
 
 			void prepare_system_item(menuitem_t *item, MenuItemInfo *mii, menu_t *menu);
+			bool construct_popup_entries(menu_t *menu,
+				std::vector<MenuItemInfo *> &items, bool capture = false);
+			bool capture_unopened_submenus(menu_t *root);
 
 
 			LRESULT OnTimer(UINT_PTR nIDEvent, TIMERPROC Timerproc = nullptr);
@@ -725,15 +900,32 @@ plutovg_move_to(pluto, start.x, start.y);
 			LRESULT OnMenuSelect(HMENU hMenu, uint32_t id, uint32_t flags);
 			LRESULT OnDrawItem(DRAWITEMSTRUCT *di);
 			LRESULT OnMeasureItem(MEASUREITEMSTRUCT *mi);
+			bool paint_shell_row(const ShellRowPaintInput &input,
+				ShellRowPaintPlan &plan);
 
 			LRESULT OnDrawItem_D2D(DRAWITEMSTRUCT *di);
 
 			uint32_t invoke(CommandProperty *cmd_prop);
 			bool is_excluded();
+			StudioCaptureMetadata capture_metadata() const;
+			bool publish_original_capture_if_armed();
+			StudioCaptureAppearance capture_popup_appearance(WND *wnd,
+				const std::vector<MenuItemInfo *> &entries,
+				std::wstring_view parentPath);
+			void schedule_appearance_capture(HWND hWnd) noexcept;
+			void cancel_appearance_capture_timer() noexcept;
+			void publish_appearance_after_paint(HWND hWnd) noexcept;
+			void begin_appearance_paint(WND *wnd) noexcept;
+			void finish_appearance_paint(WND *wnd) noexcept;
+			void cache_painted_row(DRAWITEMSTRUCT *di,
+				const uint8_t *renderedPixels = nullptr,
+				long renderedWidth = 0, long renderedHeight = 0) noexcept;
+			void clear_appearance_cache(HMENU hMenu) noexcept;
 			bool Initialize();
 			int Uninitialize();
-			int InvokeCommand(int id);	
-			void build_system_menuitems(HMENU hMenu, menuitem_t *menu, bool is_root = false);
+			int InvokeCommand(int id);
+			void build_system_menuitems(HMENU hMenu, menuitem_t *menu,
+				bool is_root = false, bool capture_original = false);
 			void build_main_system_menuitems(menuitem_t *menu, bool is_root = false);
 
 
@@ -743,7 +935,8 @@ plutovg_move_to(pluto, start.x, start.y);
 			void OnMenuShow(HWND hWnd, WND *wnd = nullptr);
 			bool CreateLayer(WND *wnd);
 			void UpdateLayered(WND *wnd, bool update_blurry = false);
-			bool draw_layer(WND *wnd, SIZE size, int margin);
+			bool draw_layer(WND *wnd, SIZE size, int margin,
+				bool opaqueInterior = false);
 			void screenshot();
 
 			HMENU MenuHandle() const;
@@ -760,6 +953,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			}
 			*/
 			void draw_string(HDC hdc, HFONT hFont, const Rect *rc, const Color &color, const wchar_t *text, int length = -1, DWORD format = 0, bool disable_BufferedPaint = false);
+			void draw_scroll_arrows(HDC hdc, long width, long height);
 
 		public:
 			// static variables
@@ -768,7 +962,7 @@ plutovg_move_to(pluto, start.x, start.y);
 			inline static POINT point = {};
 			inline static std::unordered_map<HWINEVENTHOOK, ContextMenu *> HookMap;
 
-		public: 
+		public:
 			// static functions
 			inline static void draw_rect(DC *dc, const POINT &pt, const SIZE &size, const Color &color, const Color &border = {}, int radius = 0);
 
@@ -822,7 +1016,7 @@ plutovg_move_to(pluto, start.x, start.y);
 				else
 				{
 					printf("Mouse installed.\n");
-					// Determine whether the buttons are swapped. 
+					// Determine whether the buttons are swapped.
 					fResult = GetSystemMetrics(SM_SWAPBUTTON);
 					if(fResult == 0)
 						printf("Buttons not swapped.\n");

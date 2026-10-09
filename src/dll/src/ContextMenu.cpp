@@ -1,12 +1,707 @@
 #include <pch.h>
 #include "Include/Theme.h"
 #include "Include/ContextMenu.h"
+#include "Include/NativeMenuConstruction.h"
+#include "Include/NativeRowSurface.h"
+#include "Expression/Constants.h"
 #include "Include/stb_image_write.h"
 
 using namespace Nilesoft::Diagnostics;
+#include <atomic>
+#include <initializer_list>
 #include <mutex>
+#include <stdexcept>
 
 extern Logger &_log;
+
+namespace
+{
+	constexpr size_t kMaxCaptureTraceEntries = 64;
+	constexpr size_t kMaxCaptureTraceChars = 1024;
+	constexpr size_t kMaxCaptureEvidenceText = 1024;
+	constexpr size_t kMaxRetainedCaptureEvaluations = 4096;
+	constexpr size_t kMaxAutomaticCaptureDepth = 64;
+	constexpr size_t kMaxAutomaticCaptureItems = 4096;
+	constexpr unsigned long long kAutomaticCaptureBudgetMs = 100;
+	constexpr uint32_t kMaxAppearanceWidth = 2048;
+	constexpr uint32_t kMaxAppearanceHeight = 4096;
+	constexpr uint64_t kMaxAppearancePixels = 600000;
+	constexpr UINT kAppearanceTimerDelayMs = 16;
+	constexpr size_t kMaxAppearanceRows = 4096;
+	constexpr size_t kMaxAppearanceBytes =
+		static_cast<size_t>(kMaxAppearancePixels) * 4U;
+	constexpr size_t kMaxRetainedAppearanceBytes = 16U * 1024U * 1024U;
+	std::atomic<UINT_PTR> next_appearance_timer_id{0x6A510000U};
+	thread_local Nilesoft::Shell::StudioCapture *capture_trace_owner = nullptr;
+	thread_local Nilesoft::Shell::StudioCaptureEvidence *capture_evidence_owner = nullptr;
+
+	UINT_PTR NextAppearanceTimerId() noexcept
+	{
+		auto id = next_appearance_timer_id.fetch_add(1, std::memory_order_relaxed);
+		if(id == 0)
+			id = next_appearance_timer_id.fetch_add(1, std::memory_order_relaxed);
+		return id;
+	}
+
+	void NormalizePremultiplied(uint8_t *pixel) noexcept
+	{
+		if(!pixel)
+			return;
+		const auto alpha = pixel[3];
+		if(pixel[0] > alpha) pixel[0] = alpha;
+		if(pixel[1] > alpha) pixel[1] = alpha;
+		if(pixel[2] > alpha) pixel[2] = alpha;
+	}
+
+	void CompositePremultiplied(uint8_t *destination, const uint8_t *source) noexcept
+	{
+		if(!destination || !source)
+			return;
+		const auto sourceAlpha = source[3];
+		if(sourceAlpha == 0)
+			return;
+
+		const auto inverse = static_cast<unsigned>(255U - sourceAlpha);
+		for(int channel = 0; channel < 3; ++channel)
+		{
+			const auto sourceValue = source[channel] > sourceAlpha
+				? sourceAlpha : source[channel];
+			const auto destinationValue = destination[channel];
+			destination[channel] = static_cast<uint8_t>(sourceValue +
+				((static_cast<unsigned>(destinationValue) * inverse + 127U) / 255U));
+		}
+		const auto destinationAlpha = destination[3];
+		destination[3] = static_cast<uint8_t>(sourceAlpha +
+			((static_cast<unsigned>(destinationAlpha) * inverse + 127U) / 255U));
+		NormalizePremultiplied(destination);
+	}
+
+	bool IntersectAppearanceRect(const RECT &source, long width, long height,
+		RECT &clipped, long scrollInset = 0) noexcept
+	{
+		RECT bounds{0, scrollInset, width, height - scrollInset};
+		return ::IntersectRect(&clipped, &source, &bounds) &&
+			clipped.right > clipped.left && clipped.bottom > clipped.top;
+	}
+
+	bool GetTopDownBitmap(HBITMAP bitmap, long width, long height,
+		std::vector<uint8_t> &pixels)
+	{
+		if(!bitmap || width <= 0 || height <= 0)
+			return false;
+		const auto byteCount = static_cast<size_t>(width) *
+			static_cast<size_t>(height) * 4U;
+		if(byteCount > kMaxAppearanceBytes)
+			return false;
+		BITMAPINFO info{};
+		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		info.bmiHeader.biWidth = width;
+		info.bmiHeader.biHeight = -height;
+		info.bmiHeader.biPlanes = 1;
+		info.bmiHeader.biBitCount = 32;
+		info.bmiHeader.biCompression = BI_RGB;
+		pixels.resize(byteCount);
+		Nilesoft::Drawing::DC dc(::CreateCompatibleDC(nullptr), 1);
+		if(!dc || ::GetDIBits(dc, bitmap, 0, static_cast<UINT>(height),
+			pixels.data(), &info, DIB_RGB_COLORS) != static_cast<int>(height))
+		{
+			pixels.clear();
+			return false;
+		}
+		for(size_t index = 0; index < pixels.size(); index += 4)
+			NormalizePremultiplied(pixels.data() + index);
+		return true;
+	}
+
+	bool GetMenuItemClientRect(HWND popup, HMENU menu, UINT position,
+		RECT &rect) noexcept
+	{
+		if(!popup || !menu || !::GetMenuItemRect(popup, menu, position, &rect))
+			return false;
+		POINT topLeft{rect.left, rect.top};
+		POINT bottomRight{rect.right, rect.bottom};
+		if(!::ScreenToClient(popup, &topLeft) ||
+			!::ScreenToClient(popup, &bottomRight))
+			return false;
+		rect = {topLeft.x, topLeft.y, bottomRight.x, bottomRight.y};
+		return rect.right > rect.left && rect.bottom > rect.top;
+	}
+
+	class CaptureTraceScope final
+	{
+	public:
+		explicit CaptureTraceScope(Nilesoft::Shell::StudioCapture *owner)
+			: previous_(capture_trace_owner)
+		{
+			capture_trace_owner = owner;
+		}
+		~CaptureTraceScope() { capture_trace_owner = previous_; }
+
+	private:
+		Nilesoft::Shell::StudioCapture *previous_;
+	};
+
+	class CaptureEvidenceScope final
+	{
+	public:
+		explicit CaptureEvidenceScope(Nilesoft::Shell::StudioCaptureEvidence *owner)
+			: previous_(capture_evidence_owner)
+		{
+			capture_evidence_owner = owner;
+		}
+		~CaptureEvidenceScope() { capture_evidence_owner = previous_; }
+
+	private:
+		Nilesoft::Shell::StudioCaptureEvidence *previous_;
+	};
+
+	bool CaptureTracingEnabled()
+	{
+		return capture_trace_owner != nullptr && capture_trace_owner->IsActive();
+	}
+
+	void CaptureTraceFailure() noexcept
+	{
+		if(capture_trace_owner)
+			capture_trace_owner->Fail("CAPTURE_TRACE_MEMORY",
+				"The native capture could not retain a rule evaluation trace.");
+	}
+
+	std::string CaptureEvidenceId(std::wstring_view value) noexcept
+	{
+		try
+		{
+			std::string result;
+			result.reserve(value.size());
+			for(const auto character : value)
+			{
+				if(character > 0x7f)
+					return {};
+				result.push_back(static_cast<char>(character));
+			}
+			return result;
+		}
+		catch(...)
+		{
+			return {};
+		}
+	}
+
+	std::string CaptureOutcome(bool matched, std::wstring_view action) noexcept
+	{
+		if(action.find(L"removed") != std::wstring_view::npos ||
+			action.find(L"would remove") != std::wstring_view::npos)
+			return "removed";
+		if(action.find(L"overwritten") != std::wstring_view::npos ||
+			action.find(L"would be replaced") != std::wstring_view::npos ||
+			action.find(L"replaced by") != std::wstring_view::npos ||
+			action.find(L"replaced ") != std::wstring_view::npos)
+			return "overwritten";
+		if(action.find(L"blocked") != std::wstring_view::npos ||
+			action.find(L"modification disabled") != std::wstring_view::npos ||
+			action.find(L"not evaluated") != std::wstring_view::npos)
+			return "blocked";
+		if(action.find(L"not applied") != std::wstring_view::npos ||
+			action.find(L"not defined") != std::wstring_view::npos ||
+			action.find(L"evaluation failed") != std::wstring_view::npos ||
+			action.find(L"empty; skipped") != std::wstring_view::npos ||
+			action.find(L"invalid pattern; skipped") != std::wstring_view::npos ||
+			action.find(L"destination unchanged") != std::wstring_view::npos ||
+			action.find(L"skipped") != std::wstring_view::npos ||
+			action.find(L"rejected") != std::wstring_view::npos)
+			return "skipped";
+		return matched ? "matched" : "skipped";
+	}
+
+	std::string CapturePropertyName(std::wstring_view rule) noexcept
+	{
+		const auto separator = rule.find(L'.');
+		if(separator == std::wstring_view::npos)
+			return {};
+		const auto family = rule.substr(0, separator);
+		if(family != L"static" && family != L"dynamic" && family != L"remove")
+			return {};
+		auto property = rule.substr(separator + 1);
+		if(property == L"rule" || property == L"result" || property == L"match")
+			return {};
+		if(property == L"types")
+			property = L"type";
+		else if(property == L"moveto")
+			property = L"parent";
+		return CaptureEvidenceId(property);
+	}
+
+	std::wstring CaptureEvidenceValue(std::wstring_view action)
+	{
+		const auto equals = action.find(L'=');
+		if(equals == std::wstring_view::npos)
+			return {};
+		const auto prefix = action.substr(0, equals);
+		if(prefix != L"value" && prefix != L"pos" && prefix != L"id")
+			return {};
+		auto value = action.substr(equals + 1);
+		const auto separator = value.find(L';');
+		if(separator != std::wstring_view::npos)
+			value = value.substr(0, separator);
+		if(value.size() > kMaxCaptureEvidenceText)
+			value = value.substr(0, kMaxCaptureEvidenceText);
+		return std::wstring(value);
+	}
+
+	void CaptureStructuredEvidence(const Nilesoft::Shell::NativeMenu *source,
+		std::wstring_view rule, bool matched, std::wstring_view action) noexcept
+	{
+		if(!CaptureTracingEnabled() || !capture_evidence_owner)
+			return;
+		try
+		{
+			auto &evidence = *capture_evidence_owner;
+			const auto markEvidenceLimit = [&]() noexcept
+			{
+				evidence.truncated = true;
+				evidence.messageLimit = Nilesoft::Shell::StudioCaptureEvidence::MaxItems;
+			};
+			if(evidence.ruleOutcomes.size() < Nilesoft::Shell::StudioCaptureEvidence::MaxItems)
+			{
+				Nilesoft::Shell::StudioCaptureRuleOutcome outcome;
+				outcome.source = source;
+				outcome.ruleId = CaptureEvidenceId(rule);
+				if(outcome.ruleId.empty())
+					outcome.ruleId = "native.evaluation";
+				outcome.outcome = CaptureOutcome(matched, action);
+				if(action.size() > kMaxCaptureEvidenceText)
+					outcome.reason.assign(action.substr(0, kMaxCaptureEvidenceText));
+				else
+					outcome.reason.assign(action);
+				evidence.ruleOutcomes.push_back(std::move(outcome));
+				if(evidence.ruleOutcomes.size() >=
+					Nilesoft::Shell::StudioCaptureEvidence::MaxItems)
+					markEvidenceLimit();
+			}
+			else
+				markEvidenceLimit();
+
+			const auto property = CapturePropertyName(rule);
+			if(!property.empty() && evidence.propertyEffects.size() <
+				Nilesoft::Shell::StudioCaptureEvidence::MaxItems)
+			{
+				Nilesoft::Shell::StudioCapturePropertyEffect effect;
+				effect.source = source;
+				effect.property = property;
+				effect.effect = CaptureOutcome(matched, action);
+				if(effect.effect == "matched")
+					effect.effect = "applied";
+				effect.value = CaptureEvidenceValue(action);
+				evidence.propertyEffects.push_back(std::move(effect));
+				if(evidence.propertyEffects.size() >=
+					Nilesoft::Shell::StudioCaptureEvidence::MaxItems)
+					markEvidenceLimit();
+			}
+			else if(!property.empty())
+				markEvidenceLimit();
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTrace(Nilesoft::Shell::StudioCaptureTrace &trace,
+		std::wstring_view text) noexcept
+	{
+		if(!CaptureTracingEnabled() || trace.size() >= kMaxCaptureTraceEntries || text.empty())
+			return;
+		try
+		{
+			const auto length = text.size() < kMaxCaptureTraceChars
+				? text.size() : kMaxCaptureTraceChars;
+			trace.emplace_back(text.substr(0, length));
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTrace(Nilesoft::Shell::StudioCaptureTrace &trace, std::wstring_view rule,
+		bool matched, std::wstring_view action = {}) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring text(rule);
+			text += matched ? L": matched" : L": not matched";
+			if(!action.empty())
+			{
+				text += L"; ";
+				text += action;
+			}
+			CaptureStructuredEvidence(nullptr, rule, matched, action);
+			CaptureTrace(trace, text);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceNumber(Nilesoft::Shell::StudioCaptureTrace &trace,
+		std::wstring_view prefix, int value) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring text(prefix);
+			text += std::to_wstring(value);
+			CaptureTrace(trace, text);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceSource(Nilesoft::Shell::StudioCaptureTrace &trace,
+		const Nilesoft::Shell::NativeMenu *source,
+		std::wstring_view rule, bool matched, std::wstring_view action = {}) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			if(!source || (source->source_file.empty() && source->source_node_id.empty()))
+			{
+				CaptureTrace(trace, rule, matched, action);
+				return;
+			}
+			CaptureStructuredEvidence(source, rule, matched, action);
+			std::wstring named(rule);
+			named += L" [source=";
+			if(!source->source_file.empty())
+				named.append(source->source_file.c_str(), source->source_file.length());
+			if(!source->source_node_id.empty())
+			{
+				named += L'#';
+				named.append(source->source_node_id.c_str(), source->source_node_id.length());
+			}
+			named += L"]";
+			named += matched ? L": matched" : L": not matched";
+			if(!action.empty())
+			{
+				named += L"; ";
+				named += action;
+			}
+			CaptureTrace(trace, named);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	void CaptureTraceSourceNumber(Nilesoft::Shell::StudioCaptureTrace &trace,
+		const Nilesoft::Shell::NativeMenu *source, std::wstring_view rule,
+		std::wstring_view prefix, int value) noexcept
+	{
+		if(!CaptureTracingEnabled())
+			return;
+		try
+		{
+			std::wstring action(prefix);
+			action += std::to_wstring(value);
+			CaptureTraceSource(trace, source, rule, true, action);
+		}
+		catch(...)
+		{
+			CaptureTraceFailure();
+		}
+	}
+
+	bool CaptureIdentIn(uint32_t id, std::initializer_list<uint32_t> values) noexcept
+	{
+		for(const auto value : values)
+			if(id == value)
+				return true;
+		return false;
+	}
+
+	bool CaptureIdentPath(const Nilesoft::Shell::Ident &id,
+		std::initializer_list<uint32_t> values) noexcept
+	{
+		if(id.length() != values.size())
+			return false;
+		size_t index = 0;
+		for(const auto value : values)
+		{
+			if(id[index++] != value)
+				return false;
+		}
+		return true;
+	}
+
+	bool CaptureStringMember(uint32_t id) noexcept
+	{
+		return CaptureIdentIn(id, {Nilesoft::Shell::IDENT_LEN,
+			Nilesoft::Shell::IDENT_LENGTH, Nilesoft::Shell::IDENT_NULL,
+			Nilesoft::Shell::IDENT_EMPTY, Nilesoft::Shell::IDENT_UPPER,
+			Nilesoft::Shell::IDENT_LOWER, Nilesoft::Shell::IDENT_CAPITALIZE,
+			Nilesoft::Shell::IDENT_HASH, Nilesoft::Shell::IDENT_TRIM,
+			Nilesoft::Shell::IDENT_TRIMSTART, Nilesoft::Shell::IDENT_TRIMEND,
+			Nilesoft::Shell::IDENT_SET, Nilesoft::Shell::IDENT_CHAR,
+			Nilesoft::Shell::IDENT_GET, Nilesoft::Shell::IDENT_AT,
+			Nilesoft::Shell::IDENT_SUB, Nilesoft::Shell::IDENT_LEFT,
+			Nilesoft::Shell::IDENT_RIGHT, Nilesoft::Shell::IDENT_PADDING,
+			Nilesoft::Shell::IDENT_PADLEFT, Nilesoft::Shell::IDENT_PADRIGHT,
+			Nilesoft::Shell::IDENT_NOT, Nilesoft::Shell::IDENT_EQ,
+			Nilesoft::Shell::IDENT_EQUALS, Nilesoft::Shell::IDENT_START,
+			Nilesoft::Shell::IDENT_END, Nilesoft::Shell::IDENT_FIND,
+			Nilesoft::Shell::IDENT_FINDLAST, Nilesoft::Shell::IDENT_CONTAINS,
+			Nilesoft::Shell::IDENT_REPLACE, Nilesoft::Shell::IDENT_REMOVE,
+			Nilesoft::Shell::IDENT_JOIN, Nilesoft::Shell::IDENT_SPLIT,
+			Nilesoft::Shell::IDENT_TAG, Nilesoft::Shell::IDENT_FORMAT});
+	}
+
+	bool CaptureStringPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 1)
+			return true;
+		if(id.length() == 2)
+			return CaptureStringMember(id[1]);
+		return id.length() == 3 && id[1] == Nilesoft::Shell::IDENT_DECODE &&
+			id[2] == Nilesoft::Shell::IDENT_URL;
+	}
+
+	bool CaptureSelectionMember(uint32_t id) noexcept
+	{
+		return CaptureIdentIn(id, {Nilesoft::Shell::IDENT_COUNT,
+			Nilesoft::Shell::IDENT_READONLY, Nilesoft::Shell::IDENT_HIDDEN,
+			Nilesoft::Shell::IDENT_BACK, Nilesoft::Shell::IDENT_LEN,
+			Nilesoft::Shell::IDENT_LENGTH, Nilesoft::Shell::IDENT_WORKDIR,
+			Nilesoft::Shell::IDENT_CURDIR, Nilesoft::Shell::IDENT_PATH,
+			Nilesoft::Shell::IDENT_FULL, Nilesoft::Shell::IDENT_PARENT,
+			Nilesoft::Shell::IDENT_LOCATION, Nilesoft::Shell::IDENT_ROOT,
+			Nilesoft::Shell::IDENT_ITEM, Nilesoft::Shell::IDENT_NAME,
+			Nilesoft::Shell::IDENT_TITLE, Nilesoft::Shell::IDENT_FILE,
+			Nilesoft::Shell::IDENT_DIR, Nilesoft::Shell::IDENT_DIRECTORY,
+			Nilesoft::Shell::IDENT_MODE, Nilesoft::Shell::IDENT_TYPE,
+			Nilesoft::Shell::IDENT_TYPES, Nilesoft::Shell::IDENT_PATHS,
+			Nilesoft::Shell::IDENT_TITLES, Nilesoft::Shell::IDENT_NAMES,
+			Nilesoft::Shell::IDENT_EXTS, Nilesoft::Shell::IDENT_DIRS,
+			Nilesoft::Shell::IDENT_DIRECTORIES});
+	}
+
+	bool CaptureSelectionChild(uint32_t parent, uint32_t id) noexcept
+	{
+		if(!CaptureIdentIn(id, {Nilesoft::Shell::IDENT_LEN,
+			Nilesoft::Shell::IDENT_LENGTH, Nilesoft::Shell::IDENT_NAME,
+			Nilesoft::Shell::IDENT_TITLE, Nilesoft::Shell::IDENT_QUOTE,
+			Nilesoft::Shell::IDENT_COUNT}))
+			return false;
+		return parent != Nilesoft::Shell::IDENT_ITEM ||
+			id == Nilesoft::Shell::IDENT_LEN || id == Nilesoft::Shell::IDENT_LENGTH;
+	}
+
+	bool CaptureSelectionPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 1)
+			return true;
+		if(!CaptureSelectionMember(id[1]))
+			return false;
+		if(id.length() == 2)
+			return true;
+		if(id.length() != 3)
+			return false;
+		if(id[1] == Nilesoft::Shell::IDENT_PATH ||
+			id[1] == Nilesoft::Shell::IDENT_FULL)
+			return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_LEN,
+				Nilesoft::Shell::IDENT_LENGTH, Nilesoft::Shell::IDENT_NAME,
+				Nilesoft::Shell::IDENT_TITLE, Nilesoft::Shell::IDENT_QUOTE});
+		if(id[1] == Nilesoft::Shell::IDENT_PARENT ||
+			id[1] == Nilesoft::Shell::IDENT_LOCATION ||
+			id[1] == Nilesoft::Shell::IDENT_FILE ||
+			id[1] == Nilesoft::Shell::IDENT_DIR ||
+			id[1] == Nilesoft::Shell::IDENT_DIRECTORY)
+			return CaptureSelectionChild(id[1], id[2]);
+		if(CaptureIdentIn(id[1], {Nilesoft::Shell::IDENT_TYPES,
+			Nilesoft::Shell::IDENT_PATHS, Nilesoft::Shell::IDENT_TITLES,
+			Nilesoft::Shell::IDENT_NAMES, Nilesoft::Shell::IDENT_EXTS,
+			Nilesoft::Shell::IDENT_DIRS, Nilesoft::Shell::IDENT_DIRECTORIES}))
+			return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_COUNT,
+				Nilesoft::Shell::IDENT_NAME, Nilesoft::Shell::IDENT_TITLE,
+				Nilesoft::Shell::IDENT_QUOTE});
+		// `sel.type` and `sel.mode` are read-only values.  Their nested
+		// namespaces are intentionally closed until each enum member is audited.
+		return false;
+	}
+
+	bool CapturePathPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 2 && CaptureIdentIn(id[1], {
+			Nilesoft::Shell::IDENT_EXT, Nilesoft::Shell::IDENT_ROOT,
+			Nilesoft::Shell::IDENT_NAME, Nilesoft::Shell::IDENT_TITLE,
+			Nilesoft::Shell::IDENT_PARENT, Nilesoft::Shell::IDENT_LOCATION,
+			Nilesoft::Shell::IDENT_JOIN, Nilesoft::Shell::IDENT_COMBINE,
+			Nilesoft::Shell::IDENT_SEP, Nilesoft::Shell::IDENT_SEPARATOR,
+			Nilesoft::Shell::IDENT_ISABSOLUTE, Nilesoft::Shell::IDENT_ISRELATIVE,
+			Nilesoft::Shell::IDENT_ISCLSID, Nilesoft::Shell::IDENT_ISNAMESPACE,
+			Nilesoft::Shell::IDENT_REMOVEEXTENSION}))
+			return true;
+		if(id.length() == 3 && (id[1] == Nilesoft::Shell::IDENT_PARENT ||
+			id[1] == Nilesoft::Shell::IDENT_LOCATION))
+			return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_NAME,
+				Nilesoft::Shell::IDENT_TITLE});
+		return id.length() == 3 && id[1] == Nilesoft::Shell::IDENT_FILE &&
+			CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_EXT,
+				Nilesoft::Shell::IDENT_NAME, Nilesoft::Shell::IDENT_TITLE});
+	}
+
+	bool CaptureColorPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 1)
+			return true;
+		if(id.length() != 2)
+			return false;
+		if(CaptureIdentIn(id[1], {Nilesoft::Shell::IDENT_COLOR_RGB,
+			Nilesoft::Shell::IDENT_COLOR_RGBA, Nilesoft::Shell::IDENT_COLOR_INVERT,
+			Nilesoft::Shell::IDENT_COLOR_LIGHT, Nilesoft::Shell::IDENT_COLOR_DARK,
+			Nilesoft::Shell::IDENT_COLOR_ADJUST, Nilesoft::Shell::IDENT_COLOR_LIGHTEN,
+			Nilesoft::Shell::IDENT_COLOR_DARKEN, Nilesoft::Shell::IDENT_OPACITY}))
+			return true;
+		if(CaptureIdentIn(id[1], {Nilesoft::Shell::IDENT_COLOR_ACCENT,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_LIGHT1,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_LIGHT2,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_LIGHT3,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_DARK1,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_DARK2,
+			Nilesoft::Shell::IDENT_COLOR_ACCENT_DARK3,
+			Nilesoft::Shell::IDENT_COLOR_RANDOM,
+			Nilesoft::Shell::IDENT_BOX}))
+			return false;
+	for(const auto &entry : Nilesoft::Shell::ColorTable)
+		if(std::get<0>(entry) == id[1])
+			return true;
+	return false;
+	}
+
+	bool CaptureThemePath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 2 && CaptureIdentIn(id[1], {
+			Nilesoft::Shell::IDENT_AUTO, Nilesoft::Shell::IDENT_THEME_SYSTEM,
+			Nilesoft::Shell::IDENT_THEME_CLASSIC, Nilesoft::Shell::IDENT_THEME_LIGHT,
+			Nilesoft::Shell::IDENT_THEME_DARK, Nilesoft::Shell::IDENT_THEME_HIGHCONTRAST,
+			Nilesoft::Shell::IDENT_THEME_BLACK, Nilesoft::Shell::IDENT_THEME_WHITE,
+			Nilesoft::Shell::IDENT_THEME_MODERN, Nilesoft::Shell::IDENT_THEME_CUSTOM,
+			Nilesoft::Shell::IDENT_ISDARK, Nilesoft::Shell::IDENT_ISLIGHT,
+			Nilesoft::Shell::IDENT_ISHIGHCONTRAST, Nilesoft::Shell::IDENT_MODE,
+			Nilesoft::Shell::IDENT_BACKGROUND}))
+			return true;
+	if(id.length() == 3 && id[1] == Nilesoft::Shell::IDENT_MODE)
+		return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_ZERO,
+			Nilesoft::Shell::IDENT_SYSTEM});
+	if(id.length() == 3 && id[1] == Nilesoft::Shell::IDENT_BACKGROUND)
+		return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_OPACITY,
+			Nilesoft::Shell::IDENT_EFFECT});
+	// Theme item colours are immutable reads from the already loaded theme.
+	return id.length() == 5 && id[1] == Nilesoft::Shell::IDENT_ITEM &&
+		CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_BACK,
+			Nilesoft::Shell::IDENT_TEXT}) &&
+		CaptureIdentIn(id[3], {Nilesoft::Shell::IDENT_NORMAL,
+			Nilesoft::Shell::IDENT_SELECT}) && id[4] == Nilesoft::Shell::IDENT_DISABLE;
+}
+
+	bool CaptureViewPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		return id.length() == 2 && CaptureIdentIn(id[1], {
+			Nilesoft::Shell::IDENT_AUTO, Nilesoft::Shell::IDENT_VIEW_COMPACT,
+			Nilesoft::Shell::IDENT_VIEW_SMALL, Nilesoft::Shell::IDENT_VIEW_MEDIUM,
+			Nilesoft::Shell::IDENT_VIEW_LARGE, Nilesoft::Shell::IDENT_VIEW_WIDE});
+	}
+
+	bool CaptureThisPath(const Nilesoft::Shell::Ident &id) noexcept
+	{
+		if(id.length() == 2 && CaptureIdentIn(id[1], {
+			Nilesoft::Shell::IDENT_TYPE, Nilesoft::Shell::IDENT_CHECKED,
+			Nilesoft::Shell::IDENT_POS, Nilesoft::Shell::IDENT_DISABLED,
+			Nilesoft::Shell::IDENT_SYS, Nilesoft::Shell::IDENT_NAME,
+			Nilesoft::Shell::IDENT_TITLE, Nilesoft::Shell::MENU_VERB,
+			Nilesoft::Shell::IDENT_COUNT, Nilesoft::Shell::IDENT_LEVEL,
+			Nilesoft::Shell::IDENT_ID, Nilesoft::Shell::IDENT_PARENT,
+			Nilesoft::Shell::IDENT_ISUWP, Nilesoft::Shell::IDENT_CLSID}))
+			return true;
+	if(id.length() == 3 && CaptureIdentIn(id[1], {
+			Nilesoft::Shell::IDENT_NAME, Nilesoft::Shell::IDENT_TITLE}))
+		return CaptureIdentIn(id[2], {Nilesoft::Shell::IDENT_LEN,
+			Nilesoft::Shell::IDENT_LENGTH, Nilesoft::Shell::IDENT_ZERO});
+	return false;
+}
+
+	// Automatic capture may evaluate ordinary string/selection expressions, but
+	// a function is allowed to run natively only when its implementation is
+	// known to be read-only.  Unknown functions remain unavailable by default;
+	// this is a positive allowlist and is deliberately independent of the much
+	// larger runtime function inventory.
+	Nilesoft::Shell::PreviewPolicy::Dispatch CaptureFunctionDispatch(
+		Nilesoft::Shell::FuncExpression &function,
+		Nilesoft::Shell::Context &, Nilesoft::Object &) noexcept
+	{
+		const auto unavailable = Nilesoft::Shell::PreviewPolicy::Dispatch::Unavailable;
+		const auto native = Nilesoft::Shell::PreviewPolicy::Dispatch::Native;
+		if(function.ischild && function.Parent)
+			return function.Id.length() == 1 && CaptureStringMember(function.Id[0])
+				? native : unavailable;
+
+		const auto id = function.Id[0];
+		if(id == Nilesoft::Shell::IDENT_STR)
+			return CaptureStringPath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_SEL)
+			return CaptureSelectionPath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_PATH)
+			return CapturePathPath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_COLOR)
+			return CaptureColorPath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_THEME)
+			return CaptureThemePath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_VIEW)
+			return CaptureViewPath(function.Id) ? native : unavailable;
+		if(id == Nilesoft::Shell::IDENT_THIS)
+			return CaptureThisPath(function.Id) ? native : unavailable;
+
+		// These implementations only combine or inspect already evaluated
+		// arguments and do not touch Explorer, the filesystem, or process state.
+		if(CaptureIdentIn(id, {Nilesoft::Shell::IDENT_IF,
+			Nilesoft::Shell::IDENT_NOT, Nilesoft::Shell::IDENT_TOHEX,
+			Nilesoft::Shell::IDENT_PRINT, Nilesoft::Shell::IDENT_CHAR,
+			Nilesoft::Shell::IDENT_SHL, Nilesoft::Shell::IDENT_SHR,
+			Nilesoft::Shell::IDENT_EQUAL, Nilesoft::Shell::IDENT_EQUALS,
+			Nilesoft::Shell::IDENT_GREATER, Nilesoft::Shell::IDENT_LESS,
+			Nilesoft::Shell::IDENT_LEN, Nilesoft::Shell::IDENT_LENGTH,
+			Nilesoft::Shell::IDENT_QUOTE, Nilesoft::Shell::IDENT_TOINT,
+			Nilesoft::Shell::IDENT_TOUINT, Nilesoft::Shell::IDENT_TODOUBLE,
+			Nilesoft::Shell::IDENT_TOFLOAT}))
+			return function.Id.length() == 1 ? native : unavailable;
+
+		// Read-only enum/value namespaces are safe when their member set is
+		// closed.  No runtime aliases are accepted here.
+		if(id == Nilesoft::Shell::IDENT_MODE)
+			return CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_NONE}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_SINGLE}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_UNIQUE}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_MULTIPLE}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_MULTI}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_MULTI_SINGLE}) ||
+				CaptureIdentPath(function.Id, {Nilesoft::Shell::IDENT_MODE,
+				Nilesoft::Shell::IDENT_MODE_MULTI_UNIQUE}) ? native : unavailable;
+		return unavailable;
+	}
+}
 
 #pragma region
 
@@ -252,6 +947,8 @@ namespace Nilesoft
 				//if(_cache)
 				//	_cache->GC.clear();
 				Uninitialize();
+				if(Initializer::instance)
+					Initializer::instance->collect_retired_caches();
 			}
 			catch(...)
 			{
@@ -266,28 +963,39 @@ namespace Nilesoft
 										  MenuItemInfo *owner,
 										  menu_t *menu, bool moved)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
 			if(list.empty())
 				return false;
 
+			const NativeMenuConstruction::SelectionInput selection{
+				&Selected, true, true};
+
 			int _this_index = 0;
-			
+
 			for(auto item : list)
 			{
-				try 
+				if(!construction_consume_item())
+					break;
+				try
 				{
-					_context._this = nullptr;
+					StudioCaptureTrace trace;
+					StudioCaptureEvidence evidence;
+					CaptureEvidenceScope evidenceScope(&evidence);
+					construction_context()._this = nullptr;
 					//std::lock_guard<std::mutex> lock(_mutex);
 					//_context.variables.runtime = &item->owner->variables;
-					_context.variables.local = &item->owner->variables;
+					construction_context().variables.local = &item->owner->variables;
 
 					if(item->properties == 0)
 					{
 						if(item->is_separator())
 						{
-							auto mii = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE, MFT_SEPARATOR, -1));
+							auto mii = construction_gc().push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE, MFT_SEPARATOR, -1));
 							mii->owner = owner;
 							mii->dynamic = true;
 							mii->type = NativeMenuType::Separator;
+							CaptureTraceSource(mii->trace, item, L"dynamic.separator", true, L"accepted");
+							mii->evidence = std::move(evidence);
 							posList.Auto.push_back(mii);
 						}
 						continue;
@@ -296,15 +1004,20 @@ namespace Nilesoft
 					auto not_sep = !item->is_separator();
 
 					this_item _this{};
-					_context._this = &_this;
+					construction_context()._this = &_this;
 					_this.level = (int)parent_level.size();
 
 					_this.type = not_sep ? (item->is_menu() ? 2 : 1) : 0;
 					_this.pos = _this_index++;
+					CaptureTraceNumber(trace, L"dynamic.index=", _this.pos);
 
-					if(!Selected.verify_types(item->fso))
+					const bool types_match =
+						NativeMenuConstruction::dynamic_types_match(selection, *item);
+					CaptureTraceSource(trace, item, L"dynamic.types", types_match,
+						types_match ? L"accepted" : L"rejected");
+					if(!types_match)
 						continue;
-					
+
 					/*
 					if(Selected.Window.id >= WINDOW_TASKBAR && !Selected.Check(item->fso))
 						continue;
@@ -316,9 +1029,14 @@ namespace Nilesoft
 
 					if(item->where)
 					{
-						if(!_context.eval_bool(item->where))
+						const bool where_match = construction_context().eval_bool(item->where);
+						CaptureTraceSource(trace, item, L"dynamic.where", where_match,
+							where_match ? L"accepted" : L"rejected");
+						if(!where_match)
 							continue;
 					}
+					else
+						CaptureTraceSource(trace, item, L"dynamic.where", true, L"not defined");
 
 					string value;
 
@@ -326,21 +1044,31 @@ namespace Nilesoft
 					{
 						if(item->owner != menu->parent)
 						{
-							if(_context.Eval(item->moveto, value, true) && !value.trim(L'/').empty())
+							const bool moveto_eval = construction_context().Eval(item->moveto, value, true);
+							const bool has_moveto = moveto_eval && !value.trim(L'/').empty();
+							CaptureTraceSource(trace, item, L"dynamic.moveto", has_moveto,
+								has_moveto ? L"moved" : L"not applied");
+							if(has_moveto)
 							{
-								auto mii = _gc.push();
+								auto mii = construction_gc().push();
 								mii->dynamic = true;
 								mii->owner_dynamic = item;
+								mii->trace = trace;
 								if(mii->parse_parent(value))
-									_moved_items.dynamics.push_back(mii);
+									construction_moved_dynamics().push_back(mii);
 								continue;
 							}
 						}
 					}
+					else if(!item->is_separator())
+						CaptureTraceSource(trace, item, L"dynamic.moveto", false, L"not evaluated");
 
-					auto visibility = _context.parse_visibility(item->visibility);
+					auto visibility = construction_context().parse_visibility(item->visibility);
+					const bool visible = visibility != Visibility::Hidden;
+					CaptureTraceSource(trace, item, L"dynamic.visibility", visible,
+						visible ? (visibility == Visibility::Disabled ? L"disabled" : L"enabled") : L"hidden; rejected");
 
-					if(visibility == Visibility::Hidden)
+					if(!visible)
 						continue;
 
 					_this.disabled = visibility == Visibility::Disabled;
@@ -355,9 +1083,13 @@ namespace Nilesoft
 						privileges = owner->privileges;
 					}
 
-					mode = _context.parse_mode(item->mode, mode);
+					mode = construction_context().parse_mode(item->mode, mode);
 
-					if(Selected.Window.id > WINDOW_TASKBAR && !Selected.verify_mode(mode))
+					const bool mode_match =
+						NativeMenuConstruction::dynamic_mode_match(selection, mode);
+					CaptureTraceSource(trace, item, L"dynamic.mode", mode_match,
+						mode_match ? L"accepted" : L"rejected");
+					if(!mode_match)
 						continue;
 
 					auto position = Position::Auto;
@@ -366,7 +1098,7 @@ namespace Nilesoft
 
 					if(item->position)
 					{
-						Object obj = _context.Eval(item->position).move();
+						Object obj = construction_context().Eval(item->position).move();
 
 						if(obj.is_array(true))
 						{
@@ -377,18 +1109,20 @@ namespace Nilesoft
 								indexof = ptr[2].to_string().move();
 								indexof_pos = ptr[3];
 								if(ac == 3)
-									indexof_def = (int)_context.parse_pos(ptr[4], Position::Auto);
+									indexof_def = (int)construction_context().parse_pos(ptr[4], Position::Auto);
 								position = (Shell::Position)indexof.trim().hash();
 							}
 						}
 						else if(!obj.is_null())
 						{
-							position = _context.parse_pos(obj, Position::Auto);
+							position = construction_context().parse_pos(obj, Position::Auto);
 						}
 					}
 
 					//	auto position = item->parse_position(&_context);
 					_this.pos = static_cast<int>(position);
+					CaptureTraceSourceNumber(trace, item, L"dynamic.position", L"pos=",
+						static_cast<int>(position));
 
 					auto push_back = [&](MenuItemInfo *mii)
 					{
@@ -418,8 +1152,9 @@ namespace Nilesoft
 
 					if(item->is_separator())
 					{
-						auto mii = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE, MFT_SEPARATOR, -1));
+						auto mii = construction_gc().push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE, MFT_SEPARATOR, -1));
 						mii->type = NativeMenuType::Separator;
+						mii->trace = std::move(trace);
 						mii->indexof.val = indexof.move();
 						mii->indexof.pos = indexof_pos;
 						mii->indexof.def = indexof_def;
@@ -428,9 +1163,13 @@ namespace Nilesoft
 					else
 					{
 						string title;
+						bool title_evaluated = false;
+						bool title_accepted = false;
 						try
 						{
-							if(!_context.Eval(item->title, title) || title.empty())
+							title_evaluated = construction_context().Eval(item->title, title);
+							title_accepted = title_evaluated && !title.empty();
+							if(!title_accepted)
 							{
 								/*if(item->is_menu())
 									is_container = true;
@@ -438,35 +1177,47 @@ namespace Nilesoft
 									continue;
 							}
 						}
-						catch(...) 
+						catch(...)
 						{
 						}
+						if(!title_evaluated)
+							CaptureTraceSource(trace, item, L"dynamic.title", false, L"evaluation failed");
+						if(title_evaluated)
+							CaptureTraceSource(trace, item, L"dynamic.title", title_accepted,
+								title_accepted ? L"accepted" : (item->image.defined ? L"empty; image fallback" : L"empty; rejected"));
+						if(!title_accepted && !item->image.defined)
+							continue;
 
 						_this.title = title;
 						_this.length = title.length<uint32_t>();
 
-						FindPattern find;
-						if(_context.Eval(item->find, value, true) && !value.empty())
+						const bool find_evaluated = construction_context().Eval(item->find, value, true);
+						if(find_evaluated && !value.empty())
 						{
-							if(find.split(value, L'|'))
-							{
-								auto found = 0;
-								for(auto sel : Selected.Items)
-								{
-									string ext = sel->Extension.substr(1).move();
-									if(!find(&sel->Title, sel->IsFile() ? &ext : nullptr, &sel->Path))
-									{
-										found = 0;
-										break;
-									}
-									found++;
-								}
-
-								if(found == 0) continue;;
-							}
+							const bool find_match = selection.matches_find(value);
+							CaptureTraceSource(trace, item, L"dynamic.find", find_match,
+								find_match ? L"accepted" : L"rejected");
+							if(!find_match) continue;
 						}
+						else
+							CaptureTraceSource(trace, item, L"dynamic.find", true, L"not defined");
 
-						auto mii = _gc.push(new MenuItemInfo(MIIM_STRING | MIIM_ID | MIIM_DATA | MIIM_STATE, 0, ident.get_id()));
+						// `this.id` is an authored, context-scoped identity when `id`
+						// resolves to a nonzero value.  Evaluate it once here so the
+						// native command id and the expression context observe the same
+						// value; the title hash remains available for matching/capture.
+						uint32_t authoredId = 0;
+						if(item->explicit_id)
+						{
+							Object explicitValue = construction_context().Eval(item->explicit_id).move();
+							authoredId = construction_context().obj2hash(explicitValue, 0);
+							CaptureTraceSourceNumber(trace, item, L"dynamic.id", L"id=",
+								static_cast<int>(authoredId));
+						}
+						const auto nativeId = authoredId != 0 ? authoredId : ident.get_id();
+						auto mii = construction_gc().push(new MenuItemInfo(MIIM_STRING | MIIM_ID | MIIM_DATA | MIIM_STATE, 0, nativeId));
+						mii->trace = std::move(trace);
+						mii->evidence = std::move(evidence);
 
 						mii->owner = owner;
 						mii->indexof.val = indexof.move();
@@ -474,25 +1225,24 @@ namespace Nilesoft
 						mii->indexof.def = indexof_def;
 
 						mii->set_title(title.move());
-						
-						mii->id = mii->hash;
-						mii->hash = mii->hash;
+
+						mii->id = authoredId != 0 ? authoredId : mii->hash;
 
 						mii->privileges = privileges;
 
 						_this.title_normalize = mii->title.normalize;
-						_this.id = mii->hash;
+						_this.id = mii->id;
 
 						if(item->is_menu() && item->cmd->admin)
-							mii->privileges = _context.parse_privileges(item->cmd);
+							mii->privileges = construction_context().parse_privileges(item->cmd);
 
 						int checked = 0;
 
 						if(item->is_item())
 						{
-							checked = _context.eval_number<int>(item->checked, 0);
+							checked = construction_context().eval_number<int>(item->checked, 0);
 							if(_settings.new_items.keys)
-								_context.Eval(item->keys, mii->keys);
+								construction_context().Eval(item->keys, mii->keys);
 						}
 
 						if(checked)
@@ -506,8 +1256,8 @@ namespace Nilesoft
 							}
 						}
 
-						mii->separator = (int)_context.parse_separator(item->separator);
-						mii->column = _context.eval_number<int>(item->column, 0);
+						mii->separator = (int)construction_context().parse_separator(item->separator);
+						mii->column = construction_context().eval_number<int>(item->column, 0);
 						mii->type = NativeMenuType::Item;
 						mii->handle = menu->handle;
 						mii->owner_dynamic = item;
@@ -544,7 +1294,7 @@ namespace Nilesoft
 									//use the resolved image location
 									if(item->image.import == ImageImport::Image)
 									{
-										if(_context.Image(item->image.expr, mii, font.icon, false))
+										if(construction_context().Image(item->image.expr, mii, font.icon, false))
 										{
 											if(mii->image.import == ImageImport::Inherit)
 											{
@@ -582,11 +1332,11 @@ namespace Nilesoft
 											}
 											else
 											{
-												_context.Eval(cmd->command.expr, path);
+											construction_context().Eval(cmd->command.expr, path);
 											}
 
 											path.trim(str_trim);
-											
+
 											if(!path.empty())
 											{
 												Hash hash = path.hash();
@@ -605,7 +1355,7 @@ namespace Nilesoft
 										}
 									}
 
-									if(_context.Image(item->images.select, mii, font.icon, true))
+									if(construction_context().Image(item->images.select, mii, font.icon, true))
 									{
 										/*if(mii->image_select.import == ImageImport::Inherit)
 										{
@@ -633,7 +1383,7 @@ namespace Nilesoft
 
 						auto is_container = false;
 						if(item->is_menu() && item->expanded)
-							is_container = _context.Eval(item->expanded).to_bool();
+							is_container = construction_context().Eval(item->expanded).to_bool();
 
 						if(is_container)
 							prepare_new_items(posList, item->items, mii, menu);
@@ -641,19 +1391,26 @@ namespace Nilesoft
 						{
 							if(owner)
 								mii->path = (owner->path + L'/' + owner->title.normalize).trim(L'/').move();
-						
+
 							//_log.info(mii->path);
 
 							///else
 							//	mii->path = mii->owner->path + L'/' + mii->owner->title.text;
 							//mii->tip = item->tip;
-							_context.eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
+							construction_context().eval_tip(item->tip, mii->tip.text, mii->tip.type, mii->tip.time);
 
 							if(item->is_menu())
 							{
-								mii->set_popup_menu();
+								if(_studio_construction_context)
+								{
+									mii->fMask |= MIIM_SUBMENU;
+									mii->hSubMenu = reinterpret_cast<HMENU>(mii);
+									mii->type = NativeMenuType::Menu;
+								}
+								else
+									mii->set_popup_menu();
 								//mii->destory = false;
-								auto m_sub = &_menus[mii->hSubMenu];
+								auto m_sub = &construction_menus()[mii->hSubMenu];
 								m_sub->type = m_sub->MFT_DYNAMIC;
 								m_sub->destory = true;
 								m_sub->id = mii->hash;
@@ -676,7 +1433,7 @@ namespace Nilesoft
 						}
 					}
 				}
-				catch(...) 
+				catch(...)
 				{
 				}
 			}
@@ -685,6 +1442,8 @@ namespace Nilesoft
 
 		void ContextMenu::prepare_system_item(menuitem_t *item, MenuItemInfo *mii, menu_t *menu)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
+			CaptureEvidenceScope evidenceScope(mii ? &mii->evidence : nullptr);
 			auto fix_image_size = [](auto v1, auto v2)->long {
 				double d = double(v1) / v2;
 				return long(d * v2);
@@ -694,18 +1453,23 @@ namespace Nilesoft
 
 			auto ev_si = [=](NativeMenu *si, MenuItemInfo *mii, menuitem_t *item)
 			{
+				CaptureTraceSource(mii->trace, si, L"static.rule", true, L"matched");
 				if(item->type == 0 && si->checked)
 				{
-					if(auto checked = _context.eval_number<int>(si->checked, 0); checked > 0)
+					if(auto checked = construction_context().eval_number<int>(si->checked, 0); checked > 0)
 					{
-						_context._this->checked = 1;
+						CaptureTraceSource(mii->trace, si, L"static.checked", true,
+							checked == 2 ? L"radio" : L"checked");
+						construction_context()._this->checked = 1;
 						mii->fState = MFS_CHECKED;
 						if(checked == 2)
 						{
 							mii->fType |= MFT_RADIOCHECK;
-							_context._this->checked = 2;
+							construction_context()._this->checked = 2;
 						}
 					}
+					else
+						CaptureTraceSource(mii->trace, si, L"static.checked", false, L"not applied");
 				}
 
 				bool image_disabled_by_checked = mii->is_checked() && _theme.image.display == 0;
@@ -713,7 +1477,7 @@ namespace Nilesoft
 				if(image_disabled_by_checked)
 					mii->image.import = ImageImport::Disabled;
 				else if(!image_disabled && si->images.normal)
-					_context.Image(si->images.normal, mii, font.icon, false);
+					construction_context().Image(si->images.normal, mii, font.icon, false);
 
 				if(mii->image.import == ImageImport::Disabled || image_disabled || image_disabled_by_checked)
 					mii->image.destroy();
@@ -722,8 +1486,11 @@ namespace Nilesoft
 
 				if(_settings.modify_items.separator)
 				{
-					mii->separator = (int)_context.parse_separator(si->separator);
-					_context._this->sep = mii->separator;
+					mii->separator = (int)construction_context().parse_separator(si->separator);
+					construction_context()._this->sep = mii->separator;
+					if(si->separator)
+					CaptureTraceSourceNumber(mii->trace, si, L"static.separator", L"value=",
+						mii->separator);
 				}
 
 				auto position = Position::Auto;
@@ -732,7 +1499,7 @@ namespace Nilesoft
 
 				if(si->position && _settings.modify_items.position)
 				{
-					Object obj = _context.Eval(si->position).move();
+					Object obj = construction_context().Eval(si->position).move();
 
 					if(obj.is_array(true))
 					{
@@ -743,17 +1510,20 @@ namespace Nilesoft
 							indexof = ptr[2].to_string().move();
 							indexof_pos = ptr[3];
 							if(ac == 3)
-								indexof_def = (int)_context.parse_pos(ptr[4], Position::Auto);
+								indexof_def = (int)construction_context().parse_pos(ptr[4], Position::Auto);
 							position = (Position)indexof.trim().hash();
 						}
 					}
 					else if(!obj.is_null())
 					{
-						position = _context.parse_pos(obj, Position::Auto);
+						position = construction_context().parse_pos(obj, Position::Auto);
 					}
 				}
+				if(si->position)
+					CaptureTraceSourceNumber(mii->trace, si, L"static.position", L"pos=",
+						static_cast<int>(position));
 
-				_context._this->pos = static_cast<int>(position);
+				construction_context()._this->pos = static_cast<int>(position);
 
 				mii->indexof.val = indexof.move();
 				mii->indexof.pos = indexof_pos;
@@ -764,24 +1534,33 @@ namespace Nilesoft
 				if(_settings.modify_items.title)
 				{
 					string new_title;
-					if(_context.Eval(si->title, new_title) && !new_title.empty())
+					if(construction_context().Eval(si->title, new_title) && !new_title.empty())
 					{
 						mii->set_title(new_title.move());
+						CaptureTraceSource(mii->trace, si, L"static.title", true, L"renamed");
 					}
+					else if(si->title)
+						CaptureTraceSource(mii->trace, si, L"static.title", false, L"not applied");
 				}
 
 				if(mii->is_item() && _settings.modify_items.keys)
-					_context.Eval(si->keys, mii->keys, true);
+				{
+					construction_context().Eval(si->keys, mii->keys, true);
+					if(si->keys)
+						CaptureTraceSource(mii->trace, si, L"static.keys", true, L"applied");
+				}
 
 				//mii->tip = item->tip;
-				_context.eval_tip(si->tip, mii->tip.text, mii->tip.type, mii->tip.time);
+				construction_context().eval_tip(si->tip, mii->tip.text, mii->tip.type, mii->tip.time);
 			};
 
 
 			mii->dwItemData = item->dwItemData;
 			mii->handle = menu->handle;
+			mii->trace = item->trace;
+			mii->evidence = item->evidence;
 
-			this_item _this; _context._this = &_this;
+			this_item _this; construction_context()._this = &_this;
 
 			_this.type = item->type;
 			_this.pos = (int)item->position;
@@ -869,7 +1648,7 @@ namespace Nilesoft
 									is_auto_img = bool(mii->ui->image_glyph[0] + mii->ui->image_glyph[1]);
 
 								if(is_auto_img)
-									_context.Image(nullptr, mii, font.icon, false);
+									construction_context().Image(nullptr, mii, font.icon, false);
 								else
 									mii->ui = nullptr;
 							}
@@ -980,19 +1759,20 @@ namespace Nilesoft
 				{
 					mii->type = NativeMenuType::Menu;
 					mii->fMask |= MIIM_SUBMENU;
-					mii->hSubMenu = CreatePopupMenu();
+					mii->hSubMenu = _studio_construction_context
+						? reinterpret_cast<HMENU>(mii) : CreatePopupMenu();
 					mii->sys_items = &item->items;
 
-					auto m_sub = &_menus[mii->hSubMenu];
+					auto m_sub = &construction_menus()[mii->hSubMenu];
 					m_sub->handle = mii->hSubMenu;
 					m_sub->destory = true;
-					
+
 					m_sub->id = mii->id;
 					m_sub->hash = mii->hash;
 
 					if(mii->ui)
 						m_sub->id = mii->ui->id;
-					
+
 					m_sub->owner = mii;
 					m_sub->std_items = &item->items;
 
@@ -1009,20 +1789,30 @@ namespace Nilesoft
 			{
 				if(si->has_clsid)
 					continue;
+				// The last matching static rule is the effective source for the
+				// serialized property evidence.  Keep the pointer on the row while
+				// retaining the full ordered trace above.
+				mii->owner_static = si;
 				ev_si(si, mii, item);
 			}
 		}
 
 		bool ContextMenu::prepare_system_items(PositionList &list, menu_t *menu)
 		{
-			if(!menu || !menu->std_items)
+			if(!menu)
 				return false;
+			// Dynamic-only popups retain definitions without a system-item vector.
+			// An absent system source is empty, not a failed popup construction.
+			if(!menu->std_items)
+				return true;
 
 			//int _index = 0;
 			for(auto item : *menu->std_items)
 			{
-				_context._this = nullptr;
-				auto mii = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_DATA | MIIM_FTYPE, 0, 0));
+				if(!construction_consume_item())
+					break;
+				construction_context()._this = nullptr;
+				auto mii = construction_gc().push(new MenuItemInfo(MIIM_ID | MIIM_DATA | MIIM_FTYPE, 0, 0));
 				prepare_system_item(item, mii, menu);
 				list.push(mii);
 			}
@@ -1036,10 +1826,12 @@ namespace Nilesoft
 				return false;
 
 			for(auto item : __movable_system_items)
-			{		
+			{
+				if(!construction_consume_item())
+					break;
 				if(item->path.equals(menu->path))
 				{
-					auto mii = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_DATA | MIIM_FTYPE, 0, 0));
+					auto mii = construction_gc().push(new MenuItemInfo(MIIM_ID | MIIM_DATA | MIIM_FTYPE, 0, 0));
 					prepare_system_item(item, mii, menu);
 					list.push(mii);
 				}
@@ -1048,15 +1840,561 @@ namespace Nilesoft
 			return true;
 		}
 
+		bool ContextMenu::construct_popup_entries(menu_t *menu,
+			std::vector<MenuItemInfo *> &items, bool capture)
+		{
+			CaptureTraceScope traceScope(capture ? &_studio_capture : nullptr);
+			if(!menu)
+				return false;
+
+			items.clear();
+			items.reserve(100);
+			menu->draw.checks = 0;
+			menu->draw.images = 0;
+			menu->draw.popups = 0;
+
+			// Dynamic and static sources are already owned by the active cache.  A
+			// capture menu_t is a request-local value, so assigning these pointers
+			// does not mutate the live menu map or create a native popup handle.
+			MenuItemInfo *owner = menu->is_main ? nullptr : menu->owner;
+			if(menu->is_main)
+			{
+				if(!_cache || !__system_menu_tree)
+					return false;
+				menu->dynamics = _cache->dynamic.items;
+				menu->std_items = &__system_menu_tree->items;
+			}
+
+			PositionList systemItems;
+			PositionList newItems;
+			if(!prepare_system_items(systemItems, menu))
+				return false;
+
+			std::vector<MenuItemInfo *> bottomItems;
+			if(_settings.new_items.enabled)
+			{
+				if(!(owner && owner->is_disabled()))
+				{
+					prepare_new_items(newItems, menu->dynamics, owner, menu);
+
+					// Reinsert dynamic definitions that were authored for this
+					// exact popup path.  The request-local moved vector is used by
+					// automatic capture; ordinary construction keeps the existing
+					// live vector.
+					std::vector<NativeMenu *> movedDefinitions;
+					for(auto moved : construction_moved_dynamics())
+					{
+						if(!moved || moved->parent.empty())
+							continue;
+						if(moved->owner_dynamic && moved->is_parent(parent_level))
+							movedDefinitions.push_back(moved->owner_dynamic);
+					}
+					if(!movedDefinitions.empty())
+						prepare_new_items(newItems, movedDefinitions, owner, menu, true);
+				}
+
+				prepare_system_items2(newItems, menu);
+				items.insert(items.end(), newItems.Top.begin(), newItems.Top.end());
+			}
+
+			if(systemItems.size() > 0)
+			{
+				items.insert(items.end(), systemItems.Top.begin(), systemItems.Top.end());
+				items.insert(items.end(), systemItems.Auto.begin(), systemItems.Auto.end());
+				bottomItems.insert(bottomItems.end(), systemItems.Bottom.begin(),
+					systemItems.Bottom.end());
+			}
+
+			if(newItems.size() > 0)
+			{
+				size_t dynamicPosition = items.size();
+				if(menu->is_main && Selected.Window.id > WINDOW_UI)
+				{
+					const auto findPosition = [&items]() -> size_t
+					{
+						const auto count = static_cast<int>(items.size());
+						int position = count / 2;
+						int separator = -1;
+						if(position > count)
+							position = count;
+						for(int index = position; index >= 0; --index)
+						{
+							if(items[static_cast<size_t>(index)]->is_separator())
+							{
+								separator = index;
+								break;
+							}
+						}
+						if(separator < 0)
+						{
+							for(int index = position; index < count; ++index)
+							{
+								if(items[static_cast<size_t>(index)]->is_separator())
+								{
+									separator = index;
+									break;
+								}
+							}
+						}
+						if(separator >= 0)
+							position = separator;
+						return static_cast<size_t>(position);
+					};
+
+					const auto position = construction_context().parse_position(
+						_cache->dynamic.position);
+					switch(position)
+					{
+					case Position::Auto:
+						if(Selected.Window.id <= WINDOW_EDIT)
+							dynamicPosition = items.size();
+						else
+						{
+							const bool recycleBin = !Selected.Background &&
+								Selected.Window.id == WINDOW_RECYCLEBIN;
+							if(!Selected.Types[FSO_TASKBAR] && !recycleBin)
+								dynamicPosition = items.empty() ? 1 : findPosition();
+						}
+						break;
+					case Position::Top:
+						dynamicPosition = 0;
+						break;
+					case Position::Middle:
+						dynamicPosition = findPosition();
+						break;
+					case Position::Bottom:
+						dynamicPosition = items.size();
+						break;
+					default:
+						dynamicPosition = static_cast<size_t>(position);
+						break;
+					}
+				}
+				if(dynamicPosition > items.size())
+					dynamicPosition = items.size();
+				items.insert(items.begin() + static_cast<ptrdiff_t>(dynamicPosition),
+					newItems.Auto.begin(), newItems.Auto.end());
+				bottomItems.insert(bottomItems.end(), newItems.Bottom.begin(),
+					newItems.Bottom.end());
+			}
+
+			items.insert(items.end(), bottomItems.begin(), bottomItems.end());
+			auto middle = items.size() / 2;
+			if(systemItems.size() > 0)
+				items.insert(items.begin() + static_cast<ptrdiff_t>(middle),
+					systemItems.Middle.begin(), systemItems.Middle.end());
+			if(newItems.size() > 0)
+			{
+				middle = items.size() / 2;
+				items.insert(items.begin() + static_cast<ptrdiff_t>(middle),
+					newItems.Middle.begin(), newItems.Middle.end());
+			}
+
+			auto addCustomItems = [&items](std::vector<MenuItemInfo *> &customItems)
+			{
+				for(auto item : customItems)
+				{
+					if(!item)
+						continue;
+					if(item->indexof.val.empty())
+					{
+						const auto position = static_cast<int>(item->position);
+						if(position < 0 || position > static_cast<int>(items.size()))
+							items.push_back(item);
+						else
+							items.insert(items.begin() + position, item);
+					}
+					else
+					{
+						int index = 0;
+						bool found = false;
+						FindPattern pattern;
+						if(pattern.split(item->indexof.val, L'|'))
+						{
+							for(const auto &match : pattern.matches)
+							{
+								index = 0;
+								for(auto existing : items)
+								{
+									if(pattern.find(match, &existing->title.normalize))
+									{
+										found = true;
+										const auto insertAt = std::clamp(index + item->indexof.pos,
+											0, static_cast<int>(items.size()));
+										items.insert(items.begin() + insertAt, item);
+										break;
+									}
+									++index;
+								}
+								if(found)
+									break;
+							}
+						}
+						if(!found)
+						{
+							if(item->indexof.def == -2)
+								items.insert(items.begin(), item);
+							else if(item->indexof.def == -3)
+								items.insert(items.begin() + items.size() / 2, item);
+							else
+								items.push_back(item);
+						}
+					}
+				}
+			};
+
+			addCustomItems(newItems.Custom);
+			addCustomItems(systemItems.Custom);
+
+			// In capture mode synthetic submenu handles cannot be queried with the
+			// Win32 menu APIs.  Use the retained source vectors to decide whether a
+			// popup is genuinely empty; an unopened branch remains observable.
+			for(auto iterator = items.begin(); iterator != items.end(); ++iterator)
+			{
+				auto item = *iterator;
+				if(!item)
+					continue;
+				bool emptyPopup = false;
+				if(item->is_popup())
+				{
+					if(capture)
+					{
+						bool hasSource = !item->items.empty();
+						if(auto found = construction_menus().find(item->hSubMenu);
+							found != construction_menus().end())
+						{
+							hasSource = hasSource ||
+								(found->second.std_items && !found->second.std_items->empty()) ||
+								!found->second.dynamics.empty();
+						}
+						emptyPopup = !hasSource;
+					}
+					else
+						emptyPopup = MENU::get_count(item->hSubMenu) == 0;
+				}
+				if(emptyPopup)
+				{
+					int retained = 0;
+					for(auto movable : __movable_system_items)
+						retained += movable && movable->path.equals(
+							(item->path + L"/" + item->title.normalize).trim(L'/'));
+					for(auto moved : construction_moved_dynamics())
+						retained += moved && !moved->parent.empty() &&
+							item->id == moved->parent.front();
+					if(retained == 0 &&
+						((item->dynamic && item->owner_dynamic &&
+							item->owner_dynamic->items.empty()) ||
+						(item->sys_items && item->sys_items->empty())))
+					{
+						iterator = items.erase(iterator);
+						if(iterator == items.end())
+							break;
+						continue;
+					}
+				}
+				if(!item->is_separator())
+				{
+					if(item->is_checked() && _theme.image.display == 0)
+						item->image.destroy();
+					menu->draw.checks += item->is_checked();
+					menu->draw.images += item->has_image_or_draw();
+					menu->draw.popups += item->is_popup();
+				}
+			}
+
+			while(!items.empty() && items.back()->is_separator())
+				items.pop_back();
+			if(!items.empty() && items.back()->is_sep_after())
+				items.back()->separator &= ~(int)Separator::Bottom;
+
+			if(capture)
+			{
+				for(auto item : items)
+				{
+					if(!item)
+						continue;
+					if(item->is_popup())
+					{
+						item->studio_completeness.state = "observed";
+						item->studio_completeness.childrenCaptured = false;
+						item->studio_completeness.complete = false;
+					}
+					else
+					{
+						item->studio_completeness.state = "materialized";
+						item->studio_completeness.childrenCaptured = true;
+						item->studio_completeness.complete = true;
+					}
+				}
+			}
+			return true;
+		}
+
+		bool ContextMenu::capture_unopened_submenus(menu_t *root)
+		{
+			const auto epoch = _studio_capture.ActiveEpoch();
+			if(!epoch || !_cache || !__system_menu_tree)
+				return false;
+			if(_studio_automatic_capture_published_epoch == epoch)
+				return true;
+			menu_t automaticRoot;
+			if(!root)
+			{
+				automaticRoot.handle = _hMenu;
+				automaticRoot.is_main = true;
+				automaticRoot.type = menu_t::MFT_SYSTEM;
+				automaticRoot.std_items = &__system_menu_tree->items;
+				automaticRoot.dynamics = _cache->dynamic.items;
+				root = &automaticRoot;
+			}
+
+			PreviewPolicy policy;
+			policy.maxSteps = 50000;
+			policy.maxDepth = kMaxAutomaticCaptureDepth;
+			policy.deadline = ::GetTickCount64() + kAutomaticCaptureBudgetMs;
+			policy.allowAssignments = false;
+			policy.dispatch = CaptureFunctionDispatch;
+
+			Context captureContext = _context;
+			captureContext.Runtime = false;
+			captureContext.Preview = &policy;
+			captureContext._this = nullptr;
+
+			GC<MenuItemInfo> captureGc;
+			std::unordered_map<HMENU, menu_t> captureMenus;
+			std::vector<MenuItemInfo *> movedDynamics;
+			size_t remainingItems = kMaxAutomaticCaptureItems;
+			bool budgetExhausted = false;
+
+			const auto previousContext = _studio_construction_context;
+			const auto previousGc = _studio_construction_gc;
+			const auto previousMenus = _studio_construction_menus;
+			const auto previousMoved = _studio_construction_moved_dynamics;
+			const auto previousBudget = _studio_construction_item_budget;
+			const auto previousBudgetFlag = _studio_construction_budget_exhausted;
+			const auto previousParentLevel = parent_level;
+			struct ConstructionRestore final
+			{
+				ContextMenu *owner{};
+				Context *context{};
+				GC<MenuItemInfo> *gc{};
+				std::unordered_map<HMENU, menu_t> *menus{};
+				std::vector<MenuItemInfo *> *moved{};
+				size_t *budget{};
+				bool *budgetFlag{};
+				std::vector<uint32_t> parent;
+				~ConstructionRestore() noexcept
+				{
+					if(!owner)
+						return;
+					owner->_studio_construction_context = context;
+					owner->_studio_construction_gc = gc;
+					owner->_studio_construction_menus = menus;
+					owner->_studio_construction_moved_dynamics = moved;
+					owner->_studio_construction_item_budget = budget;
+					owner->_studio_construction_budget_exhausted = budgetFlag;
+					owner->parent_level = std::move(parent);
+				}
+			} restore{this, previousContext, previousGc, previousMenus, previousMoved,
+				previousBudget, previousBudgetFlag, previousParentLevel};
+
+			_studio_construction_context = &captureContext;
+			_studio_construction_gc = &captureGc;
+			_studio_construction_menus = &captureMenus;
+			_studio_construction_moved_dynamics = &movedDynamics;
+			_studio_construction_item_budget = &remainingItems;
+			_studio_construction_budget_exhausted = &budgetExhausted;
+			parent_level.clear();
+
+			menu_t captureRoot = *root;
+			captureRoot.handle = _hMenu ? _hMenu : reinterpret_cast<HMENU>(&captureRoot);
+			captureRoot.is_main = true;
+			captureRoot.owner = nullptr;
+			captureRoot.std_items = &__system_menu_tree->items;
+			captureRoot.dynamics = _cache->dynamic.items;
+			captureContext.hMenu = captureRoot.handle;
+
+			const auto addDiagnostic = [](StudioCaptureCompleteness &completeness,
+				std::wstring_view diagnostic)
+			{
+				if(diagnostic.empty() || completeness.diagnostics.size() >= 8)
+					return;
+				completeness.diagnostics.emplace_back(diagnostic);
+			};
+			const auto policyDiagnostic = [&]() -> std::wstring
+			{
+				if(policy.code.empty() && policy.message.empty())
+					return L"PREVIEW_UNAVAILABLE: expression evaluation was not permitted.";
+				std::wstring result;
+				result.assign(policy.code.begin(), policy.code.end());
+				if(!result.empty() && !policy.message.empty())
+					result += L": ";
+				result += policy.message;
+				return result;
+			};
+
+			std::function<void(std::vector<MenuItemInfo *> &, std::wstring_view)> markUnavailable;
+			markUnavailable = [&](std::vector<MenuItemInfo *> &entries,
+				std::wstring_view diagnostic)
+			{
+				for(auto entry : entries)
+				{
+					if(!entry || !entry->is_popup())
+						continue;
+					if(!entry->studio_completeness.childrenCaptured)
+					{
+						entry->studio_completeness.state = "unavailable";
+						entry->studio_completeness.complete = false;
+						if(policy.code == "PREVIEW_LIMIT")
+							entry->studio_completeness.evaluationLimit =
+								static_cast<uint32_t>(policy.maxSteps);
+						addDiagnostic(entry->studio_completeness, diagnostic);
+					}
+					markUnavailable(entry->items, diagnostic);
+				}
+			};
+
+			std::unordered_set<HMENU> activeMenus;
+			const NativeMenuConstruction::AutomaticCaptureCallbacks captureCallbacks{
+				.canContinue = [&]()
+				{
+					if(policy.failed)
+						return false;
+					if(::GetTickCount64() > policy.deadline)
+					{
+						policy.Fail("PREVIEW_LIMIT",
+							L"Automatic capture exceeded its time limit.");
+						return false;
+					}
+					return true;
+				},
+				.submenu = [](const MenuItemInfo *entry)
+				{
+					return entry ? entry->hSubMenu : nullptr;
+				},
+				.entryId = [](const MenuItemInfo *entry)
+				{
+					return entry ? entry->id : 0;
+				},
+				.construct = [&](MenuItemInfo *entry, size_t,
+					const std::vector<uint32_t> &childAncestors,
+					std::vector<MenuItemInfo *> &childEntries)
+				{
+					if(!entry)
+						return false;
+					const auto handle = entry->hSubMenu;
+					menu_t child;
+					if(auto found = captureMenus.find(handle); found != captureMenus.end())
+						child = found->second;
+					else
+					{
+						child.handle = handle;
+						child.owner = entry;
+						child.type = entry->dynamic ? menu_t::MFT_DYNAMIC : menu_t::MFT_SYSTEM;
+						child.std_items = entry->sys_items;
+						if(entry->owner_dynamic)
+							child.dynamics = entry->owner_dynamic->items;
+						if(!child.std_items && child.dynamics.empty())
+						{
+							entry->studio_completeness.state = "unavailable";
+							entry->studio_completeness.complete = false;
+							addDiagnostic(entry->studio_completeness,
+								L"CAPTURE_SOURCE_UNAVAILABLE: submenu source was not retained.");
+							return false;
+						}
+					}
+					child.handle = handle;
+					child.owner = entry;
+					child.is_main = false;
+					if(child.path.empty())
+					{
+						string childPath = entry->path;
+						if(!childPath.empty())
+							childPath += L'/';
+						childPath += entry->title.normalize;
+						child.path = childPath.trim(L'/').move();
+					}
+
+					const auto savedParent = parent_level;
+					parent_level = childAncestors;
+					bool constructed = false;
+					try
+					{
+						constructed = construct_popup_entries(&child, childEntries, true);
+					}
+					catch(...)
+					{
+						parent_level = savedParent;
+						throw;
+					}
+					parent_level = savedParent;
+					return constructed;
+				},
+				.commit = [&](MenuItemInfo *entry,
+					std::vector<MenuItemInfo *> &&childEntries, bool constructed)
+				{
+					if(!entry)
+						return;
+					entry->items = std::move(childEntries);
+					entry->studio_completeness.childrenCaptured = constructed;
+					entry->studio_children_captured = constructed;
+					entry->studio_completeness.state = constructed ? "materialized" : "unavailable";
+					entry->studio_completeness.complete = constructed && !budgetExhausted &&
+						!policy.failed;
+					if(budgetExhausted)
+					{
+						entry->studio_completeness.itemLimit =
+							static_cast<uint32_t>(kMaxAutomaticCaptureItems);
+						addDiagnostic(entry->studio_completeness,
+							L"CAPTURE_ITEM_LIMIT: automatic capture reached its item limit.");
+					}
+					if(policy.failed)
+						addDiagnostic(entry->studio_completeness, policyDiagnostic());
+				},
+				.markUnavailable = markUnavailable,
+				.markIncomplete = [&](MenuItemInfo *entry, std::wstring_view diagnostic)
+				{
+					if(!entry)
+						return;
+					entry->studio_completeness.state = "unavailable";
+					entry->studio_completeness.complete = false;
+					if(diagnostic.find(L"CAPTURE_DEPTH_LIMIT") != std::wstring_view::npos)
+						entry->studio_completeness.depthLimit =
+							static_cast<uint32_t>(kMaxAutomaticCaptureDepth);
+					addDiagnostic(entry->studio_completeness, diagnostic);
+				}
+			};
+
+			std::vector<MenuItemInfo *> captured;
+			const bool constructed = construct_popup_entries(&captureRoot, captured, true);
+			if(!constructed)
+				return false;
+			NativeMenuConstruction::MaterializeAutomaticPopups(captured, 0, {},
+				kMaxAutomaticCaptureDepth, activeMenus, captureCallbacks);
+			if(budgetExhausted)
+				markUnavailable(captured,
+					L"CAPTURE_ITEM_LIMIT: automatic capture reached its item limit.");
+			if(policy.failed)
+				markUnavailable(captured, policyDiagnostic());
+
+			const auto metadata = capture_metadata();
+			if(!_studio_capture.PublishFinal(captured, metadata, {}))
+				return false;
+			_studio_automatic_capture_published_epoch = epoch;
+			return true;
+		}
+
 		int level = 0;
 		//finalize
 		LRESULT ContextMenu::OnInitMenuPopup(HMENU hMenu, [[maybe_unused]] uint32_t uPosition)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
 			__trace(L"ContextMenu.InitMenuPopup begin");
+			publish_original_capture_if_armed();
 
 			MENU m = hMenu;
 			LRESULT ret = msg.invoke();
-			
+
 			auto menu = &_menus[hMenu];
 			menu->handle = hMenu;
 			menu->is_main = _hMenu == hMenu;
@@ -1076,7 +2414,7 @@ namespace Nilesoft
 			{
 				return 0;
 			}*/
-			
+
 			if(menu->is_main)
 			{
 				//__system_menuitems
@@ -1087,279 +2425,9 @@ namespace Nilesoft
 		//	_log.info(L"init %d %x", parent_level.size(), menu->id);
 
 			std::vector<MenuItemInfo *> items;
-			items.reserve(100);
+			if(!construct_popup_entries(menu, items, false))
+				return ret;
 
-			PositionList _system_items;
-			PositionList _new_items;
-
-			//dynamic items
-			MenuItemInfo *owner = nullptr;
-			if(menu->is_main)
-			{
-				menu->dynamics = _cache->dynamic.items;
-				menu->std_items = &__system_menu_tree->items;
-			}
-			else
-			{
-				owner = menu->owner;
-			}
-			
-			prepare_system_items(_system_items, menu);
-			
-			std::vector<MenuItemInfo *> bottom_items;
-
-			if(_settings.new_items.enabled)
-			{
-				if(!(owner && owner->is_disabled()))
-				{
-					prepare_new_items(_new_items, menu->dynamics, owner, menu);
-
-					// add moved dynamic items
-					std::vector<NativeMenu*> mdi;
-					for(auto item : _moved_items.dynamics)
-					{
-						if(item->is_parent(parent_level))
-							mdi.push_back(item->owner_dynamic);
-					}
-
-					if(!mdi.empty())
-						prepare_new_items(_new_items, mdi, owner, menu, true);
-				}
-				
-				prepare_system_items2(_new_items, menu);
-
-				// insert top items
-				if(_new_items.size() > 0)
-					items.insert(items.end(), _new_items.Top.begin(), _new_items.Top.end());
-			}
-
-			if(_system_items.size() > 0)
-			{
-				items.insert(items.end(), _system_items.Top.begin(), _system_items.Top.end());
-				items.insert(items.end(), _system_items.Auto.begin(), _system_items.Auto.end());
-				bottom_items.insert(bottom_items.end(), _system_items.Bottom.begin(), _system_items.Bottom.end());
-			}
-
-			if(_new_items.size() > 0)
-			{
-				size_t dynamic_pos = 0;
-				
-				// is main menu
-				if(menu->is_main && Selected.Window.id > WINDOW_UI)
-				{
-					const int npos = -1;
-					auto findpos = [items]() -> size_t
-					{
-						const int c = static_cast<int>(items.size());
-						int pos = c / 2;
-						int p = npos;
-
-						if(pos > c)
-							pos = c;
-
-						for(int i = pos; i >= 0; i--)
-						{
-							if(items[i]->is_separator())
-							{
-								p = i;
-								break;
-							}
-						}
-
-						if(p == npos)
-						{
-							for(int i = pos; i < c; i++)
-							{
-								if(items[i]->is_separator())
-								{
-									p = i;
-									break;
-								}
-							}
-						}
-
-						if(p != npos) pos = p;
-						return static_cast<size_t>(pos);
-					};
-
-					// new menu items ii.fType = [0 || MFT_OWNERDRAW]
-					auto _position = _context.parse_position(_cache->dynamic.position);
-					switch(_position)
-					{
-						case Position::Auto:
-						{
-							if(Selected.Window.id <= WINDOW_EDIT)
-							{
-								dynamic_pos = items.size();
-							}
-							else 
-							{
-								bool rb = !Selected.Background && (Selected.Window.id == WINDOW_RECYCLEBIN);
-								if(!Selected.Types[FSO_TASKBAR] && !rb)
-								{
-									dynamic_pos = items.size() == 0 ? 1 : findpos();
-								}
-							}
-							break;
-						}
-						case Position::Top:
-							dynamic_pos = 0;
-							break;
-						case Position::Middle:
-							dynamic_pos = findpos();
-							break;
-						case Position::Bottom:
-							dynamic_pos = items.size();
-							break;
-						default:
-							dynamic_pos = static_cast<size_t>(_position);
-							break;
-					}
-				}
-				else
-				{
-					dynamic_pos = items.size();
-				}
-
-				if(dynamic_pos < 0 || dynamic_pos > items.size())
-					dynamic_pos = items.size();
-
-				items.insert(items.begin() + dynamic_pos, _new_items.Auto.begin(), _new_items.Auto.end());
-				bottom_items.insert(bottom_items.end(), _new_items.Bottom.begin(), _new_items.Bottom.end());
-			}
-
-			items.insert(items.end(), bottom_items.begin(), bottom_items.end());
-
-			auto middle = (items.size() / 2);
-
-			if(_system_items.size() > 0)
-				items.insert(items.begin() + middle, _system_items.Middle.begin(), _system_items.Middle.end());
-
-			if(_new_items.size() > 0)
-			{
-				middle = (items.size() / 2);
-				items.insert(items.begin() + middle, _new_items.Middle.begin(), _new_items.Middle.end());
-			}
-
-			auto add_custom_items = [&](std::vector<MenuItemInfo *> &custom_items)
-			{
-				for(auto item : custom_items)
-				{
-					if(item->indexof.val.empty())
-					{
-						auto pos = (int)item->position;
-						if(pos < 0 || pos >(int)items.size())
-							items.push_back(item);
-						else
-							items.insert(items.begin() + pos, item);
-					}
-					else
-					{
-						int i = 0; bool found = false;
-						FindPattern find_ptattern;
-						if(find_ptattern.split(item->indexof.val, L'|'))
-						{
-							for(const auto &fp : find_ptattern.matches)
-							{
-								i = 0;
-								for(auto &it : items)
-								{
-									if(find_ptattern.find(fp, &it->title.normalize))
-									{
-										found = true;
-										items.insert(items.begin() + i + item->indexof.pos, item);
-										break;
-									}
-									i++;
-								}
-								
-								if(found)
-									break;
-							}
-							
-							/*for(auto it : items)
-							{
-								if(find_ptattern(&it->title.normalize))
-								{
-									items.insert(items.begin() + i + item->indexof.pos, item);
-									found = true;
-									break;
-								}
-								i++;
-							}*/
-						}
-
-						if(!found)
-						{
-							i = item->indexof.def;
-							if(i == -2)
-								items.insert(items.begin(), item);
-							else if(i == -3)
-								items.insert(items.begin() + (items.size() / 2), item);
-							else
-								items.push_back(item);
-						}
-					}
-				}
-			};
-
-			add_custom_items(_new_items.Custom);
-			add_custom_items(_system_items.Custom);
-
-			// remove empty dynmic items 
-			for(auto i = items.begin(); i < items.end(); i++)
-			{
-				auto item = *i;
-				if(item->is_popup() && MENU::get_count(item->hSubMenu) == 0)
-				{
-					int cp = 0;
-
-					for(auto x : __movable_system_items)
-						cp += x->path.equals((item->path + L"/" + item->title.normalize).trim(L'/'));
-					
-					for(auto x : _moved_items.dynamics)
-						cp += item->id == x->parent.front();
-
-					if(cp == 0)
-					{
-						if(item->dynamic)
-						{
-							if(item->owner_dynamic->items.empty())
-								items.erase(i--);
-						}
-
-						if(item->sys_items && item->sys_items->empty())
-							items.erase(i--);
-					}
-				}
-
-				if(!item->is_separator())
-				{
-					if(item->is_checked() && _theme.image.display == 0)
-						item->image.destroy();
-
-					menu->draw.checks += item->is_checked();
-					menu->draw.images += item->has_image_or_draw();
-					menu->draw.popups += item->is_popup();
-				}
-			}
-
-			// remove duplicate separators
-			while(!items.empty())
-			{
-				if(items.back()->is_separator())
-					items.pop_back();
-				else
-				{
-					if(items.back()->is_sep_after())
-						items.back()->separator &= ~(int)Separator::Bottom;
-					break;
-				}
-			}
-
-			_items.reserve(items.size());
-			_items_command.reserve(items.size());
-			_items_popup.reserve(items.size());
 
 			DC dc = hwnd.owner;
 			dc.set_font(font.handle);
@@ -1390,7 +2458,7 @@ namespace Nilesoft
 				{
 					//item->wID += 100;
 				}
-				
+
 				if(auto res = m.insert(item, i, true, x++); res)
 				{
 					if(item->is_separator())
@@ -1452,7 +2520,7 @@ namespace Nilesoft
 
 							if(menu->draw.popups)
 								item->size.cx += _theme.image.gap + symbol.chevron.size.cx;
-							
+
 							item->size.cx += rc.right;
 							item->size.cy = rc.bottom;
 
@@ -1461,7 +2529,7 @@ namespace Nilesoft
 						}
 
 						menu->popup_height += item->size.cy +
-							_theme.back.padding.top + _theme.back.padding.bottom + 
+							_theme.back.padding.top + _theme.back.padding.bottom +
 							_theme.back.margin.top + _theme.back.margin.bottom;
 
 						_items.push_back(item);
@@ -1488,6 +2556,11 @@ namespace Nilesoft
 
 			dc.reset_font();
 
+			// The handshake may complete while this popup is being prepared.  A
+			// second gate check closes that bounded race even if the posted wake-up
+			// message is not dispatched until after the menu returns.
+			publish_original_capture_if_armed();
+
 			long image__size = _theme.image.size;
 			if(menu->draw.height < image__size)
 				menu->draw.height = image__size;
@@ -1496,7 +2569,7 @@ namespace Nilesoft
 				menu->draw.height++;
 
 			menu->popup_height += _theme.border.padding.top + _theme.border.padding.bottom + _theme.border.size + _theme.border.size;
-			
+
 
 			MENUINFO mi = { sizeof(mi), MIM_STYLE | MIM_BACKGROUND | MIM_MAXHEIGHT };
 			if(m.get(&mi))
@@ -1533,6 +2606,73 @@ namespace Nilesoft
 				m.set(&mi);
 			}
 
+			// Retain this exact display order until the deferred capture publishes
+			// the visible popup pixels and row rectangles.  This is also needed
+			// when the Studio handshake arrives after initialization.
+			try
+			{
+				// Menu insertion adds before/after separators and suppresses duplicate
+				// separators. Retain the actual HMENU order, not the input vector.
+				std::vector<MenuItemInfo *> displayed;
+				const auto count = ::GetMenuItemCount(hMenu);
+				if(count < 0 || static_cast<size_t>(count) > kMaxAppearanceRows)
+					throw std::runtime_error("Invalid displayed menu size");
+				displayed.reserve(static_cast<size_t>(count));
+				std::unordered_set<MenuItemInfo *> used;
+				for(int position = 0; position < count; ++position)
+				{
+					MENUITEMINFOW info{sizeof(info)};
+					info.fMask = MIIM_ID | MIIM_FTYPE;
+					if(!::GetMenuItemInfoW(hMenu, position, TRUE, &info))
+						throw std::runtime_error("Unavailable displayed menu row");
+					MenuItemInfo *entry = nullptr;
+					for(auto candidate : items)
+					{
+						if(candidate->wID == info.wID &&
+							candidate->is_separator() == ((info.fType & MFT_SEPARATOR) != 0) &&
+							used.find(candidate) == used.end())
+						{
+							entry = candidate;
+							used.insert(candidate);
+							break;
+						}
+					}
+					if(!entry && (info.fType & MFT_SEPARATOR))
+						entry = _gc.push(new MenuItemInfo(MIIM_ID | MIIM_FTYPE,
+							MFT_SEPARATOR, info.wID));
+					if(!entry)
+						throw std::runtime_error("Unmapped displayed menu row");
+					displayed.push_back(entry);
+				}
+				_studio_final_entries[hMenu] = std::move(displayed);
+				clear_appearance_cache(hMenu);
+			}
+			catch(...)
+			{
+				_studio_final_entries.erase(hMenu);
+				_studio_capture.Fail("CAPTURE_APPEARANCE_MEMORY",
+					"The native capture could not retain the displayed popup entries.");
+			}
+
+			// The final vector is the exact set of entries about to be displayed
+			// for this popup.  StudioCapture serializes it before this stack frame
+			// returns; it never receives HMENU handles or native pointers.
+			if(_studio_capture.IsActive())
+			{
+				try
+				{
+					const auto metadata = capture_metadata();
+					_studio_capture.PublishFinal(_studio_final_entries.at(hMenu), metadata,
+						menu->path.empty() ? std::wstring{} :
+						std::wstring(menu->path.c_str(), menu->path.length()));
+				}
+				catch(...)
+				{
+					_studio_capture.Fail("CAPTURE_METADATA",
+						"The native capture could not collect menu context metadata.");
+				}
+			}
+
 			__trace(L"ContextMenu.InitMenuPopup end");
 
 			return ret;
@@ -1558,9 +2698,11 @@ namespace Nilesoft
 
 			auto ret = msg.invoke();
 			::DestroyMenu(hMenu);
-			
+			_studio_final_entries.erase(hMenu);
+			clear_appearance_cache(hMenu);
+
 			__trace(L"ContextMenu.UninitMenuPopup");
-			
+
 			current.hMenu = nullptr;
 			menu->wnd = nullptr;
 			return ret;
@@ -1608,6 +2750,16 @@ namespace Nilesoft
 				::DrawThemeTextEx(_hTheme, hdcPaint, 0, 0, text, length, format, const_cast<Rect *>(rc), &dttOpts);
 				::SelectObject(hdcPaint, hFontOld);
 			}
+		}
+
+		void ContextMenu::draw_scroll_arrows(HDC hdc, long width, long height)
+		{
+			const auto inset = dpi(14);
+			const auto format = DT_NOCLIP | DT_SINGLELINE | DT_VCENTER | DT_CENTER;
+			Rect top{0, 0, width, inset};
+			Rect bottom{0, height - inset, width, height};
+			draw_string(hdc, font.icon, &top, _theme.symbols.chevron.nor, L"\uE009", 1, format);
+			draw_string(hdc, font.icon, &bottom, _theme.symbols.chevron.nor, L"\uE00A", 1, format);
 		}
 
 		void ContextMenu::draw_rect(DC *dc, const POINT &pt, const SIZE &size, const Color &color, const Color &border, int radius)
@@ -1712,7 +2864,7 @@ namespace Nilesoft
 				auto rect = *rc;
 				rect.left += _theme.separator.margin.left;
 				rect.right -= _theme.separator.margin.right;
-				//rect.top += _theme.separator.margin.top;		
+				//rect.top += _theme.separator.margin.top;
 				rect.top += _theme.separator.margin.top;
 				rect.bottom = rect.top + _theme.separator.size;
 				//dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
@@ -1727,7 +2879,7 @@ namespace Nilesoft
 				rectF.right = (float)rect.width();
 				rectF.top = ((float)(rc->height() + _theme.separator.size) / 2.f) - _theme.separator.size;
 				rectF.bottom = rectF.top + (float)_theme.separator.size;
-				
+
 				d2d2.render->FillRectangle(rectF, d2d2.brush);
 
 				d2d2.end(true);
@@ -1735,7 +2887,8 @@ namespace Nilesoft
 				return lret;
 			}
 
-			auto menu = &_menus[hMenu];
+			auto menu_it = _menus.find(hMenu);
+			auto menu = menu_it == _menus.end() ? nullptr : &menu_it->second;
 
 			auto mii = get_item(di->itemID, hMenu, _items);
 
@@ -1747,7 +2900,7 @@ namespace Nilesoft
 				dc.set_back(back_color);
 				dc.set_text(text_color);
 				//dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
-				
+
 				d2d2.end(true);
 				dc.exclude_clip_rect(*rc);
 				return lret;
@@ -1761,7 +2914,7 @@ namespace Nilesoft
 			{
 				mii->index = MENU::get_index(hMenu, mii->wID);
 				::GetMenuItemRect(0, hMenu, mii->index, &mii->rect);
-				
+
 				//dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
 			}
 			else
@@ -1884,10 +3037,10 @@ namespace Nilesoft
 					{
 						d2d2.render->FillRectangle(rectF, d2d2.brush);
 					}
-					else 
+					else
 					{
 						auto radius = (float)_theme.back.radius;
-						
+
 						d2d2.render->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 						d2d2.render->FillRoundedRectangle({ rectF,radius, radius }, d2d2.brush);
 					}
@@ -1895,7 +3048,7 @@ namespace Nilesoft
 			}
 
 			auto has_checked_image = menu->draw.checks && menu->draw.images && (_theme.image.display >= 2);
-			
+
 			if(!mii->title.empty())
 			{
 				Color clrtext = text_color;
@@ -1945,8 +3098,8 @@ namespace Nilesoft
 							float(rcText.width()),
 							float(rcText.height())
 						};
-						
-					
+
+
 						d2d2.render->DrawTextW(mii->title.normalize, mii->title.normalize.length<uint32_t>(),
 											   tf,
 											   rect_,
@@ -2007,40 +3160,57 @@ namespace Nilesoft
 
 		int ooo = 0;
 
-		LRESULT ContextMenu::OnDrawItem(DRAWITEMSTRUCT *di)
+		bool ContextMenu::paint_shell_row(const ShellRowPaintInput &input,
+			ShellRowPaintPlan &plan)
 		{
-			LRESULT lret = TRUE;
-			//current.selectitem = nullptr;
-			if(di->itemID == 0x5ffffffe)
-				return lret;
+			if(!input.hdc)
+				return false;
 
-			bool render_d2d = false;
-			if(render_d2d)
-				return OnDrawItem_D2D(di);
+			plan = ShellRowPaintPlan::Resolve(input.itemId, input.itemAction,
+				input.itemState, input.item, [&]() noexcept
+				{
+					ShellRowPaintFeatures features{};
+					if(input.item)
+					{
+						features.staticOrLabel =
+							input.item->visibility == Visibility::Static ||
+							input.item->visibility == Visibility::Label;
+						features.hasTooltip = static_cast<bool>(input.item->tip);
+					}
+					return features;
+				}());
 
-			
-			auto hMenu = reinterpret_cast<HMENU>(di->hwndItem);
-			auto rc = reinterpret_cast<const Rect *>(&di->rcItem);
+			if(plan.separator)
+			{
+				DC dc = input.hdc;
+				dc.set_back_mode();
+				auto rc = reinterpret_cast<const Rect *>(&input.rect);
+				auto rect = *rc;
+				rect.left += _theme.separator.margin.left;
+				rect.right -= _theme.separator.margin.right;
+				rect.top += _theme.separator.margin.top;
+				rect.bottom = rect.top + _theme.separator.size;
+				dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) :
+					_hbackground);
+				draw_rect(&dc, rect.point(),
+					{ rect.width(), _theme.separator.size }, _theme.separator.color);
+				return true;
+			}
 
-			Flag<uint32_t> faction = di->itemAction;
-			Flag<uint32_t> fState = di->itemState;
+			if(!input.menu || !input.item)
+				return false;
 
-			DRAWITEMSTATE state(di->itemState);
-
-			auto draw_entire = faction.has(ODA_DRAWENTIRE);
-
+			const auto *menu = input.menu;
+			const auto *mii = input.item;
+			auto rc = reinterpret_cast<const Rect *>(&input.rect);
+			DC dc = input.hdc;
+			dc.set_back_mode();
+			bool disabled = plan.disabled;
 			Color back_color = _theme.back.color.nor;
 			Color text_color = _theme.text.color.nor;
-
-			_tip.hide(!draw_entire);
-
-			DC dc = di->hDC;
-
-			dc.set_back_mode();
-			
-			if(state.selected)
+			if(plan.selected)
 			{
-				if(state.disabled)
+				if(plan.disabled)
 				{
 					back_color = _theme.back.color.sel_dis;
 					text_color = _theme.text.color.sel_dis;
@@ -2051,117 +3221,33 @@ namespace Nilesoft
 					text_color = _theme.text.color.sel;
 				}
 			}
-			else if(state.disabled)
+			else if(plan.disabled)
 			{
 				back_color = _theme.back.color.nor_dis;
 				text_color = _theme.text.color.nor_dis;
 			}
-
-			if(di->itemID == MF_NOITEM)
-			{
-				auto rect = *rc;
-				rect.left += _theme.separator.margin.left;
-				rect.right -= _theme.separator.margin.right;
-				//rect.top += _theme.separator.margin.top;		
-				rect.top += _theme.separator.margin.top;
-				rect.bottom = rect.top + _theme.separator.size;
-				//draw_rect(&dc, rc->point(), rc->size(), _theme.background.color);
-				dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
-				draw_rect(&dc, rect.point(), { rect.width(), _theme.separator.size }, _theme.separator.color);
-				return 1;
-			}
-
-			//dc.draw_fillrect({ rc->left, rc->top, rc->right, rc->bottom }, (composition ? 0x000000 : _theme.background.color));
-			//dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
-
-			auto menu = &_menus[hMenu];
-
-			auto mii = get_item(di->itemID, hMenu, _items);
-
-			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
-			{
-				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
-				{
-					DC dcmem(dc.CreateCompatibleDC(), 1);
-					dcmem.select_bitmap(hbitmap.get());
-
-					auto old_hdc = di->hDC;
-					di->hDC = dcmem;
-
-					lret = msg.invoke();
-					
-					di->hDC = old_hdc;
-
-					std::vector<COLORREF> pixels(rc->width() * rc->height());
-
-					BITMAPINFOHEADER bmpInfo = { 0 };
-					bmpInfo.biSize = sizeof(bmpInfo);
-					bmpInfo.biWidth = rc->width();
-					bmpInfo.biHeight = -int(rc->height());
-					bmpInfo.biPlanes = 1;
-					bmpInfo.biBitCount = 32;
-					bmpInfo.biCompression = BI_RGB;
-
-					::GetDIBits(dcmem, hbitmap.get(), 0, rc->height(), &pixels[0], (LPBITMAPINFO)&bmpInfo, DIB_RGB_COLORS);
-
-					std::for_each(pixels.begin(), pixels.end(), [](COLORREF &pixel) {
-						if(pixel != 0) // black pixels stay transparent
-							pixel |= 0xFF000000; // set alpha channel to 100%
-					});
-
-					::SetDIBits(dcmem, hbitmap.get(), 0, rc->height(), &pixels[0], (LPBITMAPINFO)&bmpInfo, DIB_RGB_COLORS);
-					dc.draw_image(rc->point(), rc->size(), dcmem);
-
-					return lret;
-				}
-
-				dc.set_back_mode(true);
-				dc.set_back(back_color);
-				dc.set_text(text_color);
-				dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
-
-				lret = msg.invoke();
-
-				return lret;
-			}
-
 			auto is_label = mii->visibility == Visibility::Label;
-			auto is_static = mii->visibility == Visibility::Static;
-			auto is_static_or_label = is_static || is_label;
+			const bool is_static_or_label = plan.staticOrLabel;
 
-			if(draw_entire)
+			if(plan.drawEntire)
 			{
-				mii->index = MENU::get_index(hMenu, mii->wID);
-				::GetMenuItemRect(0, hMenu, mii->index, &mii->rect);
-				dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
+				dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
 			}
 			else
 			{
-				if(state.disabled && is_static_or_label)
+				if(plan.skipDisabledStatic)
 				{
-					dc.exclude_clip_rect(*rc);
 					return true;
 				}
-				
-				dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
+
+				dc.fill_rect(*rc, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
 			}
 
-			if(!(state.disabled && is_static_or_label))
-			{
-				if(state.selected)
-				{
-					current.select_previtem = current.selectitem;
-					current.selectitem = mii;
-					if(mii->tip)
-						current.tip = mii;
-				}
-			}
-
-			if(state.disabled)
+			if(disabled)
 			{
 				if(is_static_or_label)
 				{
-					state.disabled = false;
+					disabled = false;
 					back_color = _theme.back.color.nor;
 					text_color = _theme.text.color.nor;
 				}
@@ -2170,7 +3256,7 @@ namespace Nilesoft
 			const long image_size = _theme.image.size;
 
 			auto rcblock = *rc;
-			
+
 			rcblock.top += _theme.back.margin.top;
 			rcblock.bottom -= _theme.back.margin.bottom;
 
@@ -2199,7 +3285,7 @@ namespace Nilesoft
 				if(mii->cch == 0)
 				{
 				}
-				else 
+				else
 				{
 					rcimg.left = rcblock.left + _theme.back.padding.left;
 					rcimg.right = rcimg.left + image_size;
@@ -2212,26 +3298,26 @@ namespace Nilesoft
 
 				Color border_color = _theme.back.border.nor;
 
-				if(state.selected)
+				if(plan.selected)
 				{
-					if(state.disabled && _theme.back.color.sel_dis.a > 0)
+					if(disabled && _theme.back.color.sel_dis.a > 0)
 						op = _theme.back.color.sel_dis.a;
-					else if(!state.disabled && _theme.back.color.sel_dis.a > 0)
+					else if(!disabled && _theme.back.color.sel_dis.a > 0)
 						op = _theme.back.color.sel.a;
 
-					border_color = state.disabled ? _theme.back.border.sel_dis : _theme.back.border.sel;
+					border_color = disabled ? _theme.back.border.sel_dis : _theme.back.border.sel;
 				}
 				else
 				{
-					if(state.disabled && _theme.back.color.nor_dis.a > 0)
+					if(disabled && _theme.back.color.nor_dis.a > 0)
 						op = _theme.back.color.nor_dis.a;
-					else if(!state.disabled && _theme.back.color.nor.a > 0)
+					else if(!disabled && _theme.back.color.nor.a > 0)
 						op = _theme.back.color.nor.a;
 
-					if(state.disabled)
+					if(disabled)
 						border_color = _theme.back.border.nor_dis;
 				}
-				
+
 				//dc.draw_fill_rounded_rect(rcblock, _theme.back.radius+2, 0,0);
 				//draw_rect(&dc, rcblock.point(), { width, height }, 0xff000000, {}, _theme.back.radius);
 				//draw_rect(&dc, rcblock.point(), { width, height }, _theme.background.color, {}, _theme.back.radius);
@@ -2258,28 +3344,28 @@ namespace Nilesoft
 				if(mii->is_popup() || mii->is_checked())
 				{
 					auto sy = mii->is_popup() ? &symbol.chevron : mii->is_radiocheck() ? &symbol.bullet : &symbol.checked;
-					auto hbitmap = state.selected ? sy->select : sy->normal;
-					
-					if(state.disabled)
-						hbitmap = state.selected ? sy->select_disabled : sy->normal_disabled;
+					auto hbitmap = plan.selected ? sy->select : sy->normal;
+
+					if(disabled)
+						hbitmap = plan.selected ? sy->select_disabled : sy->normal_disabled;
 
 					if(mii->is_popup())
 					{
 						auto rect = rcblock;
 						auto x = rect.right - (_theme.back.padding.right + symbol.chevron.size.cx);
 						auto y = rcblock.top + ((height - symbol.chevron.size.cy) / 2);
-						dc.draw_image({ x, y }, { symbol.chevron.size.cx, symbol.chevron.size.cy }, hbitmap, state.disabled ? 64 : 255);
+						dc.draw_image({ x, y }, { symbol.chevron.size.cx, symbol.chevron.size.cy }, hbitmap, disabled ? 64 : 255);
 					}
 					else if(mii->is_checked() && (_theme.image.display != 1 || !mii->has_image_or_draw()))
 					{
 						long z = _theme.image.size;
-						dc.draw_image(rcchekhed.point(), { z, z }, hbitmap, state.disabled ? 64 : 255);
+						dc.draw_image(rcchekhed.point(), { z, z }, hbitmap, disabled ? 64 : 255);
 					}
 				}
 
 				auto image = &mii->image;
 
-				if(state.selected && mii->image_select.isvalid())
+				if(plan.selected && mii->image_select.isvalid())
 					image = &mii->image_select;
 
 				if(image->hbitmap)
@@ -2292,15 +3378,15 @@ namespace Nilesoft
 							Rect rcim = { rcimg.left + ((image_size - image->size.cx) / 2),
 								(rcblock.top + (rcblock.bottom - image->size.cy)) / 2,
 								image->size.cx, image->size.cy };
-							
+
 							//if(image->bitsPixel < 32)
 							//	dc.bitblt({ rcim.left,rcim.top,size.cx,size.cy }, memDC, 0, 0);
 							//else
 							{
 								bool is_16 = image->size.cx <= dpi(16) && image->size.cy <= dpi(16);
 								if(image->import == ImageImport::SVG && is_16)
-									dc.draw_image(rcim.point(), image->size, memDC, state.disabled ? 48 : 192);
-								dc.draw_image(rcim.point(), image->size, memDC, state.disabled ? 64 : 255);
+									dc.draw_image(rcim.point(), image->size, memDC, disabled ? 48 : 192);
+								dc.draw_image(rcim.point(), image->size, memDC, disabled ? 64 : 255);
 							}
 							memDC.reset_bitmap();
 						}
@@ -2324,7 +3410,7 @@ namespace Nilesoft
 						{
 							clr = shape->color[0];
 
-							if(state.disabled) clr.opacities();
+							if(disabled) clr.opacities();
 
 							if(size.cx > image_size) size.cx = image_size;
 							if(size.cy > image_size) size.cy = image_size;
@@ -2365,7 +3451,7 @@ namespace Nilesoft
 						{
 							if(size.cx > image_size) size.cx = image_size;
 							if(size.cy > image_size) size.cy = image_size;
-							
+
 							color_[0] = g->color[0];
 							color_[1] = g->color[1];
 
@@ -2375,7 +3461,7 @@ namespace Nilesoft
 									color_[0] = _theme.image.color[0];
 								else
 								{
-									if(state.disabled && (_theme.text.color.nor_dis))
+									if(disabled && (_theme.text.color.nor_dis))
 										color_[0] = _theme.text.color.nor_dis;
 									else
 										color_[0] = text_color;
@@ -2385,7 +3471,7 @@ namespace Nilesoft
 							if(!color_[1])
 								color_[1] = _theme.image.color[0] ? _theme.image.color[1] : text_color;
 
-							if(state.disabled)
+							if(disabled)
 							{
 								color_[0].opacities();
 								color_[1].opacities();
@@ -2452,9 +3538,9 @@ namespace Nilesoft
 								lf.lfWeight = FW_LIGHT;
 								auto_gdi<HFONT> r_hfont(::CreateFontIndirectW(&lf));
 								if(menu->id == IDENT_ID_INSERT_UNICODE_CONTROL_CHARACTER)
-									c.opacity(state.disabled ? 50 : 100);
+									c.opacity(disabled ? 50 : 100);
 								else
-									c.opacity(state.disabled ? 30 : 50);
+									c.opacity(disabled ? 30 : 50);
 
 								draw_string(dc, r_hfont.get(), &rcText, c, right, right.length<int>(), DT_RIGHT | txtfmt);
 							}
@@ -2473,13 +3559,164 @@ namespace Nilesoft
 					}
 				}
 			}
-			
-			// exlude menu item rectangle to prevent drawing by windows after us
-			dc.exclude_clip_rect(*rc);
 
-			if(state.selected && mii->tip)
-				//	_tip.show(mii->tip, mii->rect);
-				_tip.show(mii->tip.text, mii->tip.type, mii->tip.time, mii->rect);
+			// exlude menu item rectangle to prevent drawing by windows after us
+
+			return TRUE;
+		}
+
+		LRESULT ContextMenu::OnDrawItem(DRAWITEMSTRUCT *di)
+		{
+			LRESULT lret = TRUE;
+			//current.selectitem = nullptr;
+			if(di->itemID == 0x5ffffffe)
+				return lret;
+
+			// Run the one real owner-draw callback against a translated row DIB.
+			// NativeRowSurface presents those exact bits to the menu DC and hands
+			// the same pixels to the capture cache at function exit, so capture never
+			// reads the visible window surface or invokes the owner callback twice.
+			NativeRowSurface::Sink sink = [](void *context, DRAWITEMSTRUCT *draw,
+				const uint8_t *pixels, long width, long height) noexcept
+			{
+				static_cast<ContextMenu *>(context)->cache_painted_row(draw, pixels, width, height);
+			};
+			NativeRowSurface paintScope(di, this,
+				_studio_capture.IsActive() ? sink : nullptr, kMaxAppearancePixels);
+
+			bool render_d2d = false;
+			if(render_d2d)
+				return OnDrawItem_D2D(di);
+
+
+			auto hMenu = reinterpret_cast<HMENU>(di->hwndItem);
+			auto rc = reinterpret_cast<const Rect *>(&di->rcItem);
+			auto menu_it = _menus.find(hMenu);
+			auto menu = menu_it == _menus.end() ? nullptr : &menu_it->second;
+
+			auto mii = get_item(di->itemID, hMenu, _items);
+			const bool draw_entire = (di->itemAction & ODA_DRAWENTIRE) != 0;
+
+			_tip.hide(!draw_entire);
+
+			ShellRowPaintInput input{};
+			input.hdc = di->hDC;
+			input.rect = di->rcItem;
+			input.itemId = di->itemID;
+			input.itemAction = di->itemAction;
+			input.itemState = di->itemState;
+			input.menu = menu;
+			input.item = mii;
+
+			ShellRowPaintPlan plan{};
+			const bool shell_row = di->itemID == MF_NOITEM ||
+				(mii && !(mii->title.empty() && !ident.equals(mii->wID)));
+			if(shell_row && paint_shell_row(input, plan))
+			{
+				if(plan.skipDisabledStatic)
+					paintScope.skip_presentation();
+				if(plan.updateGeometry)
+				{
+					mii->index = MENU::get_index(hMenu, mii->wID);
+					::GetMenuItemRect(0, hMenu, mii->index, &mii->rect);
+				}
+
+				if(plan.selectedItem)
+				{
+					current.select_previtem = current.selectitem;
+					current.selectitem = plan.selectedItem;
+					if(mii->tip)
+						current.tip = mii;
+				}
+
+				if(plan.exclude)
+				{
+					::ExcludeClipRect(di->hDC, rc->left, rc->top,
+						rc->right, rc->bottom);
+					paintScope.mark_excluded();
+				}
+
+				if(plan.showTooltip)
+					_tip.show(mii->tip.text, mii->tip.type, mii->tip.time, mii->rect);
+
+				return TRUE;
+			}
+			if(shell_row)
+				return msg.invoke();
+
+			Color back_color = _theme.back.color.nor;
+			Color text_color = _theme.text.color.nor;
+			DRAWITEMSTATE state(di->itemState);
+			if(state.selected)
+			{
+				if(state.disabled)
+				{
+					back_color = _theme.back.color.sel_dis;
+					text_color = _theme.text.color.sel_dis;
+				}
+				else
+				{
+					back_color = _theme.back.color.sel;
+					text_color = _theme.text.color.sel;
+				}
+			}
+			else if(state.disabled)
+			{
+				back_color = _theme.back.color.nor_dis;
+				text_color = _theme.text.color.nor_dis;
+			}
+
+			DC dc = di->hDC;
+			dc.set_back_mode();
+
+			if(!mii || (mii->title.empty() && !ident.equals(mii->wID)))
+			{
+				if(auto_gdi<HBITMAP> hbitmap(dc.createbitmap(rc->width(), rc->height())); hbitmap)
+				{
+					DC dcmem(dc.CreateCompatibleDC(), 1);
+					dcmem.select_bitmap(hbitmap.get());
+					::SetViewportOrgEx(dcmem, -rc->left, -rc->top, nullptr);
+
+					auto old_hdc = di->hDC;
+					di->hDC = dcmem;
+
+					lret = msg.invoke();
+
+					di->hDC = old_hdc;
+					::SetViewportOrgEx(dcmem, 0, 0, nullptr);
+
+					std::vector<COLORREF> pixels(rc->width() * rc->height());
+
+					BITMAPINFOHEADER bmpInfo = { 0 };
+					bmpInfo.biSize = sizeof(bmpInfo);
+					bmpInfo.biWidth = rc->width();
+					bmpInfo.biHeight = -int(rc->height());
+					bmpInfo.biPlanes = 1;
+					bmpInfo.biBitCount = 32;
+					bmpInfo.biCompression = BI_RGB;
+
+					::GetDIBits(dcmem, hbitmap.get(), 0, rc->height(), &pixels[0], (LPBITMAPINFO)&bmpInfo, DIB_RGB_COLORS);
+
+					std::for_each(pixels.begin(), pixels.end(), [](COLORREF &pixel) {
+						if(pixel != 0) // black pixels stay transparent
+							pixel |= 0xFF000000; // set alpha channel to 100%
+					});
+
+					::SetDIBits(dcmem, hbitmap.get(), 0, rc->height(), &pixels[0], (LPBITMAPINFO)&bmpInfo, DIB_RGB_COLORS);
+					dc.draw_image(rc->point(), rc->size(), dcmem);
+
+					return lret;
+				}
+
+				dc.set_back_mode(true);
+				dc.set_back(back_color);
+				dc.set_text(text_color);
+				dc.fill_rect(di->rcItem, composition ? dc.stock_brush(BLACK_BRUSH) : _hbackground);
+
+				lret = msg.invoke();
+
+				return lret;
+			}
 
 			return TRUE;
 		}
@@ -2491,7 +3728,7 @@ namespace Nilesoft
 
 			mi->itemHeight = 0;
 			mi->itemWidth = 0;
-			
+
 			if(mi->itemID == 0x5ffffffe)
 			{
 				mi->itemWidth = 260;
@@ -2511,7 +3748,7 @@ namespace Nilesoft
 					{
 						if(!ident.equals(mi->itemID))
 							lret = msg.invoke();
-						else 
+						else
 						{
 							auto v = (uint32_t)_theme.view2;
 							if(v < _theme.image.size)
@@ -2523,7 +3760,7 @@ namespace Nilesoft
 							mi->itemHeight += mii->is_spacer() ? dpi(10u) : v;
 						}
 					}
-					else 
+					else
 					{
 						mi->itemHeight += mii->size.cy + _theme.back.height();
 						if(mi->itemHeight % 2)
@@ -2614,7 +3851,7 @@ namespace Nilesoft
 			_theme.systemUsesLightTheme = systemUsesLightTheme;
 			_theme.appsUseLightTheme = appsUseLightTheme;
 			_theme.isHighContrast = isHighContrast;
-			
+
 
 			auto is_sys_dark = Selected.Window.isTaskbar() ? !systemUsesLightTheme : !appsUseLightTheme;// Theme::IsDarkMode(Selected.Window.isTaskbar());
 
@@ -2628,7 +3865,7 @@ namespace Nilesoft
 				obj = _context.Eval(th->dark).move();
 				if(obj.not_default())
 					is_dark = obj.to_bool();
-				
+
 				_theme.mode = is_dark;
 			}
 
@@ -2769,7 +4006,7 @@ namespace Nilesoft
 					break;
 				case ThemeType::Modern:
 					_theme = is_dark ? Theme::Modern(ThemeType::Dark, 1, transparency.effect) : Theme::Modern(ThemeType::Light, 0, transparency.effect);
-					
+
 					if(enableTransparency and transparency.effect == 3)
 					{
 						if(!is_dark)
@@ -2837,17 +4074,17 @@ namespace Nilesoft
 								{
 									nor.from(::GetSysColor(COLOR_MENUTEXT), 100);
 								}
-								
+
 								if (!get_clr(sel, MENU_POPUPITEM, MPI_HOT, TMT_TEXTCOLOR))
 								{
 									sel.from(::GetSysColor(COLOR_HIGHLIGHTTEXT), 100);
 								}
-								
+
 								if (!get_clr(dis, MENU_POPUPITEM, MPI_DISABLED, TMT_TEXTCOLOR))
 								{
 									dis.from(::GetSysColor(COLOR_GRAYTEXT), 100);
 								}
-								
+
 								if (!get_clr(dis_sel, MENU_POPUPITEM, MPI_DISABLEDHOT, TMT_TEXTCOLOR))
 								{
 									dis_sel.from(::GetSysColor(COLOR_GRAYTEXT), 100);
@@ -2877,22 +4114,22 @@ namespace Nilesoft
 										_theme.background.color.from(::GetSysColor(COLOR_MENU), 100);
 									}
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.sel, MENU_POPUPITEM, MPI_HOT))
 								{
 									_theme.back.color.sel.from(::GetSysColor(COLOR_HIGHLIGHT), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.nor_dis, MENU_POPUPITEM, MPI_DISABLED))
 								{
 									_theme.back.color.nor_dis.from(::GetSysColor(COLOR_MENU), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.back.color.sel_dis, MENU_POPUPITEM, MPI_DISABLEDHOT))
 								{
 									_theme.back.color.sel_dis.from(::GetSysColor(COLOR_BTNFACE), 100);
 								}
-								
+
 								if (!get_bk_clr(_theme.separator.color, MENU_POPUPSEPARATOR, 0, -1, -1, 3))
 								{
 									_theme.separator.color.from(::GetSysColor(COLOR_GRAYTEXT), 100);
@@ -3045,7 +4282,7 @@ namespace Nilesoft
 			if(_context.eval_number(sets->theme.image.enabled, obj))
 			{
 				_theme.image.enabled = obj.to_bool();
-				
+
 				if(!_theme.image.enabled)
 				{
 					_settings.modify_items.image = 0;
@@ -3098,12 +4335,12 @@ namespace Nilesoft
 					if(_context.eval_number(sets->modify_items.image, obj))
 						_settings.modify_items.image = obj.to_number<int>();
 				}
-				else 
+				else
 				{
 					_settings.modify_items.image = 0;
 				}
 			}
-			else 
+			else
 			{
 				_settings.modify_items.image = 0;
 				_settings.modify_items.position = 0;
@@ -3116,7 +4353,7 @@ namespace Nilesoft
 				_settings.modify_items.remove.disabled = false;
 				_settings.modify_items.remove.separator = false;
 			}
-			
+
 			// new items
 			if(_context.eval_number(sets->new_items.enabled, obj))
 				_settings.new_items.enabled = obj.to_bool();
@@ -3196,7 +4433,7 @@ namespace Nilesoft
 			if(transparency.tintcolor)
 				_theme.background.tintcolor = transparency.tintcolor;
 
-			
+
 			if(transparency.effect == 0)
 				_theme.background.color.a = 0xFF;
 			else
@@ -3695,7 +4932,7 @@ namespace Nilesoft
 
 			if(_context.Eval(th->font.name, obj) && !obj.is_empty())
 				__font.name = obj.move();
-			
+
 			_context.eval_number(th->font.size, __font.size);
 
 			_context.eval_number(th->font.weight, __font.weight);
@@ -3718,15 +4955,15 @@ namespace Nilesoft
 				string::Copy(_theme.font.lfFaceName, L"Segoe UI");
 			}
 
-			if(ver->IsWindows11OrGreater()) 
+			if(ver->IsWindows11OrGreater())
 			{
 				DWORD dwTextScaleFactor = 100, cbData;
-				::RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility", 
+				::RegGetValueW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Accessibility",
 							   L"TextScaleFactor", RRF_RT_DWORD, nullptr, &dwTextScaleFactor, &cbData);
 				long scale = ((dpi.val + 24) * dwTextScaleFactor) / 100;
 				_theme.font.lfHeight = 12 * scale / 100;
 			}
-					
+
 			if(__font.name.is_string())
 			{
 				string value = __font.name.to_string().trim().move();
@@ -3747,7 +4984,7 @@ namespace Nilesoft
 				}
 				_context.font.text = _theme.font.lfFaceName;
 			}
-			
+
 			if(__font.size.not_default())
 			{
 				long value = __font.size;
@@ -3781,8 +5018,8 @@ namespace Nilesoft
 					//MBF(L"%d, %d, %d", dpi.val, (font_size * dpi.val) / of, di);
 				}
 			}
-			
-			if(_theme.image.enabled) 
+
+			if(_theme.image.enabled)
 			{
 				if(th->image.color)
 				{
@@ -3817,7 +5054,7 @@ namespace Nilesoft
 			}
 
 			//_theme.image.size = _theme.text.size;//16 //_theme.SystemMetrics<uint32_t>(SM_CXSMICON, 96/*dpi.val*/);
-			
+
 			_theme.scale();
 
 			_theme.text.size = std::abs(_theme.font.lfHeight);
@@ -3872,12 +5109,12 @@ namespace Nilesoft
 				if(!_theme.gradient.enabled)
 					_theme.transparent = false;
 			}
-			
-			std::string ll[]  
+
+			std::string ll[]
 			{
 				// Chevron Right
 				"M7 16.82L6.17 16L12.17 10L6.17 3.99L7 3.17L13.82 10Z",
-				// Chevron Left 
+				// Chevron Left
 				"M12.99 16.82L13.82 16L7.82 10L13.82 3.99L12.99 3.17L6.17 10Z",
 				// Checked Mark
 				"M2.68 11.06C2.56 10.94 2.5 10.79 2.5 10.62C2.5 10.45 2.56 10.30 2.68 10.18C2.80 10.06 2.95 10 3.12 10C3.29 10 3.44 10.06 3.56 10.18L7.5 14.11L16.43 5.18C16.55 5.06 16.70 5 16.87 5C17.04 5 17.19 5.06 17.31 5.18C17.43 5.30 17.5 5.45 17.5 5.62C17.5 5.79 17.43 5.94 17.31 6.06L7.93 15.43C7.81 15.56 7.66 15.62 7.5 15.62C7.33 15.62 7.18 15.56 7.06 15.43Z",
@@ -3908,7 +5145,7 @@ namespace Nilesoft
 			esvg(&ll[3], _theme.symbols.bullet, symbol.bullet);
 
 			esvg(&ll[is_layoutRTL ? 1 : 0], _theme.symbols.chevron, symbol.chevron);
-			
+
 			if(symbol.chevron.normal)
 			{
 				symbol.chevron.size.cx = _theme.image.size;
@@ -3924,7 +5161,7 @@ namespace Nilesoft
 						auto b = (uint8_t *)bmp.bmBits;
 
 						int bottom = 0;
-						int left = w; 
+						int left = w;
 						int right = 0;
 						int top = h;
 
@@ -3943,7 +5180,7 @@ namespace Nilesoft
 							}
 							b += (w * 4);
 						}
-	
+
 						if(left < right && top < bottom)
 						{
 							SIZE trim = { right - left, bottom - top };
@@ -3968,7 +5205,7 @@ namespace Nilesoft
 			}
 		}
 
-		bool ContextMenu::is_excluded() 
+		bool ContextMenu::is_excluded()
 		{
 			auto initializer = Initializer::instance;
 			auto sets = &_cache->settings;
@@ -4022,37 +5259,1064 @@ namespace Nilesoft
 
 		HMENU ContextMenu::MenuHandle() const { return _hMenu; }
 
+		StudioCaptureMetadata ContextMenu::capture_metadata() const
+		{
+			StudioCaptureMetadata metadata;
+			auto copy = [](const string &value) -> std::wstring
+			{
+				return value.empty() ? std::wstring{} :
+					std::wstring(value.c_str(), value.length());
+			};
+
+			if(_cache)
+			{
+				metadata.configPath = _cache->config_path;
+				metadata.runtimeGeneration = _cache->runtime_generation;
+				metadata.hasEffectiveSettings = true;
+				metadata.modifyItemsEnabled = _settings.modify_items.enabled;
+				metadata.modifyItemsTitle = _settings.modify_items.title;
+				metadata.modifyItemsVisibility = _settings.modify_items.visibility;
+				metadata.modifyItemsParent = _settings.modify_items.parent;
+				metadata.modifyItemsSeparator = _settings.modify_items.separator;
+				metadata.modifyItemsKeys = _settings.modify_items.keys;
+				metadata.modifyItemsImage = _settings.modify_items.image;
+				metadata.modifyItemsPosition = _settings.modify_items.position;
+				metadata.removeDuplicate = _settings.modify_items.remove.duplicate;
+				metadata.removeDisabled = _settings.modify_items.remove.disabled;
+				metadata.removeSeparator = _settings.modify_items.remove.separator;
+				metadata.newItemsEnabled = _settings.new_items.enabled;
+				metadata.newItemsImage = _settings.new_items.image;
+				metadata.newItemsKeys = _settings.new_items.keys;
+			}
+
+			const wchar_t *contextName = L"unknown";
+			switch(Selected.Window.id)
+			{
+				case WINDOW_UI: contextName = L"ui"; break;
+				case WINDOW_SYSMENU: contextName = L"system"; break;
+				case WINDOW_EDIT: contextName = L"edit"; break;
+				case WINDOW_START: contextName = L"start"; break;
+				case WINDOW_TASKBAR: contextName = L"taskbar"; break;
+				case WINDOW_DESKTOP: contextName = L"desktop"; break;
+				case WINDOW_EXPLORER: contextName = L"explorer"; break;
+				case WINDOW_EXPLORER_TREE: contextName = L"explorer-tree"; break;
+				case WINDOW_COMPUTER: contextName = L"computer"; break;
+				case WINDOW_RECYCLEBIN: contextName = L"recycle-bin"; break;
+				case WINDOW_LIBRARIES: contextName = L"libraries"; break;
+				case WINDOW_HOME: contextName = L"home"; break;
+				case WINDOW_QUICK_ACCESS: contextName = L"quick-access"; break;
+				default: break;
+			}
+			metadata.context = contextName;
+			metadata.context += Selected.Background ? L".background" : L".selection";
+
+			// Preserve the complete, already-evaluated native selection.  The Studio
+			// preview runs on a different machine and must not infer file-system
+			// kinds, drive media, or window state from the captured path strings.
+			metadata.selection.background = Selected.Background;
+			metadata.selection.windowId = static_cast<int32_t>(Selected.Window.id);
+			metadata.selection.mode = static_cast<int32_t>(Selected.Mode);
+			metadata.selection.front = Selected.front;
+			metadata.selection.windowDesktop = Selected.Window.desktop;
+			metadata.selection.windowExplorer = Selected.Window.explorer;
+			metadata.selection.windowExplorerTree = Selected.Window.explorer_tree;
+			metadata.selection.parent = copy(Selected.Parent);
+			metadata.selection.parentRaw = copy(Selected.ParentRaw);
+			metadata.selection.directory = copy(Selected.Directory);
+			metadata.selection.types.resize(FSO_MAX);
+			for(size_t index = 0; index < FSO_MAX; ++index)
+				metadata.selection.types[index] = Selected.Types[index];
+			metadata.selection.items.reserve((std::min)(Selected.Items.size(),
+				StudioCapture::MaxSelectionItems));
+			for(auto item : Selected.Items)
+			{
+				if(metadata.selection.items.size() >= StudioCapture::MaxSelectionItems)
+					break;
+				if(!item)
+					continue;
+				StudioCaptureSelectionItem captured;
+				captured.path = copy(item->Path);
+				captured.raw = copy(item->Raw);
+				captured.name = copy(item->Name);
+				captured.title = copy(item->Title);
+				captured.extension = copy(item->Extension);
+				captured.type = static_cast<int32_t>(item->Type);
+				captured.group = static_cast<int32_t>(item->Group);
+				captured.readOnly = item->ReadOnly;
+				captured.hidden = item->Hidden;
+				captured.isLink = item->IsLink;
+				metadata.selection.items.push_back(std::move(captured));
+			}
+
+			// Keep the semantic selection category separate from the host window
+			// name.  Rules commonly distinguish a file, directory background, or
+			// drive background even when all three are opened from Explorer.
+			if(Selected.is_taskbar())
+				metadata.contextCategory = L"taskbar";
+			else if(Selected.is_desktop_window() || Selected.Types[FSO_DESKTOP])
+				metadata.contextCategory = L"desktop";
+			else if(Selected.Background)
+			{
+				if(Selected.Types[FSO_BACK_DIRECTORY])
+					metadata.contextCategory = L"dir.back";
+				else if(Selected.Types[FSO_BACK_DRIVE])
+					metadata.contextCategory = L"drive.back";
+				else if(Selected.Types[FSO_BACK_NAMESPACE])
+					metadata.contextCategory = L"namespace.back";
+				else
+					metadata.contextCategory = L"background";
+			}
+			else if(Selected.Types[FSO_FILE])
+				metadata.contextCategory = L"file";
+			else if(Selected.Types[FSO_DIRECTORY])
+				metadata.contextCategory = L"dir";
+			else if(Selected.Types[FSO_DRIVE])
+				metadata.contextCategory = L"drive";
+			else if(Selected.Types[FSO_NAMESPACE])
+				metadata.contextCategory = L"namespace";
+			else
+				metadata.contextCategory = L"unknown";
+
+			for(auto item : Selected.Items)
+			{
+				if(metadata.paths.size() >= 128)
+					break;
+				if(item && !item->Path.empty())
+					metadata.paths.push_back(copy(item->Path));
+			}
+			if(metadata.paths.empty() && !Selected.Directory.empty())
+				metadata.paths.push_back(copy(Selected.Directory));
+			return metadata;
+		}
+
+		ContextMenu::CaptureEvaluationScope::~CaptureEvaluationScope() noexcept
+		{
+			if(owner)
+				owner->retain_capture_evaluation(item);
+		}
+
+		void ContextMenu::retain_capture_evaluation(menuitem_t *item) noexcept
+		{
+			if(!item || !item->native_menu || !_studio_capture.IsActive())
+				return;
+
+			try
+			{
+				StudioCaptureTrace evaluated;
+				for(const auto &value : item->trace)
+				{
+					if(value.size() < 7 || value.compare(0, 7, L"static.") != 0)
+						continue;
+					evaluated.push_back(value);
+				}
+				const auto hasEvidence = !item->evidence.empty();
+				if(evaluated.empty() && !hasEvidence)
+					return;
+
+				const StudioCaptureTraceKey key{item->native_menu, item->native_index};
+				const auto found = _studio_evaluated_traces.find(key);
+				const auto evidenceFound = _studio_evaluated_evidence.find(key);
+				const auto traceMissing = found == _studio_evaluated_traces.end();
+				const auto evidenceMissing = evidenceFound == _studio_evaluated_evidence.end();
+				if((traceMissing && !evaluated.empty()) || (evidenceMissing && hasEvidence))
+				if(_studio_evaluated_traces.size() >= kMaxRetainedCaptureEvaluations ||
+					_studio_evaluated_evidence.size() >= kMaxRetainedCaptureEvaluations)
+				{
+					_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+						"The native capture exceeded its retained trace limit.");
+					return;
+				}
+				if(found != _studio_evaluated_traces.end())
+					found->second = std::move(evaluated);
+				else if(!evaluated.empty())
+					_studio_evaluated_traces.emplace(key, std::move(evaluated));
+				if(evidenceFound != _studio_evaluated_evidence.end())
+					evidenceFound->second = item->evidence;
+				else if(hasEvidence)
+					_studio_evaluated_evidence.emplace(key, item->evidence);
+			}
+			catch(...)
+			{
+				_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+					"The native capture could not retain all evaluated rule outcomes.");
+			}
+		}
+
+		void ContextMenu::overlay_capture_evaluations(menuitem_t *item)
+		{
+			if(!item)
+				return;
+
+			if(item->native_menu && _studio_capture.IsActive())
+			{
+				const bool staticRulesEnabled = _cache && !_cache->statics.empty();
+				const StudioCaptureTraceKey key{item->native_menu, item->native_index};
+				const auto found = _studio_evaluated_traces.find(key);
+				const auto evidenceFound = _studio_evaluated_evidence.find(key);
+				if(found != _studio_evaluated_traces.end())
+				{
+					try
+					{
+						// Static outcomes are the part that can disappear from the
+						// display tree.  Give them priority over bookkeeping entries
+						// when the bounded trace vector is full.
+						StudioCaptureTrace merged;
+						for(const auto &value : found->second)
+						{
+							if(merged.size() >= kMaxCaptureTraceEntries)
+								break;
+							merged.push_back(value);
+						}
+						for(const auto &value : item->trace)
+						{
+							if(value.size() >= 7 && value.compare(0, 7, L"static.") == 0)
+								continue;
+							if(merged.size() >= kMaxCaptureTraceEntries)
+								break;
+							merged.push_back(value);
+						}
+						item->trace = std::move(merged);
+					}
+					catch(...)
+					{
+						_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+							"The native capture could not merge retained rule outcomes.");
+					}
+				}
+				if(evidenceFound != _studio_evaluated_evidence.end())
+				{
+					try
+					{
+						item->evidence = evidenceFound->second;
+					}
+					catch(...)
+					{
+						_studio_capture.Fail("CAPTURE_TRACE_MEMORY",
+							"The native capture could not merge structured rule outcomes.");
+					}
+				}
+				if(found == _studio_evaluated_traces.end())
+				{
+					bool filtered = false;
+					for(const auto &value : item->trace)
+						filtered = filtered || (value.size() >= 7 &&
+							value.compare(0, 7, L"remove.") == 0);
+					if(filtered && !_studio_evaluated_traces.empty())
+						CaptureTrace(item->trace, L"capture.static", false,
+							L"not evaluated; filtered during native enumeration");
+					else if(!filtered && staticRulesEnabled &&
+						!_studio_capture_active_during_static_evaluation)
+						CaptureTrace(item->trace,
+							L"capture.static unavailable; capture armed after evaluation");
+				}
+			}
+
+			for(auto child : item->items)
+				overlay_capture_evaluations(child);
+		}
+
+		bool ContextMenu::publish_original_capture_if_armed()
+		{
+			const auto epoch = _studio_capture.ActiveEpoch();
+			if(!epoch || _studio_original_published_epoch == epoch || !_studio_real_enumeration_complete ||
+				!_studio_static_evaluation_complete ||
+				::GetPropW(hwnd.owner, UxSubclass) != 0 ||
+				!_studio_capture.WantsOriginal() || !_hMenu_original ||
+				!::IsMenu(_hMenu_original))
+				return false;
+			try
+			{
+				CaptureTraceScope traceScope(&_studio_capture);
+
+				// The real enumeration has already sent WM_INITMENUPOPUP for every
+				// reachable submenu.  The getter pass is therefore read-only and does
+				// not re-enter the owner window or run the popup initializer again.
+				std::unique_ptr<menuitem_t> original_tree(new menuitem_t);
+				original_tree->type = 10;
+				build_system_menuitems(_hMenu_original, original_tree.get(), true, true);
+				overlay_capture_evaluations(original_tree.get());
+				const auto metadata = capture_metadata();
+				if(!_studio_capture.PublishOriginal(original_tree.get(), metadata))
+					return false;
+				_studio_original_published_epoch = epoch;
+				_studio_evaluated_traces.clear();
+				_studio_evaluated_evidence.clear();
+				return true;
+			}
+			catch(...)
+			{
+				_studio_capture.FailIfEpoch(epoch, "CAPTURE_METADATA",
+					"The native capture could not collect menu context metadata.");
+				return false;
+			}
+		}
+
+		void ContextMenu::begin_appearance_paint(WND *wnd) noexcept
+		{
+			if(!wnd)
+				return;
+
+			auto &cache = wnd->studio_appearance;
+			cache.clear();
+			cache.epoch = _studio_capture.ActiveEpoch();
+			if(!cache.epoch)
+				return;
+
+			cache.inPaint = true;
+			auto fail = [&cache](std::string_view reason) noexcept
+			{
+				cache.failed = true;
+				cache.geometryReady = false;
+				try
+				{
+					cache.failure.assign(reason.data(), reason.size());
+				}
+				catch(...)
+				{
+					cache.failure.clear();
+				}
+			};
+
+			try
+			{
+				HMENU menuHandle = wnd->hMenu;
+				if(!menuHandle)
+				{
+					auto candidate = reinterpret_cast<HMENU>(
+						::SendMessageW(wnd->handle, MN_GETHMENU, 0, 0));
+					if(::IsMenu(candidate))
+					{
+						menuHandle = candidate;
+						wnd->hMenu = candidate;
+					}
+				}
+				if(!menuHandle || !::IsMenu(menuHandle))
+				{
+					fail("The native popup menu handle was unavailable during paint.");
+					return;
+				}
+
+				long width = wnd->width;
+				long height = wnd->height;
+				if(width <= 0 || height <= 0)
+				{
+					RECT client{};
+					if(!::GetClientRect(wnd->handle, &client))
+					{
+						fail("The native popup client rectangle was unavailable during paint.");
+						return;
+					}
+					width = client.right - client.left;
+					height = client.bottom - client.top;
+				}
+				if(width <= 0 || height <= 0 ||
+					static_cast<uint32_t>(width) > kMaxAppearanceWidth ||
+					static_cast<uint32_t>(height) > kMaxAppearanceHeight ||
+					static_cast<uint64_t>(width) * static_cast<uint64_t>(height) >
+						kMaxAppearancePixels)
+				{
+					fail("The native popup dimensions exceed the bounded appearance contract.");
+					return;
+				}
+
+				const auto itemCount = ::GetMenuItemCount(menuHandle);
+				if(itemCount < 0 || static_cast<size_t>(itemCount) > kMaxAppearanceRows)
+				{
+					fail("The native popup contains too many rows for appearance capture.");
+					return;
+				}
+
+				cache.menu = menuHandle;
+				cache.width = width;
+				cache.height = height;
+				RECT windowRect{};
+				if(!::GetWindowRect(wnd->handle, &windowRect) ||
+					!::ClientToScreen(wnd->handle, &cache.clientOrigin))
+				{
+					fail("The native popup client origin was unavailable during paint.");
+					return;
+				}
+				cache.clientOrigin.x -= windowRect.left;
+				cache.clientOrigin.y -= windowRect.top;
+				cache.scrollInset = wnd->has_scroll ? dpi(14) : 0;
+				if(cache.scrollInset * 2 >= height)
+				{
+					fail("The native popup has no content viewport between scroll controls.");
+					return;
+				}
+				cache.dpi = Theme::GetDpi(wnd->handle);
+				cache.rows.resize(static_cast<size_t>(itemCount));
+				for(size_t position = 0; position < cache.rows.size(); ++position)
+				{
+					auto &row = cache.rows[position];
+					row.position = static_cast<uint32_t>(position);
+					MENUITEMINFOW info{sizeof(info)};
+					info.fMask = MIIM_ID;
+					if(!::GetMenuItemInfoW(menuHandle, static_cast<UINT>(position),
+						TRUE, &info))
+					{
+						fail("A native popup row could not be described during paint.");
+						return;
+					}
+					row.itemId = info.wID;
+				}
+			}
+			catch(...)
+			{
+				fail("The native popup appearance cache could not be initialized.");
+			}
+		}
+
+		void ContextMenu::finish_appearance_paint(WND *wnd) noexcept
+		{
+			if(!wnd)
+				return;
+
+			auto &cache = wnd->studio_appearance;
+			if(!cache.inPaint)
+				return;
+			cache.inPaint = false;
+			if(!_studio_capture.IsActive() || cache.failed)
+				return;
+
+			auto fail = [&cache](std::string_view reason) noexcept
+			{
+				cache.failed = true;
+				cache.geometryReady = false;
+				try
+				{
+					cache.failure.assign(reason.data(), reason.size());
+				}
+				catch(...)
+				{
+					cache.failure.clear();
+				}
+			};
+
+			try
+			{
+				if(!cache.menu || cache.rows.size() > kMaxAppearanceRows)
+				{
+					fail("The native popup geometry cache has no valid menu.");
+					return;
+				}
+				const auto itemCount = ::GetMenuItemCount(cache.menu);
+				if(itemCount < 0 || static_cast<size_t>(itemCount) != cache.rows.size())
+				{
+					fail("The native popup row geometry changed during paint.");
+					return;
+				}
+
+				for(size_t position = 0; position < cache.rows.size(); ++position)
+				{
+					auto &row = cache.rows[position];
+					RECT rect{};
+					if(!GetMenuItemClientRect(wnd->handle, cache.menu,
+						static_cast<UINT>(position), rect))
+					{
+						fail("A native popup row rectangle was unavailable after paint.");
+						return;
+					}
+					row.rect = rect;
+					::OffsetRect(&rect, cache.clientOrigin.x, cache.clientOrigin.y);
+					RECT clipped{};
+					row.visible = IntersectAppearanceRect(rect, cache.width,
+						cache.height, clipped, cache.scrollInset);
+					if(row.visible && !row.painted)
+					{
+						fail("A visible native popup row was not rendered by its owner callback.");
+						return;
+					}
+					if(row.painted &&
+						(row.pixelWidth != rect.right - rect.left ||
+						row.pixelHeight != rect.bottom - rect.top))
+					{
+						fail("A native popup row changed size after its pixels were rendered.");
+						return;
+					}
+				}
+				cache.geometryReady = true;
+			}
+			catch(...)
+			{
+				fail("The native popup appearance geometry could not be finalized.");
+			}
+		}
+
+		void ContextMenu::cache_painted_row(DRAWITEMSTRUCT *di,
+			const uint8_t *renderedPixels, long renderedWidth,
+			long renderedHeight) noexcept
+		{
+			if(!di || !renderedPixels || renderedWidth <= 0 || renderedHeight <= 0 ||
+				!_studio_capture.IsActive())
+				return;
+
+			auto fail = [](StudioAppearanceCache &cache,
+				std::string_view reason) noexcept
+			{
+				cache.failed = true;
+				cache.geometryReady = false;
+				try
+				{
+					cache.failure.assign(reason.data(), reason.size());
+				}
+				catch(...)
+				{
+					cache.failure.clear();
+				}
+			};
+
+			try
+			{
+				const auto menuHandle = reinterpret_cast<HMENU>(di->hwndItem);
+				if(!menuHandle)
+					return;
+
+				WND *wnd = nullptr;
+				if(auto mapped = map_menu_wnd.find(menuHandle);
+					mapped != map_menu_wnd.end())
+				{
+					if(auto found = _map.find(mapped->second.hwnd);
+						found != _map.end())
+						wnd = &found->second;
+				}
+				if(!wnd)
+				{
+					for(auto &entry : _map)
+					{
+						if(entry.second.hMenu == menuHandle)
+						{
+							wnd = &entry.second;
+							break;
+						}
+					}
+				}
+				if(!wnd)
+					return;
+
+				auto &cache = wnd->studio_appearance;
+				if((!cache.inPaint && !cache.geometryReady) || cache.failed ||
+					cache.epoch != _studio_capture.ActiveEpoch() || cache.menu != menuHandle ||
+					cache.rows.empty())
+					return;
+
+				const auto expectedWidth = di->rcItem.right - di->rcItem.left;
+				const auto expectedHeight = di->rcItem.bottom - di->rcItem.top;
+				if(expectedWidth != renderedWidth || expectedHeight != renderedHeight)
+				{
+					fail(cache, "The native owner-draw row dimensions changed before caching.");
+					return;
+				}
+
+				size_t position = UINT32_MAX;
+				for(size_t index = 0; index < cache.rows.size(); ++index)
+				{
+					auto &row = cache.rows[index];
+					if(row.itemId != di->itemID)
+						continue;
+					RECT geometry{};
+					if(GetMenuItemClientRect(wnd->handle, menuHandle,
+						static_cast<UINT>(index), geometry) &&
+						geometry.left == di->rcItem.left &&
+						geometry.top == di->rcItem.top &&
+						geometry.right == di->rcItem.right &&
+						geometry.bottom == di->rcItem.bottom)
+					{
+						position = index;
+						break;
+					}
+				}
+				if(position == UINT32_MAX)
+				{
+					for(size_t index = 0; index < cache.rows.size(); ++index)
+					{
+						auto &row = cache.rows[index];
+						if(!row.painted && row.itemId == di->itemID)
+						{
+							position = index;
+							break;
+						}
+					}
+				}
+				if(position == UINT32_MAX)
+				{
+					for(size_t index = 0; index < cache.rows.size(); ++index)
+					{
+						auto &row = cache.rows[index];
+						if(row.painted)
+							continue;
+						RECT geometry{};
+						if(GetMenuItemClientRect(wnd->handle, menuHandle,
+							static_cast<UINT>(index), geometry) &&
+							geometry.left == di->rcItem.left &&
+							geometry.top == di->rcItem.top &&
+							geometry.right == di->rcItem.right &&
+							geometry.bottom == di->rcItem.bottom)
+						{
+							position = index;
+							break;
+						}
+					}
+				}
+				if(position == UINT32_MAX)
+				{
+					for(size_t index = 0; index < cache.rows.size(); ++index)
+					{
+						auto &row = cache.rows[index];
+						if(!row.painted || row.itemId != di->itemID)
+							continue;
+						RECT geometry{};
+						if(GetMenuItemClientRect(wnd->handle, menuHandle,
+							static_cast<UINT>(index), geometry) &&
+							geometry.left == di->rcItem.left &&
+							geometry.top == di->rcItem.top &&
+							geometry.right == di->rcItem.right &&
+							geometry.bottom == di->rcItem.bottom)
+							return;
+					}
+
+					fail(cache, "A native owner-draw row could not be mapped to its menu item.");
+					return;
+				}
+
+				const auto byteCount = static_cast<size_t>(renderedWidth) *
+					static_cast<size_t>(renderedHeight) * 4U;
+				const auto replacedBytes = cache.rows[position].pixels.size();
+				if(byteCount > kMaxAppearanceBytes ||
+					cache.pixelCount - replacedBytes > kMaxAppearanceBytes - byteCount)
+				{
+					fail(cache, "The native popup row pixels exceed the appearance budget.");
+					return;
+				}
+				size_t retainedBytes = 0;
+				for(const auto &entry : _map)
+				{
+					const auto retained = entry.second.studio_appearance.pixelCount;
+					if(retained > kMaxRetainedAppearanceBytes -
+						(std::min)(retainedBytes, kMaxRetainedAppearanceBytes))
+					{
+						fail(cache, "Retained native popup appearance pixels exceed the context budget.");
+						return;
+					}
+					retainedBytes += retained;
+				}
+				if(retainedBytes - replacedBytes > kMaxRetainedAppearanceBytes - byteCount)
+				{
+					fail(cache, "Retained native popup appearance pixels exceed the context budget.");
+					return;
+				}
+
+				auto &row = cache.rows[position];
+				row.rect = di->rcItem;
+				row.pixelWidth = renderedWidth;
+				row.pixelHeight = renderedHeight;
+				row.pixels.resize(byteCount);
+				std::memcpy(row.pixels.data(), renderedPixels, byteCount);
+				for(size_t index = 0; index < row.pixels.size(); index += 4)
+				{
+					auto *pixel = row.pixels.data() + index;
+					// Preserve alpha from buffered text/vector/image painters, including
+					// black glyphs. Only legacy GDI colors without alpha need repair.
+					if(!composition || (pixel[3] == 0 &&
+						(pixel[0] != 0 || pixel[1] != 0 || pixel[2] != 0)))
+						pixel[3] = 0xFF;
+					NormalizePremultiplied(pixel);
+				}
+				row.painted = true;
+				cache.pixelCount = cache.pixelCount - replacedBytes + byteCount;
+			}
+			catch(...)
+			{
+				if(di)
+				{
+					const auto menuHandle = reinterpret_cast<HMENU>(di->hwndItem);
+					if(auto mapped = map_menu_wnd.find(menuHandle);
+						mapped != map_menu_wnd.end())
+					{
+						if(auto found = _map.find(mapped->second.hwnd);
+							found != _map.end())
+							fail(found->second.studio_appearance,
+								"The native popup row pixels could not be cached.");
+					}
+				}
+			}
+		}
+
+		void ContextMenu::clear_appearance_cache(HMENU hMenu) noexcept
+		{
+			if(!hMenu)
+				return;
+			try
+			{
+				if(auto mapped = map_menu_wnd.find(hMenu);
+					mapped != map_menu_wnd.end())
+				{
+					if(auto found = _map.find(mapped->second.hwnd);
+						found != _map.end())
+						found->second.studio_appearance.clear();
+				}
+				for(auto &entry : _map)
+				{
+					if(entry.second.hMenu == hMenu ||
+						entry.second.studio_appearance.menu == hMenu)
+						entry.second.studio_appearance.clear();
+				}
+			}
+			catch(...)
+			{
+			}
+		}
+
+		StudioCaptureAppearance ContextMenu::capture_popup_appearance(WND *wnd,
+			const std::vector<MenuItemInfo *> &entries,
+			std::wstring_view parentPath)
+		{
+			StudioCaptureAppearance appearance;
+			appearance.desktopEffectsOmitted =
+				composition && _theme.background.effect >= 2 &&
+				_theme.background.opacity < 0xFF;
+
+			auto unavailable = [&appearance](std::string_view reason)
+			{
+				appearance.available = false;
+				appearance.width = 0;
+				appearance.height = 0;
+				appearance.pixels.clear();
+				appearance.rows.clear();
+				appearance.unavailableReason.assign(reason.data(), reason.size());
+				return appearance;
+			};
+
+			if(!wnd || !wnd->handle || !::IsWindow(wnd->handle))
+				return unavailable("The native popup window is unavailable.");
+
+			const auto &cache = wnd->studio_appearance;
+			if(!cache.epoch || cache.epoch != _studio_capture.ActiveEpoch())
+				return unavailable("The native popup pixels belong to an earlier capture; recapture after the menu paints.");
+			appearance.dpi = cache.dpi != 0 ? cache.dpi : Theme::GetDpi(wnd->handle);
+			if(cache.failed)
+				return unavailable(cache.failure.empty()
+					? "The native popup appearance cache failed." : cache.failure);
+			if(cache.inPaint || !cache.geometryReady)
+				return unavailable("The native popup appearance was not complete after paint.");
+			if(!cache.menu || cache.menu != wnd->hMenu ||
+				cache.rows.size() > kMaxAppearanceRows)
+				return unavailable("The native popup appearance cache has no stable menu.");
+			if(entries.size() != cache.rows.size())
+				return unavailable("The native popup entries and painted rows differ.");
+			if(appearance.dpi < 48 || appearance.dpi > 768)
+				return unavailable("The native popup DPI is outside the bounded appearance contract.");
+			RECT windowRect{};
+			POINT clientOrigin{};
+			if(!::GetWindowRect(wnd->handle, &windowRect) ||
+				!::ClientToScreen(wnd->handle, &clientOrigin) ||
+				clientOrigin.x - windowRect.left != cache.clientOrigin.x ||
+				clientOrigin.y - windowRect.top != cache.clientOrigin.y ||
+				windowRect.right - windowRect.left != cache.width ||
+				windowRect.bottom - windowRect.top != cache.height)
+				return unavailable("The native popup frame changed after its rows were painted.");
+
+			const long margin = 50;
+			const auto width = cache.width;
+			const auto height = cache.height;
+			const auto outputWidth = width + margin + margin;
+			const auto outputHeight = height + margin + margin;
+			if(width <= 0 || height <= 0 || outputWidth <= 0 || outputHeight <= 0 ||
+				static_cast<uint32_t>(outputWidth) > kMaxAppearanceWidth ||
+				static_cast<uint32_t>(outputHeight) > kMaxAppearanceHeight ||
+				static_cast<uint64_t>(outputWidth) *
+					static_cast<uint64_t>(outputHeight) > kMaxAppearancePixels)
+				return unavailable("The native popup appearance dimensions exceed the bounded contract.");
+
+			appearance.width = static_cast<uint32_t>(outputWidth);
+			appearance.height = static_cast<uint32_t>(outputHeight);
+			appearance.pixels.assign(static_cast<size_t>(outputWidth) *
+				static_cast<size_t>(outputHeight) * 4U, 0);
+
+			WND previewFrame;
+			previewFrame.ctx = this;
+			previewFrame.width = width;
+			previewFrame.height = height;
+			if(!draw_layer(&previewFrame, {outputWidth, outputHeight},
+				static_cast<int>(margin), true) || !previewFrame.layer.hbitmap)
+				return unavailable("The native popup frame could not be rendered.");
+			auto_gdi<HBITMAP> frameBitmap(previewFrame.layer.hbitmap);
+
+			std::vector<uint8_t> layerPixels;
+			if(!GetTopDownBitmap(frameBitmap.get(), outputWidth,
+				outputHeight, layerPixels))
+				return unavailable("The native popup frame pixels could not be read.");
+
+			for(size_t index = 0; index < appearance.pixels.size(); index += 4)
+				CompositePremultiplied(appearance.pixels.data() + index,
+					layerPixels.data() + index);
+
+			appearance.rows.reserve(cache.rows.size());
+			for(const auto &cached : cache.rows)
+			{
+				RECT currentRect{};
+				if(!GetMenuItemClientRect(wnd->handle, cache.menu,
+					static_cast<UINT>(cached.position), currentRect) ||
+					!::EqualRect(&currentRect, &cached.rect))
+					return unavailable("The popup viewport changed after its rows were painted.");
+				if(!cached.visible)
+					continue;
+				if(!cached.painted || cached.position >= entries.size() ||
+					!entries[cached.position])
+					return unavailable("A visible native popup row had no matching semantic entry.");
+				RECT windowRow = cached.rect;
+				::OffsetRect(&windowRow, cache.clientOrigin.x, cache.clientOrigin.y);
+				RECT clipped{};
+				if(!IntersectAppearanceRect(windowRow, width, height, clipped, cache.scrollInset))
+					continue;
+
+				const auto sourceWidth = cached.pixelWidth;
+				const auto sourceHeight = cached.pixelHeight;
+				if(sourceWidth <= 0 || sourceHeight <= 0 ||
+					cached.pixels.size() != static_cast<size_t>(sourceWidth) *
+						static_cast<size_t>(sourceHeight) * 4U)
+					return unavailable("A visible native popup row had incomplete pixels.");
+
+				const auto sourceLeft = clipped.left - windowRow.left;
+				const auto sourceTop = clipped.top - windowRow.top;
+				const auto copyWidth = clipped.right - clipped.left;
+				const auto copyHeight = clipped.bottom - clipped.top;
+				for(long y = 0; y < copyHeight; ++y)
+				{
+					for(long x = 0; x < copyWidth; ++x)
+					{
+						const auto *source = cached.pixels.data() +
+							((static_cast<size_t>(sourceTop + y) * sourceWidth) +
+							static_cast<size_t>(sourceLeft + x)) * 4U;
+						auto *destination = appearance.pixels.data() +
+							((static_cast<size_t>(margin + clipped.top + y) *
+								outputWidth) +
+							static_cast<size_t>(margin + clipped.left + x)) * 4U;
+						CompositePremultiplied(destination, source);
+					}
+				}
+
+				StudioCaptureAppearanceRow row;
+				row.entryId = StudioCapture::FinalEntryId(
+					entries[cached.position], parentPath, cached.position);
+				if(row.entryId.empty())
+					return unavailable("A visible native popup row had no stable entry id.");
+				row.x = static_cast<uint32_t>(margin + clipped.left);
+				row.y = static_cast<uint32_t>(margin + clipped.top);
+				row.width = static_cast<uint32_t>(copyWidth);
+				row.height = static_cast<uint32_t>(copyHeight);
+				appearance.rows.push_back(std::move(row));
+			}
+
+			if(cache.scrollInset != 0)
+			{
+				// Share the native arrow painter while keeping the arrow strips out
+				// of row imagery and edit hit targets. This DIB has no desktop source.
+				BITMAPINFO info{};
+				info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+				info.bmiHeader.biWidth = width;
+				info.bmiHeader.biHeight = -height;
+				info.bmiHeader.biPlanes = 1;
+				info.bmiHeader.biBitCount = 32;
+				info.bmiHeader.biCompression = BI_RGB;
+				uint8_t *bits = nullptr;
+				auto_gdi<HBITMAP> bitmap(::CreateDIBSection(nullptr, &info, DIB_RGB_COLORS,
+					reinterpret_cast<void **>(&bits), nullptr, 0));
+				DC memory(::CreateCompatibleDC(nullptr), 1);
+				if(!bitmap || !bits || !memory)
+					return unavailable("The native scroll controls could not allocate an offscreen surface.");
+				auto previous = ::SelectObject(memory, bitmap.get());
+				if(!previous || previous == HGDI_ERROR)
+					return unavailable("The native scroll control surface could not be selected.");
+				std::memset(bits, 0, static_cast<size_t>(width) * height * 4U);
+				draw_scroll_arrows(memory, width, height);
+				::GdiFlush();
+				for(long y = 0; y < height; ++y)
+					for(long x = 0; x < width; ++x)
+					{
+						auto *source = bits + (static_cast<size_t>(y) * width + x) * 4U;
+						NormalizePremultiplied(source);
+						auto *target = appearance.pixels.data() +
+							(static_cast<size_t>(y + margin) * outputWidth + x + margin) * 4U;
+						CompositePremultiplied(target, source);
+					}
+				::SelectObject(memory, previous);
+			}
+
+			appearance.available = true;
+			appearance.unavailableReason.clear();
+			return appearance;
+		}
+
+		void ContextMenu::cancel_appearance_capture_timer() noexcept
+		{
+			if(_studio_appearance_timer_owner && _studio_appearance_timer_id)
+				::KillTimer(_studio_appearance_timer_owner, _studio_appearance_timer_id);
+			_studio_appearance_timer_owner = nullptr;
+			_studio_appearance_timer_hwnd = nullptr;
+			_studio_appearance_timer_id = 0;
+		}
+
+		void ContextMenu::schedule_appearance_capture(HWND hWnd) noexcept
+		{
+			try
+			{
+				if(!_studio_capture.IsActive() || !hWnd || !hwnd.owner ||
+					!::IsWindow(hWnd))
+				{
+					cancel_appearance_capture_timer();
+					return;
+				}
+				if(_studio_appearance_published.find(hWnd) !=
+					_studio_appearance_published.end())
+					return;
+				if(!_studio_popup_order.empty() &&
+					_studio_popup_order.back() != hWnd)
+					return;
+				if(_studio_appearance_timer_owner == hwnd.owner &&
+					_studio_appearance_timer_hwnd == hWnd &&
+					_studio_appearance_timer_id != 0)
+					return;
+				if(_studio_appearance_timer_id != 0)
+					cancel_appearance_capture_timer();
+
+				const auto timerId = NextAppearanceTimerId();
+				if(!::SetTimer(hwnd.owner, timerId, kAppearanceTimerDelayMs, nullptr))
+				{
+					_studio_capture.Fail("CAPTURE_APPEARANCE_TIMER",
+						"The native capture could not defer the popup appearance capture.");
+					return;
+				}
+				_studio_appearance_timer_owner = hwnd.owner;
+				_studio_appearance_timer_hwnd = hWnd;
+				_studio_appearance_timer_id = timerId;
+			}
+			catch(...)
+			{
+				cancel_appearance_capture_timer();
+				_studio_capture.Fail("CAPTURE_APPEARANCE_TIMER",
+					"The native capture could not schedule the popup appearance capture.");
+			}
+		}
+
+		void ContextMenu::publish_appearance_after_paint(HWND hWnd) noexcept
+		{
+			uint64_t captureEpoch = 0;
+			try
+			{
+				captureEpoch = _studio_capture.ActiveEpoch();
+				if(!captureEpoch || !hWnd)
+				{
+					cancel_appearance_capture_timer();
+					return;
+				}
+				if(!_studio_popup_order.empty() &&
+					_studio_popup_order.back() != hWnd)
+					return;
+
+				auto foundWnd = _map.find(hWnd);
+				if(foundWnd == _map.end() || foundWnd->second.handle != hWnd)
+				{
+					_studio_capture.FailIfEpoch(captureEpoch, "CAPTURE_APPEARANCE",
+						"The popup window disappeared before its appearance could be captured.");
+					return;
+				}
+				WND *wnd = &foundWnd->second;
+				HMENU menuHandle = wnd->hMenu;
+				if(!menuHandle)
+				{
+					const auto candidate = reinterpret_cast<HMENU>(
+						::SendMessageW(hWnd, MN_GETHMENU, 0, 0));
+					if(::IsMenu(candidate))
+					{
+						menuHandle = candidate;
+						wnd->hMenu = candidate;
+					}
+				}
+				if(!menuHandle || !::IsMenu(menuHandle))
+				{
+					_studio_capture.FailIfEpoch(captureEpoch, "CAPTURE_APPEARANCE",
+						"The popup menu handle did not stabilize after paint.");
+					return;
+				}
+				auto found = _studio_final_entries.find(menuHandle);
+				if(found == _studio_final_entries.end())
+				{
+					_studio_capture.FailIfEpoch(captureEpoch, "CAPTURE_APPEARANCE",
+						"The popup semantic entries were unavailable after paint.");
+					return;
+				}
+
+				std::wstring parentPath;
+				if(auto menu = _menus.find(menuHandle); menu != _menus.end())
+					parentPath.assign(menu->second.path.c_str(),
+						menu->second.path.length());
+
+				StudioCaptureAppearance appearance;
+				if(wnd->studio_appearance.geometryReady &&
+					!wnd->studio_appearance.failed)
+				{
+					try
+					{
+						appearance = capture_popup_appearance(wnd, found->second,
+							parentPath);
+					}
+					catch(...)
+					{
+						appearance.dpi = wnd->studio_appearance.dpi;
+						appearance.desktopEffectsOmitted =
+							composition && _theme.background.effect >= 2 &&
+							_theme.background.opacity < 0xFF;
+						appearance.unavailableReason =
+							"The native popup appearance could not be composed.";
+					}
+				}
+				else
+				{
+					appearance.dpi = wnd->studio_appearance.dpi != 0
+						? wnd->studio_appearance.dpi : Theme::GetDpi(hWnd);
+					appearance.desktopEffectsOmitted =
+						composition && _theme.background.effect >= 2 &&
+						_theme.background.opacity < 0xFF;
+					appearance.unavailableReason =
+						wnd->studio_appearance.failure.empty()
+						? "The native popup paint cache was unavailable."
+						: wnd->studio_appearance.failure;
+				}
+
+				const auto metadata = capture_metadata();
+				if(!_studio_capture.PublishFinal(found->second, metadata,
+					parentPath, appearance, captureEpoch))
+					return;
+				_studio_appearance_published.insert(hWnd);
+				cancel_appearance_capture_timer();
+			}
+			catch(...)
+			{
+				cancel_appearance_capture_timer();
+				_studio_capture.FailIfEpoch(captureEpoch, "CAPTURE_APPEARANCE",
+					"The native capture could not publish the post-paint appearance.");
+			}
+		}
+
 		void ContextMenu::build_main_system_menuitems(menuitem_t *menu, bool is_root)
 		{
+			CaptureTraceScope traceScope(&_studio_capture);
+			if(_studio_capture.IsActive())
+				_studio_capture_active_during_static_evaluation = true;
 			if(!menu || menu->items.empty())
 				return;
 
-			auto is_location = [=](string &location, string const &path)->auto
-			{
-				location.trim().trim(L'/');
-
-				if(location.empty())
-					return is_root;
-
-				if(location.starts_with(L"**", false))
-					location.remove(0, 1);
-				else if(location.equals(L"*", false))
-					return true;
-
-				if(is_root || path.empty())
-					return false;
-
-				return path.equals(location);
-			};
-
 			auto items = &menu->items;
+			const NativeMenuConstruction::SelectionInput selection{
+				&Selected, true, true};
 
 			for(auto si : _cache->statics)
 			{
 				if(si->has_clsid)
 					continue;
 
-				if(!Selected.verify_types(si->fso))
+				if(!NativeMenuConstruction::static_types_match(selection, *si))
 					continue;
 
 				for(size_t i = 0; i < items->size(); i++)
@@ -4060,7 +6324,9 @@ namespace Nilesoft
 					bool removed = false;
 					auto where_defined = false;
 					auto item = items->at(i);
-					try 
+					CaptureEvaluationScope captureEvaluation{this, item};
+					CaptureEvidenceScope evidenceScope(&item->evidence);
+					try
 					{
 						string location;
 						this_item _this;
@@ -4091,55 +6357,94 @@ namespace Nilesoft
 						if(si->mode)
 						{
 							auto mode = _context.parse_mode(si->mode);
-							if(Selected.Window.id > WINDOW_TASKBAR && !Selected.verify_mode(mode))
+							const bool mode_match =
+								NativeMenuConstruction::static_mode_match(selection, mode);
+							CaptureTraceSource(item->trace, si, L"static.mode", mode_match,
+								mode_match ? L"accepted" : L"rejected");
+							if(!mode_match)
 								break;
 						}
 
 						if(si->location)
 						{
-							if(_context.Eval(si->location, location, true))
+							const bool location_evaluated = _context.Eval(si->location, location, true);
+							if(location_evaluated)
 							{
-								if(!is_location(location, item->path))
+								const bool location_match =
+									NativeMenuConstruction::location_matches(is_root,
+										location, item->path);
+								CaptureTraceSource(item->trace, si, L"static.location", location_match,
+									location_match ? L"accepted" : L"skipped");
+								if(!location_match)
 									goto skip;
 							}
+							else
+								CaptureTraceSource(item->trace, si, L"static.location", false, L"evaluation failed");
 						}
 						else if(!is_root)
+						{
+							CaptureTraceSource(item->trace, si, L"static.location", false, L"root only");
 							goto skip;
+						}
 
 						if(si->where)
 						{
-							if(where_defined = _context.Eval(si->where).to_bool(); !where_defined)
+							where_defined = _context.Eval(si->where).to_bool();
+							CaptureTraceSource(item->trace, si, L"static.where", where_defined,
+								where_defined ? L"accepted" : L"skipped");
+							if(!where_defined)
 								continue;
 						}
 
 						if(item->is_separator())
 						{
-							if(!where_defined || si->find)
+							const bool separator_match = where_defined && !si->find;
+							CaptureTraceSource(item->trace, si, L"static.separator", separator_match,
+								separator_match ? L"accepted" : L"skipped");
+							if(!separator_match)
 								goto skip;
 						}
 						else
 						{
 							if(item->title.empty())
+							{
+								CaptureTraceSource(item->trace, si, L"static.title", false, L"empty; skipped");
 								goto skip;
+							}
 
 							if(!si->find && !where_defined)
+							{
+								CaptureTraceSource(item->trace, si, L"static.match", false, L"find and where not defined");
 								goto skip;
+							}
 							else
 							{
 								Object find = _context.Eval(si->find).move();
 								if(find.is_null() || find.length() == 0)
 								{
-									if(!where_defined || (si->moveto && !is_root))
+									const bool empty_find_match = where_defined && !(si->moveto && !is_root);
+									CaptureTraceSource(item->trace, si, L"static.find", empty_find_match,
+										empty_find_match ? L"where matched" : L"empty; skipped");
+									if(!empty_find_match)
 										goto skip;
 								}
 								else
 								{
 									string pattern = find.to_string().trim().tolower().move();
 									FindPattern find_pattern;
-									if(!find_pattern.split(pattern, L'|') && !where_defined)
+									const bool pattern_valid = find_pattern.split(pattern, L'|');
+									if(!pattern_valid && !where_defined)
+									{
+										CaptureTraceSource(item->trace, si, L"static.find", false, L"invalid pattern; skipped");
 										goto skip;
+									}
 
-									if(!find_pattern.find(&item->name))
+									const bool pattern_match =
+										NativeMenuConstruction::static_find_match(pattern,
+											item->name);
+									CaptureTraceSource(item->trace, si, L"static.find", pattern_match,
+										pattern_match ? L"matched" : L"skipped");
+									if(!pattern_match)
 										goto skip;
 								}
 							}
@@ -4150,28 +6455,37 @@ namespace Nilesoft
 							item->visibility = _context.parse_visibility(si->visibility);
 
 							if(item->visibility == Visibility::Hidden)
+							{
+								CaptureTraceSource(item->trace, si, L"static.visibility", true, L"hidden; removed");
 								removed= true;
+							}
 							else if(!item->is_separator())
 							{
+								CaptureTraceSource(item->trace, si, L"static.visibility", true,
+									item->visibility == Visibility::Disabled ? L"disabled" : L"enabled");
 								if(item->visibility == Visibility::Enabled)
 									item->disabled = false;
-								else if(item->visibility == Visibility::Disabled)
-									item->disabled = true;
-								_context._this->disabled = item->disabled;
+									else if(item->visibility == Visibility::Disabled)
+										item->disabled = true;
+									_context._this->disabled = item->disabled;
 							}
 						}
+						else if(si->visibility)
+							CaptureTraceSource(item->trace, si, L"static.visibility", false, L"modification disabled");
 
 						if(removed)
 							items->erase(items->begin() + i--);
 						else if(_settings.modify_items.parent)
 						{
 							string moveto;
-							if(_context.Eval(si->moveto, moveto, true))
+							const bool moveto_evaluated = _context.Eval(si->moveto, moveto, true);
+							if(moveto_evaluated)
 							{
 								moveto.trim(L'/');
 
 								if(!moveto.equals(item->path))
 								{
+									CaptureTraceSource(item->trace, si, L"static.moveto", true, L"moved");
 									item->path = moveto.move();
 									if(auto submenu = __map_system_menu[item->path.hash()]; submenu)
 									{
@@ -4184,22 +6498,38 @@ namespace Nilesoft
 									}
 									items->erase(items->begin() + i--);
 								}
+								else
+									CaptureTraceSource(item->trace, si, L"static.moveto", false, L"destination unchanged");
 							}
+							else
+								CaptureTraceSource(item->trace, si, L"static.moveto", false, L"evaluation failed");
 						}
+						else if(si->moveto)
+							CaptureTraceSource(item->trace, si, L"static.moveto", false, L"modification disabled");
 
 						if(!removed)
-							item->native_items.push_back(si);
-
-						if(si->invoke && 0 == _context.parse_invoke(si->invoke))
 						{
-							if(!removed && item->is_menu())
-								build_main_system_menuitems(item);
-							break;
+							item->native_items.push_back(si);
+							CaptureTraceSource(item->trace, si, L"static.result", true, L"displayed");
+						}
+
+						if(si->invoke)
+						{
+							const bool invoke_match = _context.parse_invoke(si->invoke) == 0;
+							CaptureTraceSource(item->trace, si, L"static.invoke", invoke_match,
+								invoke_match ? L"applied" : L"not applied");
+							if(invoke_match)
+							{
+								if(!removed && item->is_menu())
+									build_main_system_menuitems(item);
+								break;
+							}
 						}
 
 						continue;
 
 					skip:
+						CaptureTraceSource(item->trace, si, L"static.result", false, L"skipped");
 						if(item->is_menu())
 							build_main_system_menuitems(item);
 					}
@@ -4211,9 +6541,12 @@ namespace Nilesoft
 			}
 		}
 
-		void ContextMenu::build_system_menuitems(HMENU hMenu, menuitem_t *menu, bool is_root)
+		void ContextMenu::build_system_menuitems(HMENU hMenu, menuitem_t *menu,
+			bool is_root, bool capture_original)
 		{
-			::SendMessageW(hwnd.owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(hMenu), 0xFFFFFFFF);
+			CaptureTraceScope traceScope(&_studio_capture);
+			if(!capture_original)
+				::SendMessageW(hwnd.owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(hMenu), 0xFFFFFFFF);
 
 			auto itmes_count = ::GetMenuItemCount(hMenu);
 
@@ -4232,10 +6565,18 @@ namespace Nilesoft
 				{
 					std::unique_ptr<menuitem_t> item(new menuitem_t);
 					auto itemPtr = item.get();
+					CaptureEvidenceScope evidenceScope(&item->evidence);
+					CaptureTraceNumber(item->trace, L"native.index=", i);
 					item->parent = menu;
 					item->wid = mii.wID;
 					item->dwItemData = mii.dwItemData;
+					item->native_menu = hMenu;
+					item->native_index = static_cast<uint32_t>(i);
 					item->is_toplevel = is_root;
+					item->native_fType = mii.fType;
+					item->native_fState = mii.fState;
+					item->is_default = (mii.fState & MFS_DEFAULT) != 0;
+					item->owner_draw = (mii.fType & MFT_OWNERDRAW) != 0;
 
 					if(is_root)
 						;
@@ -4250,7 +6591,12 @@ namespace Nilesoft
 					if(mii.fType & MFT_SEPARATOR)
 					{
 						if(_settings.modify_items.remove.separator)
-							continue;
+						{
+							CaptureTrace(item->trace, L"remove.separator", true,
+								capture_original ? L"would remove; retained for original evidence" : L"removed");
+							if(!capture_original)
+								continue;
+						}
 						item->type = 2;
 					}
 					else
@@ -4262,8 +6608,13 @@ namespace Nilesoft
 						item->image = MenuItemInfo::FindImage(&mii);
 
 						if(item->disabled && _settings.modify_items.remove.disabled)
-							continue;
-						
+						{
+							CaptureTrace(item->trace, L"remove.disabled", true,
+								capture_original ? L"would remove; retained for original evidence" : L"removed");
+							if(!capture_original)
+								continue;
+						}
+
 						if(mii.cch > 0)
 						{
 							item->title = title.release(mii.cch).move();
@@ -4271,7 +6622,7 @@ namespace Nilesoft
 
 							item->ui = Initializer::get_muid(item->hash);
 
-							if(!item->is_menu() && is_root && item->disabled)
+							if(!capture_original && !item->is_menu() && is_root && item->disabled)
 							{
 								if(item->uid() == IDENT_ID_EMPTY_RECYCLE_BIN)
 								{
@@ -4292,24 +6643,46 @@ namespace Nilesoft
 									{
 										if(im->type == item->type)
 										{
-											found_duplicate = 1;
-											if(im->disabled)
+											if(capture_original)
 											{
-												if(!item->disabled)
+												CaptureTrace(item->trace, L"remove.duplicate", true,
+													L"would remove; retained for original evidence");
 												{
-													found_duplicate = 2;
-													menu->items[indexof] = item.release();
+													CaptureEvidenceScope priorEvidence(&im->evidence);
+													CaptureTrace(im->trace, L"remove.duplicate", true,
+														L"would be replaced by a later duplicate");
 												}
 											}
-											break;
+											else
+											{
+												found_duplicate = 1;
+												if(im->disabled)
+												{
+													if(!item->disabled)
+													{
+														found_duplicate = 2;
+														CaptureTrace(item->trace, L"remove.duplicate", true, L"replaced disabled duplicate");
+														{
+															CaptureEvidenceScope priorEvidence(&im->evidence);
+															CaptureTrace(im->trace, L"remove.duplicate", true,
+																L"replaced by enabled duplicate");
+														}
+														menu->items[indexof] = item.release();
+													}
+												}
+											}
+												break;
 										}
 									}
 								}
 								indexof++;
 							}
-							
+
 							if(found_duplicate == 1)
+							{
+								CaptureTrace(item->trace, L"remove.duplicate", true, L"removed");
 								continue;
+							}
 						}
 						else if(mii.fType & MFT_BITMAP)
 						{
@@ -4317,12 +6690,12 @@ namespace Nilesoft
 						}
 
 						if(mii.hSubMenu)
-							build_system_menuitems(mii.hSubMenu, itemPtr, false);
+							build_system_menuitems(mii.hSubMenu, itemPtr, false, capture_original);
 					}
-					
-					if(found_duplicate != 2)
+
+					if(capture_original || found_duplicate != 2)
 					{
-						if(item->is_menu())
+						if(!capture_original && item->is_menu())
 						{
 							string sub_path = item->name;
 							if(!item->path.empty())
@@ -4341,6 +6714,12 @@ namespace Nilesoft
 			try
 			{
 				if(!Initializer::Inited()) return false;
+
+				// Start as soon as the context object exists so a Studio request
+				// can complete its handshake before native menu enumeration begins.
+				// The worker never waits on this thread and produces no data until
+				// it has received capture.start.
+				_studio_capture.Start(hwnd.owner);
 
 				__trace(L"ContextMenu init");
 
@@ -4363,7 +6742,7 @@ namespace Nilesoft
 				//	return false;
 
 				auto sets = &_cache->settings;
-				
+
 				/*if(auto h = hWnd_owner ? hWnd_owner : hWnd; h)
 					_result = Window::class_name(h);
 				*/
@@ -4429,15 +6808,15 @@ namespace Nilesoft
 
 				composition.activated = ::IsCompositionActive();
 				::DwmIsCompositionEnabled(reinterpret_cast<BOOL *>(&composition.DwmEnabled));
-				
+
 				init_cfg();
-				
+
 				if(!_windowSubclass.hook(hwnd.owner, WindowSubclassProc, CONTEXTMENUSUBCLASS, this))
 				{
 					__trace(L"WindowSubclass");
 					return false;
 				}
-			
+
 				Prop::Set(hwnd.owner, this);
 
 				if(_winEventHook.hook(EVENT_OBJECT_CREATE, EVENT_OBJECT_SHOW, Initializer::HInstance,
@@ -4462,16 +6841,28 @@ namespace Nilesoft
 				//set_prop(hWnd, ctx);
 
 				__trace(L"ContextMenu.Initialized");
-				
+
 				__system_menu_tree = new menuitem_t;
 				__system_menu_tree->type = 10;
 				__map_system_menu[0] = __system_menu_tree;
 
 				if(0 == ::GetPropW(hwnd.owner, UxSubclass))
-					build_system_menuitems(_hMenu_original, __system_menu_tree, true);
+				{
+					build_system_menuitems(_hMenu_original, __system_menu_tree, true, false);
+					_studio_real_enumeration_complete = true;
+				}
 
 				if(_settings.modify_items.enabled)
+				{
+					_studio_capture_active_during_static_evaluation = false;
 					build_main_system_menuitems(__system_menu_tree, true);
+				}
+				_studio_static_evaluation_complete = true;
+
+				// Publish only after the real tree has been statically evaluated so
+				// the original getter tree can receive those retained outcomes.  A
+				// late handshake reaches the same gate from the window subclass.
+				publish_original_capture_if_armed();
 
 				return true;
 			}
@@ -4494,6 +6885,11 @@ namespace Nilesoft
 			int result = FALSE;
 			try
 			{
+				cancel_appearance_capture_timer();
+				_studio_appearance_published.clear();
+				_studio_popup_order.clear();
+				_studio_capture.Stop();
+
 				if(_hMenu)
 				{
 					::DestroyMenu(_hMenu);
@@ -4532,7 +6928,7 @@ namespace Nilesoft
 				}
 
 				_keyboardHook.unhook();
-				
+
 				if(_winEventHook)
 				{
 					HookMap.erase(_winEventHook.get());
@@ -4567,7 +6963,7 @@ namespace Nilesoft
 
 			if(id != 0)
 			{
-				if(ident.equals(id)) 
+				if(ident.equals(id))
 				{
 					for(auto item : _items_command)
 					{
@@ -4653,7 +7049,7 @@ namespace Nilesoft
 				//ctx->variables.runtime = &menu->owner->variables;
 				ctx->variables.local = &menu->owner->variables;
 				ctx->Keyboard->get_keys_state(true);
-				
+
 				set00(cm);
 
 				if(cm->mouse_button)
@@ -4682,7 +7078,7 @@ namespace Nilesoft
 										ctx->Break = false;
 										__leave;
 									}
-									
+
 									if(invoke > 1)
 										::Sleep(invoke);
 									ctx->invoked++;
@@ -4728,7 +7124,7 @@ namespace Nilesoft
 				string value;
 
 				cmd.admin = invoke_item->privileges;
-				
+
 				if(cmd_prop->admin)
 					cmd.admin = _context.parse_privileges(cmd_prop);
 
@@ -4791,7 +7187,7 @@ namespace Nilesoft
 			}
 			return FALSE;
 		}
-		
+
 		bool Tip::show()
 		{
 			if(handle && enabled)
@@ -4913,7 +7309,7 @@ namespace Nilesoft
 
 							pluto.rect(2, 2, size.cx - 4, size.cy - 4, radius)
 								.fill(bgclr.to_RGB(), theme->tip.opacity);
-							
+
 							auto_gdi<HBITMAP> bitmap(pluto.tobitmap());
 							DC dc_layer(dc.CreateCompatibleDC(), 1);
 							dc_layer.set_font(ctx->font.handle);
@@ -4989,6 +7385,15 @@ namespace Nilesoft
 
 			current.hWnd = hWnd;
 			_level.push_back(wnd);
+			try
+			{
+				_studio_popup_order.push_back(hWnd);
+			}
+			catch(...)
+			{
+				_studio_capture.Fail("CAPTURE_APPEARANCE_MEMORY",
+					"The native capture could not retain the popup window order.");
+			}
 
 			Flag<ULONG_PTR> cs_style = ::GetClassLongPtrW(hWnd, GCL_STYLE);
 			Flag<LONG_PTR> style = ::GetWindowLongPtrW(hWnd, GWL_STYLE);
@@ -5021,7 +7426,7 @@ namespace Nilesoft
 
 			if(!ex_style.equals(ex_style_old))
 				::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, ex_style);
-						
+
 			//::SetClassLongPtrW(hWnd, GCL_STYLE, 0);
 			//::SetWindowLongPtrW(hWnd, GWL_STYLE, WS_POPUP);
 			//::SetWindowLongPtrW(hWnd, GWL_EXSTYLE, WS_EX_NOREDIRECTIONBITMAP);
@@ -5117,13 +7522,13 @@ namespace Nilesoft
 					pt1.x = std::max<long>(rc.right, pt1.x);
 					pt1.y = std::max<long>(rc.bottom, pt1.y);
 				}
-				
+
 				pt0.x = std::max<long>(0, pt0.x);
 				pt0.y = std::max<long>(0, pt0.y);
 
 				pt1.x = std::min<long>(sz.cx, pt1.x);
 				pt1.y = std::min<long>(sz.cy, pt1.y);
-				
+
 				sz = { (pt1.x - pt0.x) + 100, (pt1.y - pt0.y) + 100 };
 
 				bits = nullptr;
@@ -5134,9 +7539,9 @@ namespace Nilesoft
 					dc0.select_bitmap(hbitmap0.get());
 					dc0.draw_image({ }, sz, dc_dst, pt0, sz);
 				}
-				
+
 				auto w = sz.cx, h = sz.cy;
-				
+
 				auto p = bits;
 				if(bits)
 				{
@@ -5168,10 +7573,10 @@ namespace Nilesoft
 
 					if(location.empty())
 						location = IO::Path::GetKnownFolder(FOLDERID_Screenshots).move();
-					
+
 					if(location.empty())
 						location = Initializer::instance->application.Dirctory;
-					
+
 					location = Path::Combine(location, L"screenshot_" + tf + L".png");
 
 					plutovg_stbi_write_png(location, w, h, flip.get());
@@ -5181,7 +7586,8 @@ namespace Nilesoft
 			}
 		}
 
-		bool ContextMenu::draw_layer(WND *wnd, SIZE size, int margin)
+		bool ContextMenu::draw_layer(WND *wnd, SIZE size, int margin,
+			bool opaqueInterior)
 		{
 			//Gradients - box, linear and radial
 			if(!wnd || !wnd->ctx)
@@ -5204,6 +7610,12 @@ namespace Nilesoft
 			double h = (size.cy - (margin + margin));
 
 			PlutoVG pluto(size.cx, size.cy);
+			// Preview composition starts transparent.  An opaque interior is a
+			// local rendering choice; keep the live theme alpha untouched.
+			const auto background_alpha = opaqueInterior ? uint8_t{0xFF} :
+				_theme.background.color.a;
+			const auto background_opacity = opaqueInterior ? uint8_t{0xFF} :
+				_theme.background.opacity;
 
 			bool need_clear = _theme.background.effect > 0;
 
@@ -5258,7 +7670,7 @@ namespace Nilesoft
 				pluto.rect(margin + xb, margin + xb,
 						   back.cx - xb - xb, back.cy - xb - xb, radius)
 					//.fill(0x00ff00, theme->background.color.a, true)
-					.fill(_theme.background.color.to_RGB(), _theme.background.color.a, true)
+					.fill(_theme.background.color.to_RGB(), background_alpha, true)
 					.stroke_width(szborder)
 					.stroke_fill(_theme.border.color.to_RGB(), _theme.border.color.a);
 			}
@@ -5274,13 +7686,13 @@ namespace Nilesoft
 				if(need_clear)
 					pluto.rect(back_rect.left, back_rect.top, back_rect.right, back_rect.bottom, radius).clear();
 
-				if(_theme.background.opacity > 0)
+				if(background_opacity > 0)
 				{
 					pluto.save();
 					pluto.rect(back_rect.left, back_rect.top, back_rect.right, back_rect.bottom, radius)
 						//.set_operator(plutovg_operator_src)
 						//.set_fill_rule(plutovg_fill_rule_non_zero)
-						.fill(_theme.background.color.to_RGB(), _theme.background.opacity, true);
+						.fill(_theme.background.color.to_RGB(), background_opacity, true);
 					pluto.restore();
 				}
 			}
@@ -5309,7 +7721,7 @@ namespace Nilesoft
 
 					if(y1 > 0) y1 += fyy * 2;
 					if(y2 > 0) y2 += fyy * 2;
-					
+
 					render = x1 != 0.0 || y1 != 0.0 || x2 != 0.0 || y2 != 0.0;
 					if(render)
 						gradient.create_linear(x1, y1, x2, y2);
@@ -5331,7 +7743,7 @@ namespace Nilesoft
 				{
 					for(auto &s : _theme.gradient.stpos)
 						gradient.add_stop(s.offset, s.color.to_RGB(), s.color.a);
-					
+
 					pluto.rect(back_rect.left, back_rect.top, w, h, radius).fill(gradient);
 				}
 			}
@@ -5432,13 +7844,13 @@ namespace Nilesoft
 
 					uint32_t tintColor = _theme.background.tintcolor;
 
-					if(_theme.background.effect == 2) // blur effect 
+					if(_theme.background.effect == 2) // blur effect
 					{
 						accent.state = accent.BlurBehind;
 						if(_theme.border.radius > 0)
 							accent.flags = accent.AllowSetWindowRgn;
 					}
-					else if(_theme.background.effect >= 3) // acrylic effect 
+					else if(_theme.background.effect >= 3) // acrylic effect
 					{
 						// Windows 10 build 17134
 						accent.state = accent.AcrylicBlurBehind;
@@ -5499,7 +7911,7 @@ namespace Nilesoft
 				auto pMSG = (MSG *)lParam;
 
 				//_log.info(L"0x%04x %s", pMSG->message, msg_map[pMSG->message]);
-				
+
 				switch(pMSG->message)
 				{
 					case WM_CREATE:
@@ -5525,7 +7937,7 @@ namespace Nilesoft
 					}
 					break;
 					case WM_LBUTTONDBLCLK:
-						// just set WM_NULL to get rid of all default processing 
+						// just set WM_NULL to get rid of all default processing
 						//pMSG->message = WM_NULL;
 						break;
 					case 485:  // HACK to handle popup menus
@@ -5630,10 +8042,27 @@ namespace Nilesoft
 				}
 				case WM_NCDESTROY:
 				{
+					if(ctx->_studio_appearance_timer_hwnd == hWnd)
+						ctx->cancel_appearance_capture_timer();
+					ctx->_studio_appearance_published.erase(hWnd);
+					wnd->studio_appearance.clear();
+					for(auto it = ctx->_studio_popup_order.begin();
+						it != ctx->_studio_popup_order.end(); )
+					{
+						if(*it == hWnd)
+							it = ctx->_studio_popup_order.erase(it);
+						else
+							++it;
+					}
+					for(auto it = ctx->_level.begin(); it != ctx->_level.end(); )
+					{
+						if(!*it || (*it)->handle == hWnd)
+							it = ctx->_level.erase(it);
+						else
+							++it;
+					}
 					wnd->destroy();
 					ctx->_map.erase(hWnd);
-					if(!ctx->_level.empty())
-						ctx->_level.pop_back();
 					ctx->current.zero();
 					break;
 				}
@@ -5648,7 +8077,7 @@ namespace Nilesoft
 					//_log.info(L"MN_SIZEWINDOW");
 					if(wParam & MNSW_DRAWFRAME)
 						wParam &= ~MNSW_DRAWFRAME;
-					
+
 					lret = defSubclassProc();
 					return lret;
 				}
@@ -5773,7 +8202,7 @@ namespace Nilesoft
 
 							//if(wp->cy > 450)
 								//wp->cy += 16;
-							
+
 						}
 						else if(!flags.has(SWP_NOMOVE))
 						{
@@ -5888,6 +8317,7 @@ namespace Nilesoft
 				}
 				case WM_PAINT:
 				{
+					ctx->begin_appearance_paint(wnd);
 					lret = defSubclassProc();
 					//auto_gdi<HBRUSH> _hblack(CreateSolidBrush(0x000000));
 					//::FillRect(wnd->hdc, &wnd->rect, _hblack.get());
@@ -5899,17 +8329,11 @@ namespace Nilesoft
 						int h = ctx->dpi(14);
 						Rect rc = { 0, 0, wnd->width, h };
 						::FillRect(wnd->hdc, rc, hbblack.get());
-						
+
 						rc = { 0, wnd->height - h, wnd->width, wnd->height };
 						::FillRect(wnd->hdc, rc, hbblack.get());
-						
-						auto txtfmt = DT_NOCLIP | DT_SINGLELINE | DT_VCENTER| DT_CENTER;
 
-						rc = { 0, 0, wnd->width, h };
-						ctx->draw_string(wnd->hdc, ctx->font.icon, &rc, ctx->_theme.symbols.chevron.nor, L"\uE009", 1, txtfmt);
-
-						rc = { 0, wnd->height - h, wnd->width, wnd->height };
-						ctx->draw_string(wnd->hdc, ctx->font.icon, &rc, ctx->_theme.symbols.chevron.nor, L"\uE00A", 1, txtfmt);
+						ctx->draw_scroll_arrows(wnd->hdc, wnd->width, wnd->height);
 
 						//::ExcludeClipRect(wnd->hdc, 0, 0, wnd->width, 20);
 						//::ExcludeClipRect(wnd->hdc, 0, wnd->height - 20, wnd->width, wnd->height);
@@ -5917,6 +8341,8 @@ namespace Nilesoft
 
 					// exlude menu item rectangle to prevent drawing by windows after us
 					//dc.exclude_clip_rect(*rc);
+					ctx->finish_appearance_paint(wnd);
+					ctx->schedule_appearance_capture(hWnd);
 					return lret;
 				}
 				case WM_NCPAINT:
@@ -5928,9 +8354,9 @@ namespace Nilesoft
 					{
 						Rect r = hWnd;
 						D2D d2d;
-						
+
 						d2d.begin(wnd->hdc, { 0, 0, r.width(), r.height() });
-						
+
 						//auto z = (float)theme->border.size*2;
 						D2D1_RECT_F rect = { 0.0f, 0.0f, float(r.width()), float(r.height()) };
 
@@ -6098,7 +8524,7 @@ namespace Nilesoft
 					}
 					// We need to prevent the system default menu fade out animation
 					// and begin a re-implemented one
-					// 
+					//
 					// Windows does not show animation if the selection was done
 					// with keyboard (i.e. Enter)
 
@@ -6227,7 +8653,7 @@ namespace Nilesoft
 			int scancode = static_cast<int> ((lParam >> 16) & 0xFF);
 
 			// Code < 0 is windows telling us 'don't process this message'.
-			if(nCode != 0)  // do not process message 
+			if(nCode != 0)  // do not process message
 				goto skip;
 
 			//::GetWindow(GetActiveWindow(), GW_ENABLEDPOPUP))
@@ -6314,6 +8740,43 @@ namespace Nilesoft
 
 				switch(uMsg)
 				{
+					case StudioCapture::CaptureArmedMessage:
+						// A worker-thread handshake can complete after Initialize has
+						// started ordinary menu construction.  Retry on the owner thread
+						// so the original HMENU is never dereferenced by the worker and
+						// the snapshot is immutable before it enters the IPC queue.
+						if(reinterpret_cast<StudioCapture *>(wParam) == &ctx->_studio_capture)
+						{
+							const auto epoch = ctx->_studio_capture.ActiveEpoch();
+							if(!epoch || epoch != static_cast<uint64_t>(lParam))
+								return 0;
+							ctx->cancel_appearance_capture_timer();
+							ctx->_studio_appearance_published.clear();
+							for(auto &entry : ctx->_map)
+								if(entry.second.studio_appearance.epoch != epoch)
+								entry.second.studio_appearance.clear();
+						ctx->publish_original_capture_if_armed();
+							ctx->capture_unopened_submenus(nullptr);
+							// The handshake may arrive after a popup is already visible;
+							// defer only the current topmost popup without reopening menus
+							// or executing commands.
+							if(!ctx->_studio_popup_order.empty())
+								ctx->schedule_appearance_capture(ctx->_studio_popup_order.back());
+						}
+						return 0;
+					case StudioCapture::CaptureRetiredMessage:
+						if(reinterpret_cast<StudioCapture *>(wParam) == &ctx->_studio_capture)
+						{
+							for(auto &entry : ctx->_map)
+								if(entry.second.studio_appearance.epoch == static_cast<uint64_t>(lParam))
+									entry.second.studio_appearance.clear();
+							if(!ctx->_studio_capture.ActiveEpoch())
+							{
+								ctx->cancel_appearance_capture_timer();
+								ctx->_studio_appearance_published.clear();
+							}
+						}
+						return 0;
 					case WM_ENTERMENULOOP:
 					{
 						//_log.info(L"WM_ENTERMENULOOP");
@@ -6404,6 +8867,15 @@ namespace Nilesoft
 						}
 						break;
 					case WM_TIMER:
+						if(ctx->_studio_appearance_timer_id != 0 &&
+							static_cast<UINT_PTR>(wParam) == ctx->_studio_appearance_timer_id &&
+							ctx->_studio_appearance_timer_owner == hWnd)
+						{
+							const auto target = ctx->_studio_appearance_timer_hwnd;
+							ctx->cancel_appearance_capture_timer();
+							ctx->publish_appearance_after_paint(target);
+							return 0;
+						}
 						return ctx->OnTimer(static_cast<UINT_PTR>(wParam), reinterpret_cast<TIMERPROC>(lParam));
 					case WM_MOUSEMOVE:
 					{
@@ -6437,7 +8909,7 @@ namespace Nilesoft
 					case WM_UAHDRAWMENUITEM:
 					case WM_UAHNCPAINTMENUPOPUP:
 						//_log.info(L"%0.4x", uMsg);
-						
+
 						break;
 					case WM_CAPTURECHANGED:
 						break;

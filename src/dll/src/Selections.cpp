@@ -137,7 +137,7 @@ namespace Nilesoft
 				if(pathItem->Type == PathType::File and !pathItem->Extension.empty())
 				{
 					sel.append(pathItem->get_extension(quote));
-					sel.append(sep);					
+					sel.append(sep);
 				}
 			}
 			return sel.trim_end(sep).move();
@@ -359,10 +359,10 @@ namespace Nilesoft
 			}
 		}
 
-		bool Selections::verify_mode(SelectionMode mode)
+		bool Selections::verify_mode(SelectionMode mode) const
 		{
 			bool result = true;
-			if(Types[FSO_TASKBAR]) 
+			if(Types[FSO_TASKBAR])
 				result = true;
 			else if(mode == SelectionMode::Single)
 				result = Mode == SelectionMode::Single;
@@ -388,7 +388,7 @@ namespace Nilesoft
 
 			if(fso.count == 0)
 				return true;
-			
+
 			if(fso.exclude)
 			{
 				for(int32_t i = 0; i < FSO_SIZE; i++)
@@ -419,7 +419,7 @@ namespace Nilesoft
 			int32_t drives = 0;
 			int32_t namespaces = 0;
 			int32_t backs = 0;
-			
+
 			_fso.titlebar = Types[FSO_TITLEBAR];
 			_fso.edit = Types[FSO_EDIT];
 			_fso.start = Types[FSO_START];
@@ -884,7 +884,7 @@ namespace Nilesoft
 					else
 						result = reinterpret_cast<IShellBrowser *>(lres);
 				}
-				
+
 				//if(result) result->GetWindow(&hWnd);
 			}
 			except
@@ -902,7 +902,7 @@ namespace Nilesoft
 					return false;
 
 				/*
-				IComPtr<IShellWindows> sw;	
+				IComPtr<IShellWindows> sw;
 				//if(S_OK == ::CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER, __uuidof(IShellWindows), sw))
 				if(sw.CreateInstance(CLSID_ShellWindows))
 				{
@@ -944,7 +944,7 @@ namespace Nilesoft
 
 							if(!disp.QueryServiceProvider<IShellBrowser>(SID_STopLevelBrowser, sb))
 								continue;
-							
+
 							if(S_OK != sb->GetWindow(&current_window))
 								continue;
 
@@ -974,7 +974,7 @@ namespace Nilesoft
 				*/
 
 				HWND current_window{};
-				
+
 				if(!Window.has_IShellBrowser)
 					return false;
 
@@ -1006,7 +1006,7 @@ namespace Nilesoft
 
 			//	if(ShellBrowser)
 			//		ShellBrowser->AddRef();
-				
+
 
 			//	Logger::Info(L"%x %s %x", current_window, Window::class_name(current_window).c_str(), sb);
 
@@ -1034,7 +1034,7 @@ namespace Nilesoft
 
 					FileProperties folderProp;
 					Selections::GetFileProperties(si, &folderProp);
-					
+
 					IComPtr<IShellItemArray> sia;
 					if(S_OK == fv->GetSelection(FALSE, sia))
 					{
@@ -1056,7 +1056,7 @@ namespace Nilesoft
 
 						return !Items.empty();
 					}
-					
+
 					if(folderProp.Folder)
 					{
 						if(folderProp.FileSystem || folderProp.FileSysAnceStor)
@@ -1107,7 +1107,7 @@ namespace Nilesoft
 				{
 					IComPtr<INameSpaceTreeControl> nstc;
 					IComPtr<IServiceProvider> sp;
-					
+
 					TResult hr = ShellBrowser->QueryInterface(IID_IServiceProvider, sp);
 					if(!hr.succeeded())
 						return false;
@@ -1190,7 +1190,7 @@ MultitaskingViewFrame // Multitask Button
 			{
 			//	if(!*window)
 			//		*window = ::GetActiveWindow();
-			
+
 			//	if(!window->is_window() || !window->is_visible())
 			//		return false;
 				Hash cur_hash(window->class_hash());
@@ -1330,7 +1330,7 @@ Edit >> ComboBox > #32770 > Notepad
 							return true;
 						}
 					}
-					
+
 					module.from(L"shcore.dll");
 
 					if(Window.hInstance == module)

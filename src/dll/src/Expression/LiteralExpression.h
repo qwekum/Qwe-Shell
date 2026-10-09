@@ -86,6 +86,26 @@ namespace Nilesoft
 			Object Eval(Context *context) override;
 		};
 
+		// Syntax hosts preserve environment references as deferred expressions.
+		// They can only receive explicitly supplied values from a preview policy.
+		class PreviewEnvironmentExpression final : public Expression
+		{
+		public:
+			std::wstring Name;
+			explicit PreviewEnvironmentExpression(std::wstring name) : Name(std::move(name)) {}
+			ExpressionType Type() const override { return ExpressionType::RuntimeVariable; }
+			Expression* Copy() override { return new PreviewEnvironmentExpression(Name); }
+			Object Eval(Context* context) override
+			{
+				Object result;
+				if(context && context->Preview && context->Preview->environment &&
+				   context->Preview->environment(Name, result)) return result.move();
+				if(context && context->Preview)
+					context->Preview->Fail("PREVIEW_ENVIRONMENT", L"This environment variable was not supplied to preview.");
+				return nullptr;
+			}
+		};
+
 		/*class ColorExpression final : public LiteralExpression
 		{
 		public:

@@ -1,0 +1,632 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Automation;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Shapes;
+using ShellStudio.Core;
+
+namespace ShellStudio;
+
+/// <summary>
+/// Identifies the expression in the declaration that owns an editor.  The
+/// canvas uses this binding to parse the complete source document on every
+/// draft change, so grammar context and surrounding source remain available.
+/// </summary>
+public sealed record ExpressionSourceBinding(SourceFile File, SyntaxNode Owner, SyntaxProperty? Property = null)
+{
+    public int ValueStart => Property?.ValueStart ?? Owner.Expression?.Start ?? -1;
+    public int ValueLength => Property?.ValueLength ?? Owner.Expression?.Length ?? 0;
+    public string PropertyName => Property?.Name ?? Owner.Name;
+}
+
+/// <summary>Ordered expression tree rendered as movable cards. Layout changes never alter evaluation.</summary>
+public sealed class ExpressionCanvas : UserControl
+{
+    private const int SyntheticSourceOffset = 11; // UTF-16 length of item(title= in the compatibility wrapper.
+    private readonly ILanguageService language;
+    private readonly Action<string> save;
+    private ExpressionSourceBinding? sourceBinding;
+    private int sourceOffset;
+    private string expression;
+    private ExpressionNode? root, selected;
+    private IReadOnlyList<SyntaxToken> tokens = [];
+    private static readonly string[] BinaryOperators = ["+", "-", "*", "/", "%", "==", "!=", "<", "<=", ">", ">=", "&&", "||", "&", "|", "^", "<<", ">>"];
+    private readonly Canvas surface = new() { Width = 2200, Height = 1800, Background = Brushes.Transparent };
+    private readonly StackPanel inspector = new() { Margin = new Thickness(16) };
+    private readonly TextBlock status = new() { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(8) };
+    private readonly Dictionary<string, Point> positions = [];
+    private readonly Stack<string> undo = new();
+    private readonly Stack<string> redo = new();
+    private readonly Action<Dictionary<string, NodePosition>>? saveLayout;
+
+    private readonly ComboBox nodeNavigation = new() { Width = 240, DisplayMemberPath = "Label", Margin = new Thickness(8, 0, 0, 6) };
+    private readonly TextBox sourcePreview = new() { IsReadOnly = true, TextWrapping = TextWrapping.NoWrap, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 72, FontFamily = new FontFamily("Consolas"), FontSize = 13 };
+    private readonly ScrollViewer viewport;
+    private readonly Button saveButton, undoButton, redoButton;
+    private readonly TextBlock zoomLabel = new() { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 8, 6) };
+    private readonly TextBlock sourceContext = new() { TextWrapping = TextWrapping.Wrap, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 6), MaxWidth = 360 };
+    private bool updatingNavigation, fitted;
+    private readonly Dictionary<string, List<Action>> connectionUpdates = [];
+    private sealed record NodeChoice(ExpressionNode Node, string Label) { public override string ToString() => Label; }
+
+    public ExpressionCanvas(ILanguageService language, string expression, Action<string> save,
+        IReadOnlyDictionary<string, NodePosition>? layout = null, Action<Dictionary<string, NodePosition>>? saveLayout = null,
+        ExpressionSourceBinding? sourceBinding = null)
+    {
+        this.language = language; this.expression = expression; this.save = save;
+        this.sourceBinding = sourceBinding;
+        sourceOffset = sourceBinding?.ValueStart ?? SyntheticSourceOffset;
+        this.saveLayout = saveLayout;
+        if (layout is not null) foreach (var item in layout) positions[item.Key] = new Point(item.Value.X, item.Value.Y);
+        var grid = new Grid(); grid.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(12) }); grid.ColumnDefinitions.Add(new() { Width = new GridLength(320), MinWidth = 280 });
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto }); grid.RowDefinitions.Add(new() { Height = new GridLength(1, GridUnitType.Star) }); grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        var toolbar = new WrapPanel { Margin = new Thickness(0, 0, 0, 12) };
+        saveButton = Button("Save expression", () => { if (root is not null) { save(this.expression); status.Text = "Expression saved to the editor. Review & apply to publish it."; status.SetResourceReference(TextBlock.ForegroundProperty, "SuccessBrush"); } });
+        saveButton.SetResourceReference(StyleProperty, "PrimaryButton"); toolbar.Children.Add(saveButton);
+        undoButton = Button("Undo", () => { if (undo.TryPop(out var value)) { redo.Push(this.expression); this.expression = value; Parse(); } }); toolbar.Children.Add(undoButton);
+        redoButton = Button("Redo", () => { if (redo.TryPop(out var value)) { undo.Push(this.expression); this.expression = value; Parse(); } }); toolbar.Children.Add(redoButton);
+        toolbar.Children.Add(Button("Arrange nodes", () => { positions.Clear(); Draw(); }));
+        toolbar.Children.Add(Button("Fit view", FitView));
+        toolbar.Children.Add(Button("Zoom −", () => Zoom(1 / 1.2))); toolbar.Children.Add(zoomLabel); toolbar.Children.Add(Button("Zoom +", () => Zoom(1.2)));
+        sourceContext.Text = sourceBinding is null
+            ? "Expression draft · validated in an isolated expression context"
+            : $"Source-bound · {System.IO.Path.GetFileName(sourceBinding.File.Path)} · {sourceBinding.PropertyName}";
+        sourceContext.ToolTip = sourceBinding is null
+            ? "This editor is not attached to a source declaration yet."
+            : sourceBinding.File.Path + "\n" + sourceBinding.PropertyName + " on " + sourceBinding.Owner.Kind;
+        sourceContext.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+        AutomationProperties.SetName(sourceContext, sourceBinding is null ? "Expression draft context" : "Owning source declaration");
+        toolbar.Children.Add(sourceContext);
+        AutomationProperties.SetName(nodeNavigation, "Select expression node");
+        nodeNavigation.SelectionChanged += (_, _) => { if (!updatingNavigation && nodeNavigation.SelectedItem is NodeChoice choice) SelectNode(choice.Node); };
+        toolbar.Children.Add(nodeNavigation);
+        Grid.SetColumnSpan(toolbar, 3); grid.Children.Add(toolbar);
+        viewport = new ScrollViewer { Content = surface, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
+        viewport.PreviewMouseWheel += (_, e) => { if (Keyboard.Modifiers.HasFlag(ModifierKeys.Control)) { Zoom(e.Delta > 0 ? 1.1 : 1 / 1.1); e.Handled = true; } };
+        Grid.SetRow(viewport, 1); grid.Children.Add(viewport);
+        var panel = new ScrollViewer { Content = inspector, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = (Brush)Application.Current.FindResource("PanelBrush") };
+        panel.SetResourceReference(Control.BackgroundProperty, "PanelBrush");
+        Grid.SetRow(panel, 1); Grid.SetColumn(panel, 2); grid.Children.Add(panel);
+        var splitter = new GridSplitter { Width = 4, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Stretch, ResizeDirection = GridResizeDirection.Columns, ResizeBehavior = GridResizeBehavior.PreviousAndNext, KeyboardIncrement = 16 };
+        AutomationProperties.SetName(splitter, "Resize expression inspector"); Grid.SetRow(splitter, 1); Grid.SetColumn(splitter, 1); grid.Children.Add(splitter);
+        var footer = new DockPanel { Margin = new Thickness(0, 12, 0, 0) };
+        AutomationProperties.SetName(sourcePreview, "Expression source"); AutomationProperties.SetLiveSetting(status, AutomationLiveSetting.Polite);
+        var editSource = Button("Edit source…", () => { var value = Dialogs.Input(Window.GetWindow(this)!, "Edit expression source", "Expression source (validated without execution)", this.expression); if (value is not null) Change(value); });
+        DockPanel.SetDock(editSource, Dock.Right); footer.Children.Add(editSource); footer.Children.Add(sourcePreview);
+        Grid.SetRow(footer, 2); Grid.SetColumnSpan(footer, 3); grid.Children.Add(footer);
+        grid.RowDefinitions.Add(new() { Height = GridLength.Auto });
+        Grid.SetRow(status, 3); Grid.SetColumnSpan(status, 3); grid.Children.Add(status);
+        Content = grid;
+        void InitialFrame()
+        {
+            if (fitted || viewport.ActualWidth <= 0 || viewport.ActualHeight <= 0 || root is null) return;
+            fitted = true; FitView();
+            // Keep initial labels readable; the explicit Fit action may zoom further out.
+            if (scale < .85) { scale = .85; Zoom(1); }
+            viewport.UpdateLayout();
+            RefreshSelection();
+        }
+        Loaded += (_, _) => InitialFrame();
+        SizeChanged += (_, _) => InitialFrame();
+        viewport.SizeChanged += (_, _) =>
+        {
+            if (fitted) viewport.Dispatcher.InvokeAsync(RefreshSelection, System.Windows.Threading.DispatcherPriority.Loaded);
+        };
+        Parse();
+    }
+
+    private static Button Button(string label, Action action)
+    {
+        var button = new Button { Content = label, Margin = new Thickness(0, 0, 6, 6), ToolTip = label };
+        button.SetResourceReference(ContentControl.ContentTemplateProperty, "WrappingButtonContent");
+        if (label.StartsWith("Remove", StringComparison.Ordinal)) button.SetResourceReference(StyleProperty, "DestructiveButton");
+        AutomationProperties.SetName(button, label);
+        button.Click += (_, _) => action(); return button;
+    }
+    private double scale = 1;
+    public void RefreshAppearance() => InvalidateVisual();
+    private void Zoom(double factor)
+    {
+        scale = Math.Clamp(scale * factor, .35, 2); surface.LayoutTransform = new ScaleTransform(scale, scale);
+        zoomLabel.Text = $"{scale:P0}";
+    }
+    private void FitView()
+    {
+        if (root is null || viewport.ActualWidth < 1 || viewport.ActualHeight < 1) return;
+        scale = Math.Clamp(Math.Min((viewport.ActualWidth - 24) / surface.Width, (viewport.ActualHeight - 24) / surface.Height), .35, 1);
+        Zoom(1); viewport.ScrollToHome();
+    }
+    private void SelectNode(ExpressionNode node)
+    {
+        selected = node; Inspect();
+        updatingNavigation = true;
+        nodeNavigation.SelectedItem = nodeNavigation.Items.OfType<NodeChoice>().FirstOrDefault(choice => choice.Node.Id == node.Id);
+        updatingNavigation = false;
+        RefreshSelection();
+    }
+    private void RefreshSelection()
+    {
+        foreach (var card in surface.Children.OfType<Button>())
+        {
+            bool active = card.Tag is ExpressionNode value && value.Id == selected?.Id;
+            card.SetResourceReference(Control.BorderBrushProperty, active ? "AccentBrush" : "BorderBrush");
+            card.SetResourceReference(Control.BackgroundProperty, active ? "RaisedBrush" : "PanelBrush");
+            if (active && viewport.IsLoaded) card.BringIntoView();
+        }
+    }
+    private void UpdateControls()
+    {
+        saveButton.IsEnabled = root is not null; undoButton.IsEnabled = undo.Count > 0; redoButton.IsEnabled = redo.Count > 0;
+        nodeNavigation.IsEnabled = root is not null; sourcePreview.Text = expression;
+        updatingNavigation = true;
+        nodeNavigation.ItemsSource = root is null ? Array.Empty<NodeChoice>() : Nodes(root).Select((node, i) => new NodeChoice(node, $"{i + 1}. {node.Kind} · {Summary(node)}")).ToArray();
+        updatingNavigation = false;
+        if (selected is not null) SelectNode(selected);
+        Zoom(1);
+    }
+
+    /// <summary>
+    /// Rebinds a native property editor after the source operation has
+    /// created or reparsed its generated rule.  SourceFile preserves node
+    /// identities across an in-place replacement, but the SyntaxNode and
+    /// SyntaxProperty instances held by an open canvas are still snapshots;
+    /// subsequent edits must resolve the current document before mapping.
+    /// </summary>
+    public void RebindSource(ExpressionSourceBinding? binding, string? savedExpression = null)
+    {
+        if (savedExpression is not null) expression = savedExpression;
+        sourceBinding = binding;
+        sourceOffset = binding?.ValueStart ?? SyntheticSourceOffset;
+        sourceContext.Text = binding is null
+            ? "Expression draft · validated in an isolated expression context"
+            : $"Source-bound · {System.IO.Path.GetFileName(binding.File.Path)} · {binding.PropertyName}";
+        sourceContext.ToolTip = binding is null
+            ? "This editor is not attached to a source declaration yet."
+            : binding.File.Path + "\n" + binding.PropertyName + " on " + binding.Owner.Kind;
+        AutomationProperties.SetName(sourceContext, binding is null ? "Expression draft context" : "Owning source declaration");
+        Parse();
+    }
+    private SyntaxDocument ParseSource(string source) => sourceBinding?.File.ParseRole == SourceParseRole.Localization
+        ? language.ParseLocalization(source)
+        : language.Parse(source);
+
+    private bool TryParseExpression(string value, out SyntaxDocument parsed, out ExpressionNode? expressionRoot, out int valueStart)
+    {
+        if (sourceBinding is null)
+        {
+            parsed = language.Parse("item(title=" + value + ")");
+            expressionRoot = parsed.Nodes.FirstOrDefault()?.Properties.FirstOrDefault(p => p.Name == "title")?.Expression;
+            valueStart = SyntheticSourceOffset;
+            return true;
+        }
+
+        // Source bindings point at parser objects from the moment the canvas
+        // was opened.  A prior save can change the value length or replace the
+        // generated rule entirely, so resolve the owner/property from the
+        // current SourceFile before constructing the candidate document.
+        var currentOwner = sourceBinding.File.AllNodes().FirstOrDefault(node =>
+            node.Id.Equals(sourceBinding.Owner.Id, StringComparison.Ordinal) &&
+            node.Kind.Equals(sourceBinding.Owner.Kind, StringComparison.OrdinalIgnoreCase))
+            ?? sourceBinding.File.AllNodes().FirstOrDefault(node =>
+                node.Start == sourceBinding.Owner.Start &&
+                node.Kind.Equals(sourceBinding.Owner.Kind, StringComparison.OrdinalIgnoreCase));
+        if (currentOwner is null)
+        {
+            parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_OWNER_STALE", "The owning declaration could not be resolved in the current document.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+            expressionRoot = null;
+            valueStart = -1;
+            return false;
+        }
+
+        SyntaxProperty? currentProperty = null;
+        if (sourceBinding.Property is not null)
+        {
+            currentProperty = currentOwner.Properties.FirstOrDefault(item =>
+                item.Name.Equals(sourceBinding.Property.Name, StringComparison.OrdinalIgnoreCase));
+            if (currentProperty is null)
+            {
+                parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_PROPERTY_STALE", "The owning declaration no longer contains this expression property.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+                expressionRoot = null;
+                valueStart = -1;
+                return false;
+            }
+        }
+
+        // Refresh the held parser objects for the next save as well as this
+        // parse.  The binding remains tied to the stable node identity while
+        // its spans follow the current source text.
+        sourceBinding = sourceBinding with { Owner = currentOwner, Property = currentProperty };
+        valueStart = currentProperty?.ValueStart ?? currentOwner.Expression?.Start ?? -1;
+        int valueLength = currentProperty?.ValueLength ?? currentOwner.Expression?.Length ?? 0;
+        expressionRoot = null;
+        string source = sourceBinding.File.Text;
+        if (valueStart < 0 || valueLength < 0 || valueStart > source.Length - valueLength)
+        {
+            parsed = new SyntaxDocument { Diagnostics = [new("EXPRESSION_SOURCE_STALE", "The owning declaration no longer contains the expression span.", Remedy: "Close this editor and reopen the expression from the current declaration.")] };
+            return false;
+        }
+
+        string candidate = source[..valueStart] + value + source[(valueStart + valueLength)..];
+        parsed = ParseSource(candidate);
+        var owner = SourceFile.Descendants(parsed.Nodes).FirstOrDefault(node =>
+            node.Start == currentOwner.Start &&
+            node.Kind.Equals(currentOwner.Kind, StringComparison.OrdinalIgnoreCase));
+        if (owner is null)
+        {
+            parsed.Diagnostics.Add(new("EXPRESSION_OWNER_MISSING", "The owning declaration could not be located after parsing the edited document.", Remedy: "Close this editor and reopen the expression from the current declaration."));
+            return false;
+        }
+
+        if (sourceBinding.Property is not null)
+        {
+            var property = owner.Properties.FirstOrDefault(item =>
+                item.Name.Equals(currentProperty!.Name, StringComparison.OrdinalIgnoreCase));
+            expressionRoot = property?.Expression;
+            valueStart = property?.ValueStart ?? -1;
+        }
+        else
+        {
+            expressionRoot = owner.Expression;
+            valueStart = owner.Expression?.Start ?? -1;
+        }
+        return expressionRoot is not null && valueStart >= 0;
+    }
+
+    private void Parse()
+    {
+        status.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+        TryParseExpression(expression, out var parsed, out var parsedRoot, out sourceOffset);
+        tokens = parsed.Tokens;
+        root = parsedRoot;
+        var errors = parsed.Diagnostics.Where(d => d.Severity == "error").ToArray();
+        bool oversized = root is not null && ExceedsVisualLimit(root);
+        bool unmapped = !oversized && root is not null && ContainsUnknown(root);
+        if (errors.Length > 0 || root is null || unmapped || oversized)
+        {
+            status.Text = string.Join("\n", errors.Select(d => d.Code + ": " + d.Message));
+            if (root is null) status.Text += "\nNo expression tree was returned.";
+            if (unmapped) status.Text += "\nGRAPH_UNMAPPED: This expression contains a construct without a complete visual mapping.";
+            if (oversized) status.Text += "\nGRAPH_LIMIT: This expression exceeds 2,048 nodes or 64 levels. Simplify it using Edit source.";
+            root = selected = null; surface.Children.Clear(); connectionUpdates.Clear(); inspector.Children.Clear();
+            inspector.Children.Add(new TextBlock { Text = "The current expression cannot be drawn. Start a replacement node, or correct the source and reopen it.", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 12) });
+            inspector.Children.Add(Button("Start replacement with text", () => Change("\"\"")));
+            status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush"); UpdateControls();
+            return;
+        }
+        selected = root; Draw(); UpdateControls();
+        status.Text = sourceBinding is null
+            ? "Arrows follow ordered operands and arguments. Moving cards changes layout only. Expressions are never executed here."
+            : "Source declaration parsed with this draft. Arrows follow ordered operands and arguments; moving cards changes layout only. Expressions are never executed here.";
+    }
+    private static bool ExceedsVisualLimit(ExpressionNode root)
+    {
+        var pending = new Stack<(ExpressionNode Node, int Depth)>(); pending.Push((root, 0));
+        int count = 0;
+        while (pending.TryPop(out var item))
+        {
+            if (++count > 2048 || item.Depth > 64) return true;
+            foreach (var child in item.Node.Children) pending.Push((child, item.Depth + 1));
+        }
+        return false;
+    }
+    private static bool ContainsUnknown(ExpressionNode node) => node.Kind == "unknown" || node.Children.Any(ContainsUnknown);
+
+    private void Draw()
+    {
+        surface.Children.Clear(); connectionUpdates.Clear(); if (root is null) return;
+        int row = 0;
+        var edges = new List<(ExpressionNode From, ExpressionNode To, int Index)>();
+        var nodes = new List<ExpressionNode>();
+        void Layout(ExpressionNode node, int depth)
+        {
+            if (nodes.Count >= 2048 || depth > 64) throw new InvalidDataException("Expression graph exceeds the visual editor limit.");
+            nodes.Add(node);
+            for (int i = 0; i < node.Children.Count; i++) { edges.Add((node, node.Children[i], i)); Layout(node.Children[i], depth + 1); }
+            double y = node.Children.Count == 0 ? 24 + row++ * 105 : (positions[node.Children[0].Id].Y + positions[node.Children[^1].Id].Y) / 2;
+            if (!positions.ContainsKey(node.Id)) positions[node.Id] = new Point(24 + depth * 255, y);
+        }
+        Layout(root, 0);
+        var currentIds = nodes.Select(node => node.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (string id in positions.Keys.Where(id => !currentIds.Contains(id)).ToArray()) positions.Remove(id);
+        foreach (var edge in edges)
+        {
+            var line = new System.Windows.Shapes.Path { StrokeThickness = 1.4, IsHitTestVisible = false };
+            line.SetResourceReference(Shape.StrokeProperty, "AccentBrush"); surface.Children.Add(line);
+            var arrow = new Polygon { IsHitTestVisible = false };
+            arrow.SetResourceReference(Shape.FillProperty, "AccentBrush"); surface.Children.Add(arrow);
+            var order = new TextBlock { Text = (edge.Index + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), FontSize = 12, IsHitTestVisible = false };
+            order.SetResourceReference(TextBlock.ForegroundProperty, "AccentBrush"); surface.Children.Add(order);
+            void PositionConnection()
+            {
+                Point a = positions[edge.From.Id], b = positions[edge.To.Id];
+                line.Data = new PathGeometry([new PathFigure(new Point(a.X + 220, a.Y + 44), [new BezierSegment(new Point(a.X + 240, a.Y + 44), new Point(b.X - 20, b.Y + 44), new Point(b.X, b.Y + 44), true)], false)]);
+                arrow.Points = [new(b.X, b.Y + 44), new(b.X - 7, b.Y + 40), new(b.X - 7, b.Y + 48)];
+                Canvas.SetLeft(order, b.X - 17); Canvas.SetTop(order, b.Y + 24);
+            }
+            PositionConnection();
+            foreach (string id in new[] { edge.From.Id, edge.To.Id })
+            {
+                if (!connectionUpdates.TryGetValue(id, out var updates)) connectionUpdates[id] = updates = [];
+                updates.Add(PositionConnection);
+            }
+        }
+        foreach (var node in nodes)
+        {
+            var stack = new StackPanel { ToolTip = node.Text };
+            var header = new DockPanel();
+            var thumb = new Thumb { Width = 16, Height = 16, Cursor = Cursors.SizeAll, Opacity = .8 };
+            thumb.SetResourceReference(StyleProperty, "NodeDragThumb");
+            DockPanel.SetDock(thumb, Dock.Right); header.Children.Add(thumb);
+            var kindLabel = new TextBlock { Text = node.Kind, FontSize = 14 }; kindLabel.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush"); header.Children.Add(kindLabel);
+            stack.Children.Add(header);
+            stack.Children.Add(new TextBlock { Text = Summary(node), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 8, 0, 0), FontSize = 14 });
+            var card = new Button { Content = stack, Width = 220, MinHeight = 88, Padding = new Thickness(12), Margin = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Stretch, Background = (Brush)Application.Current.FindResource("PanelBrush"), BorderBrush = (Brush)Application.Current.FindResource("BorderBrush"), BorderThickness = new Thickness(1), Cursor = Cursors.Hand, Tag = node };
+            AutomationProperties.SetName(card, node.Kind + " node: " + Summary(node));
+            AutomationProperties.SetName(thumb, "Move " + node.Kind + " node");
+            card.Click += (_, _) => SelectNode(node);
+            thumb.DragStarted += (_, _) => { if (selected?.Id != node.Id) SelectNode(node); };
+            thumb.DragDelta += (_, e) => { var p = positions[node.Id]; positions[node.Id] = new(Math.Max(0, p.X + e.HorizontalChange), Math.Max(0, p.Y + e.VerticalChange)); Canvas.SetLeft(card, positions[node.Id].X); Canvas.SetTop(card, positions[node.Id].Y); if (connectionUpdates.TryGetValue(node.Id, out var updates)) foreach (var update in updates) update(); };
+            thumb.DragCompleted += (_, _) => { Draw(); saveLayout?.Invoke(positions.ToDictionary(p => p.Key, p => new NodePosition(p.Value.X, p.Value.Y))); };
+            Canvas.SetLeft(card, positions[node.Id].X); Canvas.SetTop(card, positions[node.Id].Y); surface.Children.Add(card);
+        }
+        surface.Width = Math.Max(260, positions.Values.Max(p => p.X) + 244);
+        surface.Height = Math.Max(120, positions.Values.Max(p => p.Y) + 112);
+        RefreshSelection();
+    }
+    private string Summary(ExpressionNode node)
+    {
+        if (node.Children.Count == 0) return node.Text;
+        if (OperatorToken(node) is { } op) return op.Text + $" · {node.Children.Count} operands";
+        if (node.Kind is "member" or "index") return node.Text;
+        return node.Kind is "call" or "if" or "for" or "foreach" or "while" ? node.Text.Split('(')[0].Trim() + $" · {node.Children.Count} branches" : $"{node.Kind} · {node.Children.Count} branches";
+    }
+    private void Inspect()
+    {
+        inspector.Children.Clear(); if (selected is null) return;
+        var node = selected;
+        if (root is not null && selected != root)
+        {
+            var navigation = new WrapPanel { Margin = new Thickness(0, 0, 0, 8) };
+            navigation.Children.Add(Button("Root node", () => SelectNode(root)));
+            var parent = Nodes(root).FirstOrDefault(value => value.Children.Contains(node));
+            if (parent is not null) navigation.Children.Add(Button("Parent node", () => SelectNode(parent)));
+            inspector.Children.Add(navigation);
+        }
+        inspector.Children.Add(new TextBlock { Text = node.Kind + " node", FontSize = 16, Margin = new Thickness(0, 0, 0, 16) });
+        if (OperatorToken(node) is { } op)
+        {
+            string[] choices = node.Kind == "unary" ? ["+", "-", "!", "~"] : node.Kind == "assignment" ? ["=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^="] : BinaryOperators;
+            var operators = new ComboBox { ItemsSource = choices, SelectedItem = op.Text, Margin = new Thickness(0, 0, 0, 8) };
+            inspector.Children.Add(new TextBlock { Text = "Operator", Margin = new Thickness(0, 0, 0, 6) });
+            AutomationProperties.SetName(operators, "Operator");
+            inspector.Children.Add(operators);
+            inspector.Children.Add(Button("Update operator", () => { if (operators.SelectedItem is string value) ChangeOperator(node, value); }));
+        }
+        if (node.Children.Count == 0)
+        {
+            string value = "";
+            bool literal = node.Kind != "interpolationText" && Expressions.TryLiteral(node, out value);
+            bool environment = node.Kind == "environment";
+            var input = new TextBox { Text = environment ? node.Text.Trim('%') : literal ? value : node.Text, Margin = new Thickness(0, 0, 0, 8) };
+            inspector.Children.Add(new TextBlock { Text = environment ? "Environment variable name" : node.Kind == "interpolationText" ? "Literal text segment" : literal ? "Text value" : "Value / identifier", Margin = new Thickness(0, 0, 0, 6) });
+            AutomationProperties.SetName(input, "Node value");
+            inspector.Children.Add(input);
+            inspector.Children.Add(Button("Update value", () => Replace(node, environment ? "%" + input.Text + "%" : literal ? Expressions.Quote(input.Text) : input.Text)));
+        }
+        var kinds = new ComboBox { ItemsSource = new[] { "Text", "Number", "Boolean", "Variable", "Environment variable", "Function or value", "Member", "Index", "Group", "Binary operator", "Unary operator", "Condition", "Array", "Assignment", "Statement", "For loop", "For each loop", "While loop", "Interpolation" }, SelectedIndex = 0, Margin = new Thickness(0, 15, 0, 8) };
+        inspector.Children.Add(new TextBlock { Text = "Replace this node with", Margin = new Thickness(0, 16, 0, 0) });
+        AutomationProperties.SetName(kinds, "Replacement node kind");
+        inspector.Children.Add(kinds);
+        inspector.Children.Add(Button("Create node…", () => CreateNode(node, (string)kinds.SelectedItem)));
+        if (node.Children.Count > 0)
+        {
+            inspector.Children.Add(new TextBlock { Text = "Ordered branches", FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 20, 0, 8) });
+            for (int i = 0; i < node.Children.Count; i++)
+            {
+                int index = i; var child = node.Children[i];
+                inspector.Children.Add(Button($"{BranchLabel(node, i)} · {Summary(child)}", () => SelectNode(child)));
+                if (i > 0) inspector.Children.Add(Button("↑ Swap with previous branch", () => Swap(node, index - 1, index)));
+                if (node.Kind is "call" or "array" or "statement") inspector.Children.Add(Button("Remove this branch", () => RemoveBranch(node, index)));
+            }
+        }
+        if (node.Kind is "call" or "array" or "statement") inspector.Children.Add(Button("+ Append ordered branch", () => AppendBranch(node)));
+        if (node.Kind == "interpolation")
+        {
+            inspector.Children.Add(Button("+ Append text segment", () => AppendInterpolation(node, " text")));
+            inspector.Children.Add(Button("+ Append expression segment", () => AppendInterpolation(node, "@(sel.path)")));
+        }
+    }
+    private void AppendInterpolation(ExpressionNode parent, string segment)
+    {
+        if (parent.Text.Length < 2 || parent.Text[^1] is not ('\'' or '`')) return;
+        Replace(parent, parent.Text[..^1] + segment + parent.Text[^1]);
+    }
+    private SyntaxToken? OperatorToken(ExpressionNode node)
+    {
+        if (node.Kind is not ("binary" or "assignment" or "unary") || node.Children.Count == 0) return null;
+        int start = node.Kind == "unary" ? node.Start : node.Children[0].Start + node.Children[0].Length;
+        int end = node.Kind == "unary" ? node.Children[0].Start : node.Children.Count > 1 ? node.Children[1].Start : start;
+        return tokens.FirstOrDefault(t => t.Start >= start && t.Start + t.Length <= end &&
+            (BinaryOperators.Contains(t.Text) || t.Text is "=" or "!" or "~" or "+=" or "-=" or "*=" or "/=" or "%=" or "&=" or "|=" or "^="));
+    }
+    private void ChangeOperator(ExpressionNode node, string value)
+    {
+        if (OperatorToken(node) is not { } token) return;
+        int start = token.Start - sourceOffset;
+        Change(expression[..start] + value + expression[(start + token.Length)..]);
+    }
+    private static string BranchLabel(ExpressionNode node, int index) => node.Kind switch
+    {
+        "if" or "ternary" => index switch { 0 => "Condition", 1 => "When true", 2 => "When false", _ => "Branch " + (index + 1) },
+        "for" => index switch { 0 => "Initialize", 1 => "Continue while", 2 => "Body", _ => "Branch " + (index + 1) },
+        "foreach" => index switch { 0 => "Loop variable", 1 => "Collection", 2 => "Body", _ => "Branch " + (index + 1) },
+        "binary" or "assignment" => index == 0 ? "Left operand" : "Right operand",
+        "unary" => "Operand", "statement" => "Step " + (index + 1), "array" => "Element " + (index + 1),
+        "member" => index == 0 ? "Object" : "Member name", "index" => index == 0 ? "Collection" : "Index",
+        "interpolation" => "Segment " + (index + 1), "interpolatedExpression" => "Embedded expression", "group" => "Grouped expression",
+        _ => "Argument " + (index + 1)
+    };
+
+    private void AppendBranch(ExpressionNode parent)
+    {
+        string text = parent.Text;
+        int close = text.Length - 1;
+        if (close < 0 || text[close] is not (')' or ']' or '}')) { status.Text = "The parent delimiter could not be located."; return; }
+        string separator = parent.Children.Count == 0 ? "" : parent.Kind == "statement" ? "\n" : ", ";
+        Replace(parent, text[..close] + separator + "null" + text[close..]);
+    }
+
+    private void RemoveBranch(ExpressionNode parent, int index)
+    {
+        var child = parent.Children[index];
+        int start = child.Start - parent.Start, end = start + child.Length;
+        if (parent.Kind != "statement" && parent.Children.Count > 1)
+        {
+            if (index < parent.Children.Count - 1) end = parent.Children[index + 1].Start - parent.Start;
+            else start = parent.Children[index - 1].Start + parent.Children[index - 1].Length - parent.Start;
+        }
+        if (start < 0 || end > parent.Text.Length) { status.Text = "The branch source mapping changed."; return; }
+        Replace(parent, parent.Text[..start] + parent.Text[end..]);
+    }
+    private void CreateNode(ExpressionNode target, string kind)
+    {
+        var window = Window.GetWindow(this)!;
+        string? result = kind switch
+        {
+            "Text" => CreateText(window),
+            "Number" => Dialogs.Input(window, "Number node", "Numeric value", "0"),
+            "Boolean" => "true",
+            "Variable" => Dialogs.Input(window, "Variable node", "Variable identifier", "value"),
+            "Environment variable" => "'%TEMP%'",
+            "Function or value" => BuildFunction(window),
+            "Member" => "sel.path",
+            "Index" => "values[0]",
+            "Group" => "(0)",
+            "Binary operator" => BuildBinary(window),
+            "Unary operator" => "!(false)",
+            "Condition" => "true ? \"yes\" : \"no\"",
+            "Array" => "[\"first\", \"second\"]",
+            "Assignment" => "value = 0",
+            "Statement" => "{ value = 0 value }",
+            "For loop" => "for(i = 0, i < 3, i)",
+            "For each loop" => "foreach($value, sel.paths, $value)",
+            "While loop" => "while(true)",
+            "Interpolation" => "'Selected: @sel.path'",
+            _ => null
+        };
+        if (result is not null)
+        {
+            if (target.Kind == "interpolationText")
+            {
+                string? literalText = kind == "Text" ? DecodeGeneratedLiteral(result) : null;
+                result = literalText is not null ? literalText : "@(" + result + ")";
+            }
+            Replace(target, result);
+        }
+    }
+    private string? DecodeGeneratedLiteral(string source)
+    {
+        var parsed = language.Parse("item(title=" + source + ")");
+        var expression = parsed.Nodes.FirstOrDefault()?.Properties
+            .FirstOrDefault(property => property.Name.Equals("title", StringComparison.OrdinalIgnoreCase))?.Expression;
+        return Expressions.TryLiteral(expression, out var value) ? value : null;
+    }
+    private static string? CreateText(Window window)
+    {
+        string? value = Dialogs.Input(window, "Text node", "Text value");
+        return value is null ? null : Expressions.Quote(value);
+    }
+    private string? BuildFunction(Window window)
+    {
+        if (language is not NativeLanguage native) return null;
+        using var catalogue = native.Capabilities();
+        if (!catalogue.RootElement.TryGetProperty("functions", out var functions)) return null;
+        var entries = functions.EnumerateArray().Where(f => f.TryGetProperty("name", out _)).ToArray();
+        const string named = "Named member or imported function…";
+        string? name = Dialogs.Choose(window, "Function or value", "Choose a runtime function or value", entries.Select(f => f.GetProperty("name").GetString()!).Append(named).ToArray());
+        if (name is null) return null;
+        if (name == named)
+        {
+            string? identifier = Dialogs.Input(window, "Named member", "Qualified identifier (for example loc.caption or image.custom)", "loc.caption");
+            if (identifier is null) return null;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(identifier, @"\A[$]?[A-Za-z_][A-Za-z_0-9]*(\.[A-Za-z_][A-Za-z_0-9]*)*\z"))
+            { status.Text = "Enter an identifier with optional dotted member names."; return null; }
+            string? shape = Dialogs.Choose(window, "Member shape", "Insert a value or a function call", ["Value", "Function call"]);
+            if (shape is null) return null;
+            if (shape == "Value") return identifier;
+            string? countText = Dialogs.Input(window, "Function arguments", "Number of ordered arguments (0–32)", "0");
+            return int.TryParse(countText, out int namedCount) && namedCount is >= 0 and <= 32 ? identifier + "(" + string.Join(", ", Enumerable.Repeat("null", namedCount)) + ")" : null;
+        }
+        var entry = entries.First(f => f.GetProperty("name").GetString() == name);
+        if ((!entry.TryGetProperty("arity", out _) || name is "for" or "foreach") && entry.TryGetProperty("editor", out var editor) && editor.TryGetProperty("insertTemplate", out var template))
+            return template.GetString();
+        int minimum = 0, maximum = 32;
+        int[]? allowed = null;
+        if (entry.TryGetProperty("arity", out var arity))
+        {
+            if (arity.TryGetProperty("min", out var min) && min.TryGetInt32(out int m)) minimum = m;
+            if (arity.TryGetProperty("max", out var max) && max.TryGetInt32(out int x)) maximum = Math.Min(32, x);
+            if (arity.TryGetProperty("allowed", out var counts)) allowed = counts.EnumerateArray().Select(v => v.GetInt32()).ToArray();
+        }
+        string range = allowed is null ? $"{minimum}–{maximum}" : string.Join(", ", allowed);
+        string? count = minimum == maximum ? minimum.ToString() : Dialogs.Input(window, "Function arguments", $"Number of ordered arguments ({range})", minimum.ToString());
+        return int.TryParse(count, out var n) && n >= minimum && n <= maximum && (allowed is null || allowed.Contains(n)) ? name + "(" + string.Join(", ", Enumerable.Repeat("null", n)) + ")" : null;
+    }
+    private static string? BuildBinary(Window window)
+    {
+        string? op = Dialogs.Input(window, "Binary operator", "Operator: + - * / % == != < <= > >= && || & | ^", "==");
+        return op is "+" or "-" or "*" or "/" or "%" or "==" or "!=" or "<" or "<=" or ">" or ">=" or "&&" or "||" or "&" or "|" or "^" ? "0 " + op + " 0" : null;
+    }
+    private void Replace(ExpressionNode node, string text)
+    {
+        if (root is null) return;
+        // An embedded expression's leading @ belongs to its interpolation boundary.
+        // If an edit consumes that marker, rebuild the wrapper around the edited body
+        // so replacing @sel in @sel.path cannot silently turn .path into literal text.
+        var wrapper = Nodes(root).Where(n => n.Kind == "interpolatedExpression" && n.Start <= node.Start && n.Start + n.Length >= node.Start + node.Length)
+            .OrderBy(n => n.Length).FirstOrDefault();
+        if (wrapper is not null && node.Start == wrapper.Start && wrapper.Text.StartsWith('@'))
+        {
+            string body = wrapper.Text[1..];
+            int replacedLength = node.Length - 1;
+            if (replacedLength < 0 || replacedLength > body.Length) { status.Text = "The interpolation source mapping changed."; return; }
+            text = "@(" + text.TrimStart('@') + body[replacedLength..] + ")";
+            node = wrapper;
+        }
+        else if (node.Kind == "environment" && !(text.StartsWith('%') && text.EndsWith('%')))
+            text = "@(" + text + ")";
+        int offset = node.Start - sourceOffset;
+        if (offset < 0 || offset + node.Length > expression.Length) { status.Text = "Source mapping changed. Reopen the expression."; return; }
+        Change(expression[..offset] + text + expression[(offset + node.Length)..]);
+    }
+    private static IEnumerable<ExpressionNode> Nodes(ExpressionNode node)
+    { yield return node; foreach (var child in node.Children) foreach (var descendant in Nodes(child)) yield return descendant; }
+    private void Swap(ExpressionNode parent, int first, int second)
+    {
+        if (root is null) return;
+        var a = parent.Children[first]; var b = parent.Children[second];
+        int startA = a.Start - sourceOffset, startB = b.Start - sourceOffset;
+        if (startA < 0 || startA + a.Length > startB || startB + b.Length > expression.Length) { status.Text = "These branches cannot be reordered without changing their parent structure."; return; }
+        Change(expression[..startA] + b.Text + expression[(startA + a.Length)..startB] + a.Text + expression[(startB + b.Length)..]);
+    }
+    private void Change(string next)
+    {
+        // Validate the draft in the declaration that owns it.  The synthetic
+        // item(title=...) wrapper used by standalone drafts cannot see the
+        // owning definition's grammar context, bindings, or surrounding
+        // syntax and could accept an edit that the real source rejects.
+        bool valid = TryParseExpression(next, out var parsed, out var parsedRoot, out _);
+        var errors = parsed.Diagnostics.Where(d => d.Severity == "error").ToArray();
+        if (!valid || parsedRoot is null || errors.Length > 0)
+        {
+            status.SetResourceReference(TextBlock.ForegroundProperty, "ErrorBrush");
+            status.Text = string.Join("\n", parsed.Diagnostics.Select(d => d.Code + ": " + d.Message));
+            if (status.Text.Length == 0) status.Text = "EXPRESSION_INVALID: The edited expression could not be mapped back to its owning declaration.";
+            return;
+        }
+        undo.Push(expression); redo.Clear(); expression = next; Parse();
+    }
+}

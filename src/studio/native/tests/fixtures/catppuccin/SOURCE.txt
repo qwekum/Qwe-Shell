@@ -1,0 +1,4 @@
+Source: https://github.com/catppuccin/nilesoft-shell
+Commit: 0a57dd7fb5f2989f125dd191c34db93e0626f39a
+Files: mocha/catppuccin-mocha-mauve.nss and latte/catppuccin-latte-mauve.nss
+License: ../LICENSE (MIT, Copyright (c) 2021 Catppuccin)

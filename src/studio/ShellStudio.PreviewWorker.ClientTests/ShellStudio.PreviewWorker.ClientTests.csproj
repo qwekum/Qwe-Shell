@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <AssemblyName>ShellStudio.PreviewWorker.ClientTests</AssemblyName>
+    <RootNamespace>ShellStudio.PreviewWorker.ClientTests</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../ShellStudio.Core/ShellStudio.Core.csproj" />
+    <ProjectReference Include="../ShellStudio.PreviewWorker.Fixture/ShellStudio.PreviewWorker.Fixture.csproj"
+                      ReferenceOutputAssembly="false" />
+    <Compile Include="../ShellStudio/PreviewWorkerClient.cs" Link="PreviewWorkerClient.cs" />
+    <Compile Include="../ShellStudio/PreviewReadBroker.cs" Link="PreviewReadBroker.cs" />
+  </ItemGroup>
+  <Target Name="CopyPreviewWorkerFixture" AfterTargets="Build">
+    <MSBuild Projects="../ShellStudio.PreviewWorker.Fixture/ShellStudio.PreviewWorker.Fixture.csproj" Targets="GetTargetPath"
+             Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="PreviewWorkerFixtureTarget" />
+    </MSBuild>
+    <PropertyGroup>
+      <PreviewWorkerFixtureDirectory>@(PreviewWorkerFixtureTarget->'%(RootDir)%(Directory)')</PreviewWorkerFixtureDirectory>
+    </PropertyGroup>
+    <ItemGroup>
+      <PreviewWorkerFixtureFiles Include="$(PreviewWorkerFixtureDirectory)\ShellStudio.PreviewWorker.Fixture.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(PreviewWorkerFixtureFiles)" DestinationFolder="$(OutputPath)"
+          SkipUnchangedFiles="true" Condition="@(PreviewWorkerFixtureFiles) != ''" />
+  </Target>
+</Project>

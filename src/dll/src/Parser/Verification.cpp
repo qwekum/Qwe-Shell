@@ -5,6 +5,131 @@ namespace Nilesoft
 {
 	namespace Shell
 	{
+		namespace
+		{
+			// The syntax host has no imported runtime symbol table.  Keep a root
+			// that is genuinely outside the built-in verifier inspectable so an
+			// imported definition can be reviewed without evaluation.  Known roots
+			// still enter verify_ident below, where argument counts and member
+			// shapes remain semantic diagnostics even in syntax-only mode.
+			bool IsKnownVerifyRoot(uint32_t id)
+			{
+				switch(id)
+				{
+					case IDENT_EVAL:
+					case IDENT_SEL:
+					case IDENT_SYS:
+					case IDENT_SYSTEM:
+					case IDENT_APP:
+					case IDENT_USER:
+					case IDENT_IO:
+					case IDENT_PATH:
+					case IDENT_STR:
+					case IDENT_MSG:
+					case IDENT_REG:
+					case IDENT_INI:
+					case IDENT_CLIPBOARD:
+					case IDENT_INPUT:
+					case IDENT_PACKAGE:
+					case IDENT_APPX:
+					case IDENT_UWP:
+					case IDENT_IMAGE:
+					case IDENT_ICON:
+					case IDENT_IMG:
+					case IDENT_SVG:
+					case IDENT_ID:
+					case IDENT_TITLE:
+					case IDENT_TIP:
+					case IDENT_CMD:
+					case IDENT_LAUNCH:
+					case IDENT_RUN:
+					case IDENT_EXEC:
+					case IDENT_SHELL:
+					case IDENT_THIS:
+					case IDENT_TYPE:
+					case IDENT_MODE:
+					case MENU_VIS:
+					case MENU_VISIBILITY:
+					case IDENT_SEP:
+					case IDENT_SEPARATOR:
+					case IDENT_POS:
+					case IDENT_KEY:
+					case IDENT_KEYS:
+					case IDENT_COLOR:
+					case IDENT_FONT:
+					case IDENT_VIEW:
+					case IDENT_THEME:
+					case IDENT_EFFECT:
+					case IDENT_WINDOW:
+					case IDENT_WND:
+					case IDENT_PROCESS:
+					case IDENT_COMMAND:
+					case IDENT_RANDOM:
+					case IDENT_REGEX:
+					case IDENT_INVOKE:
+					case IDENT_IF:
+					case IDENT_FOR:
+					case IDENT_FOREACH:
+					case IDENT_BREAK:
+					case IDENT_CONTINUE:
+					case IDENT_EQUAL:
+					case IDENT_GREATER:
+					case IDENT_LESS:
+					case IDENT_SHL:
+					case IDENT_SHR:
+					case IDENT_EQUALS:
+					case IDENT_CHAR:
+					case IDENT_PRINT:
+					case IDENT_QUOTE:
+					case IDENT_TOHEX:
+					case IDENT_LENGTH:
+					case IDENT_LEN:
+					case IDENT_TOINT:
+					case IDENT_TODOUBLE:
+					case IDENT_TOUINT:
+					case IDENT_TOFLOAT:
+					case IDENT_NOT:
+					case IDENT_NULL:
+					case IDENT_NIL:
+					case IDENT_TRUE:
+					case IDENT_YES:
+					case IDENT_OK:
+					case IDENT_FALSE:
+					case IDENT_NO:
+					case IDENT_DEFAULT:
+					case IDENT_AUTO:
+					case IDENT_BOOL:
+					case IDENT_NONE:
+					case IDENT_INHERIT:
+					case IDENT_PARENT:
+					case IDENT_BOTH:
+					case IDENT_TOP:
+					case IDENT_BOTTOM:
+					case IDENT_BEFORE:
+					case IDENT_AFTER:
+					case IDENT_HIDDEN:
+					case IDENT_REMOVE:
+					case IDENT_DISABLE:
+					case IDENT_DISABLED:
+					case IDENT_ENABLE:
+					case IDENT_ENABLED:
+					case IDENT_NORMAL:
+					case IDENT_SHOW:
+					case IDENT_VISIBLE:
+					case IDENT_MINIMIZED:
+					case IDENT_MAXIMIZED:
+					case IDENT_VIS_STATIC:
+					case IDENT_VIS_LABEL:
+					case IDENT_INDEXOF:
+					case IDENT_VAR:
+					case IDENT_LOC:
+						return true;
+					default:
+						return false;
+				}
+			}
+		}
+
 		ExpressionType Parser::make_error(TokenError tokenError, size_t column)
 		{
 			l->column = column;
@@ -216,7 +341,7 @@ namespace Nilesoft
 						return check(1, assignable);
 				}
 			}
-			
+
 			if(type == NativeMenuType::Menu)
 			{
 				switch(id[0])
@@ -261,7 +386,6 @@ namespace Nilesoft
 					case MENU_INVOKE:
 					case MENU_CHECKED:
 						return check(1, auto_signer);
-
 					case MENU_ARG:
 					case MENU_ARGUMENT:
 					case MENU_VERB:
@@ -322,7 +446,7 @@ namespace Nilesoft
 				case MENU_SEP:
 				case MENU_SEPARATOR:
 					return check(1, auto_signer);
-				
+
 				case MENU_VIS:
 				case MENU_VISIBILITY:
 				case MENU_POS:
@@ -350,6 +474,25 @@ namespace Nilesoft
 		ExpressionType Parser::verify_ident(const Ident &id, const size_t argc, bool hasdot)
 		{
 			if(id[0] == 0) return ExpressionType::None;
+			// Runtime imports provide names for MUID-style namespaces (titles and
+			// IDs) and user-defined values may occupy the same spelling as
+			// built-in namespaces.  Studio deliberately does not resolve imports,
+			// so an uncalled two-part reference can remain an unresolved value. Keep
+			// calls and deeper member chains on the normal verifier path so known
+			// arity and shape errors remain diagnostics.
+			if(m_syntaxOnly && id.length() == 2 && argc == 0)
+			{
+				switch(id[0])
+				{
+					case IDENT_ID:
+					case IDENT_TITLE:
+						return ExpressionType::Identifier;
+					default:
+						break;
+				}
+			}
+			if(m_syntaxOnly && !IsKnownVerifyRoot(id[0]))
+				return ExpressionType::Identifier;
 
 			const auto length = id.length();
 			/*auto result = [&](uint32_t index, bool condition = false)->ExpressionType
@@ -375,7 +518,7 @@ namespace Nilesoft
 
 			auto check = [&](bool condition, uint32_t index = 0)->ExpressionType
 			{
-				if(condition && (length == index + 1)) 
+				if(condition && (length == index + 1))
 					return ExpressionType::Identifier;
 				return make_error(TokenError::IdentifierArguments, id.Col(index));
 			};
@@ -478,7 +621,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc <= 1, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -496,6 +639,8 @@ namespace Nilesoft
 							return check(argc <= 1, 1);
 						case IDENT_TOFILE:
 							return check(argc <= 3, 1);
+						case IDENT_TOJSON:
+							return check(argc == 0, 1);
 						case IDENT_PARENT:
 						case IDENT_LOCATION:
 						{
@@ -515,7 +660,7 @@ namespace Nilesoft
 						}
 						case IDENT_INDEX:
 						case IDENT_I:
-							return check(argc >= 1 || argc <= 2, 1);
+							return check(argc >= 1 && argc <= 2, 1);
 						case IDENT_FILE:
 						{
 							switch(id[2])
@@ -531,7 +676,7 @@ namespace Nilesoft
 											return check(argc == 0, 3);
 										case IDENT_ZERO:
 											return check(argc == 0, 2);
-										default: 
+										default:
 											return error_at(3);
 									}
 								}
@@ -540,7 +685,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc <= 1, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -559,7 +704,7 @@ namespace Nilesoft
 									return check(argc <= 1, 2);
 								case IDENT_ZERO:
 									return check(argc <= 2, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -577,7 +722,7 @@ namespace Nilesoft
 									return check(argc <= 1, 2);
 								case IDENT_ZERO:
 									return check(argc <= 2, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -624,7 +769,7 @@ namespace Nilesoft
 
 						case IDENT_ZERO:
 							return check(argc <= 3);
-						default: 
+						default:
 							return error_at(1);
 					}
 				}
@@ -704,7 +849,7 @@ namespace Nilesoft
 									return check(argc == 0, 2);
 								case IDENT_ZERO:
 									return check(argc == 0, 1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -888,7 +1033,7 @@ namespace Nilesoft
 									return check(argc == 0 || argc == 1, 2);
 								case IDENT_ZERO:
 									return error_at(1);
-								default: 
+								default:
 									return error_at(2);
 							}
 						}
@@ -911,7 +1056,7 @@ namespace Nilesoft
 							return check(argc >= 1 && argc <= 2, 1);
 						case IDENT_ZERO:
 							return error_at(0);
-						default: 
+						default:
 							return error_at(1);
 					}
 				}
@@ -919,6 +1064,8 @@ namespace Nilesoft
 				{
 					switch(id[1])
 					{
+						case IDENT_EXT:
+							return check(argc == 1, 1);
 						case IDENT_ROOT:
 						case IDENT_NAME:
 						case IDENT_TITLE:
@@ -1168,7 +1315,7 @@ namespace Nilesoft
 						case IDENT_DELETE:
 							return check(argc == 1 || argc == 2, 1);
 						case IDENT_SET:
-							return check(argc >= 1 && argc <= 4, 1); 
+							return check(argc >= 1 && argc <= 4, 1);
 						case IDENT_KEYS:
 						case IDENT_VALUES:
 							return check(argc == 1, 1);
@@ -1205,7 +1352,7 @@ namespace Nilesoft
 							return check(argc == 0, 1);
 						case IDENT_SET:
 							return check(argc == 1, 1);
-							
+
 						case IDENT_ZERO:
 							return check(argc <= 1, 0);
 						default:
@@ -1234,7 +1381,6 @@ namespace Nilesoft
 						case IDENT_ID:
 						case IDENT_PATH:
 						case IDENT_NAME:
-						case IDENT_TITLE:
 						case IDENT_FAMILY:
 						case IDENT_RUN:
 						case IDENT_LAUNCH:
@@ -1324,13 +1470,13 @@ namespace Nilesoft
 				{
 					if(length == 1)
 						return error_at(0);
-					
+
 					if(length == 2 && argc > 0)
 						return check(argc == 0, 1);
 
 					if(length > 3)
 						return error_at(2);
-					
+
 					if(length == 3)
 					{
 						if(!id.equals({ IDENT_TITLE, IDENT_NAME, IDENT_STR, IDENT_ICON }))
@@ -1342,7 +1488,7 @@ namespace Nilesoft
 
 					if(auto uid = Initializer::get_muid(id[1]); uid)
 						return check(argc < 3, length - 1);
-					
+
 					return error_at(1);
 				}
 				case IDENT_TITLE:
@@ -1477,7 +1623,7 @@ namespace Nilesoft
 							IDENT_TYPE_COMPUTER,
 							IDENT_TYPE_TASKBAR,
 							IDENT_TYPE_BACK,
-							IDENT_TYPE_UNKNOWN, 
+							IDENT_TYPE_UNKNOWN,
 						});
 					}
 					else if((id[1] == IDENT_TYPE_BACK)  && (length == 3))
@@ -1612,7 +1758,7 @@ namespace Nilesoft
 							return check(argc == 1, 1);
 						else if(id[1] == IDENT_COLOR_LIGHT || id[1] == IDENT_COLOR_DARK ||
 								id[1] == IDENT_COLOR_LIGHTEN || id[1] == IDENT_COLOR_DARKEN ||
-								id[1] == IDENT_COLOR_ADJUST || 
+								id[1] == IDENT_COLOR_ADJUST ||
 								id[1] == IDENT_OPACITY)
 							return check(argc == 1 || argc == 2, 1);
 
@@ -1856,7 +2002,7 @@ namespace Nilesoft
 					return error_at(0);
 				}
 				case IDENT_IF:
-					return check(argc >= 1  || argc <= 3);
+					return check(argc >= 1 && argc <= 3);
 				case IDENT_FOR:
 				case IDENT_FOREACH:
 					return check(argc == 3, 0);
@@ -1961,7 +2107,7 @@ namespace Nilesoft
 					/*	for(; var && i < length; i++)
 							var = var->find(id[i]);
 					*/
-						if(var) 
+						if(var)
 						{
 							if(length > 1)
 							{
@@ -1973,9 +2119,9 @@ namespace Nilesoft
 										return ExpressionType::StringExt;
 								}*/
 							}
-							return ExpressionType::Variable; 
+							return ExpressionType::Variable;
 						}
-						
+
 						return error_at(--i);
 					}
 				}

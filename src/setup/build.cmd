@@ -1,30 +1,18 @@
 @echo off
+setlocal EnableExtensions
 
-echo build setup...
-echo.
-
-cd wix
-set arch=%~1
-set bin=..\..\bin
-
-if "%~1" == "x86" (
-	set arch=x86
-) else if "%~1" == "arm64" (
-	set arch=arm64
-) else (
-	set arch=x64
+set "arch=%~1"
+if "%arch%"=="" set "arch=x64"
+if /I not "%arch%"=="x64" if /I not "%arch%"=="x86" if /I not "%arch%"=="arm64" (
+    echo Unsupported architecture: %arch%
+    exit /b 2
 )
 
-echo %arch%
-
-if exist %bin%\setup-%arch%.msi del %bin%\setup-%arch%.msi
-
-echo WIX
-
-wix.exe --version
-echo.
-wix.exe build -o %bin%\setup-%arch%.msi setup.wxs -arch %arch%
-
-if exist %bin%\setup-%arch%.wixpdb del %bin%\setup-%arch%.wixpdb>nul
-echo.
-pause
+rem Studio publication and the pinned WiX package are produced by one
+rem repository-bounded build entry point. Non-x64 keeps a native-only build.
+if /I "%arch%"=="x64" (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\studio\build.ps1" -Architecture x64 -Configuration Release
+) else (
+    powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\studio\build.ps1" -Architecture %arch% -Configuration Release -SkipInstaller
+)
+exit /b %ERRORLEVEL%

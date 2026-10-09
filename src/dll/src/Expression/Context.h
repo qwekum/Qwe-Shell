@@ -1,4 +1,5 @@
 #pragma once
+#include "PreviewPolicy.h"
 namespace Nilesoft
 {
 	namespace Shell
@@ -144,6 +145,7 @@ namespace Nilesoft
 			struct CACHE* Cache = nullptr;
 
 			bool Runtime = true;
+			PreviewPolicy* Preview = nullptr;
 			bool Break = false;
 			bool Continue = false;
 			uint32_t invoked = 0;
@@ -151,7 +153,7 @@ namespace Nilesoft
 			Application *Application{};
 			Shell::Selections *Selections{};
 
-			struct 
+			struct
 			{
 				Scope *global{};
 				Scope *local{};
@@ -176,7 +178,7 @@ namespace Nilesoft
 				bool is_primary_monitor = true;
 			}helper;
 
-			struct 
+			struct
 			{
 				HWND owner{};
 				HWND active{};
@@ -203,7 +205,7 @@ namespace Nilesoft
 			template<typename T = uint32_t>
 			T eval_number(Expression *e, T default_value)
 			{
-				if(e) 
+				if(e)
 				{
 					Object obj = Eval(e).move();
 					if(obj.not_default())

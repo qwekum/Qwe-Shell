@@ -61,7 +61,7 @@ namespace Nilesoft
 		{
 			return Value;
 		}
-		
+
 		Object StatementExpression::Eval(Context *context)
 		{
 			Object _result;
@@ -70,7 +70,7 @@ namespace Nilesoft
 				_result.type(PrimitiveType::String);
 			else
 			{
-				try 
+				try
 				{
 					if(!HasReturn)
 					{
@@ -104,7 +104,7 @@ namespace Nilesoft
 						_result = str.move();
 					}
 				}
-				catch(...) 
+				catch(...)
 				{
 				}
 			}
@@ -126,6 +126,12 @@ namespace Nilesoft
 
 		Object AssignExpression::Eval(Context *context)
 		{
+			if(context && context->Preview && !context->Preview->allowAssignments)
+			{
+				context->Preview->Fail("PREVIEW_SIDE_EFFECT",
+					L"Assignment requires a request-owned variable scope.");
+				return nullptr;
+			}
 			Object obj = context->Eval(Right).move();
 			context->set_variable2(Id, this, obj.move());
 			return nullptr;
@@ -133,6 +139,12 @@ namespace Nilesoft
 
 		Object ForStatement::Eval(Context *context)
 		{
+			if(context && context->Preview && !context->Preview->allowAssignments)
+			{
+				context->Preview->Fail("PREVIEW_SIDE_EFFECT",
+					L"Loop evaluation requires request-owned variable state.");
+				return nullptr;
+			}
 			string body;
 
 			if(this->Init)
@@ -145,7 +157,11 @@ namespace Nilesoft
 				for(int i = context->Eval(var).move();
 					context->Eval(Condition).to_bool(); x++)
 				{
-					if(x > 1000) break;
+					if(x > 1000)
+					{
+						if(context->Preview) context->Preview->Fail("PREVIEW_LIMIT", L"The loop exceeded the native iteration limit.");
+						break;
+					}
 
 					if(Body1)
 					{

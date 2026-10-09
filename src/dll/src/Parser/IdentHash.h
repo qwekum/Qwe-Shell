@@ -152,7 +152,7 @@ namespace Nilesoft
 		constexpr auto IDENT_LINE = 0x7C9A15ADU;
 		constexpr auto IDENT_GLYPH = 0x0F842689U;
 		constexpr auto IDENT_SYMBOL = 0x1CEB4EFBU;
-		
+
 		constexpr auto IDENT_EVAL = 0x7C9674ADU;
 		constexpr auto IDENT_VIS = MENU_VIS;
 		constexpr auto IDENT_VISIBILITY = MENU_VISIBILITY;
@@ -179,7 +179,7 @@ namespace Nilesoft
 		constexpr auto IDENT_IS_TITLEBAR = 0x60467157U;
 		constexpr auto IDENT_IS_ICONTEXTMENU = 0xA5329703U;
 		constexpr auto IDENT_IS_CONTEXTMENUHANDLER = 0x49FA7698U;
-		
+
 		constexpr auto IDENT_IS_PRIMARY_MONITOR = 0x9E5789CBU;
 		constexpr auto IDENT_MONITOR = 0xD53A30CDU;
 		constexpr auto IDENT_IS_PRIMARY = 0x9D6852E4U;
@@ -215,7 +215,7 @@ namespace Nilesoft
 		constexpr auto IDENT_SUCCESS = 0xB04BF9FEU;
 		constexpr auto IDENT_WARNING = 0xB6A3487BU;
 		constexpr auto IDENT_DANGER = 0xF83C41D6U;
-		// 
+		//
 		constexpr auto IDENT_SELECT = 0x1B80E3C5U;
 		constexpr auto IDENT_SEL = 0x0B88A989U;
 		constexpr auto IDENT_APP = 0x0B885E66U;
@@ -320,7 +320,7 @@ namespace Nilesoft
 		constexpr auto IDENT_PADDING_BOTTOM = 0x7BC4407EU;
 		constexpr auto IDENT_PADDING_Y = 0x702D59A2U;
 		constexpr auto IDENT_PADDING_X = 0x702D59A1U;
-	
+
 		constexpr auto IDENT_MARGIN = 0x0D3CE183U;
 		constexpr auto IDENT_MARGIN_LEFT = 0xC0708E3BU;
 		constexpr auto IDENT_MARGIN_TOP = 0x3C229443U;
@@ -430,7 +430,7 @@ namespace Nilesoft
 		constexpr auto IDENT_VIEW_MEDIUM = 0x0D7DA046U;
 		constexpr auto IDENT_VIEW_LARGE = 0x0FD879F0U;
 		constexpr auto IDENT_VIEW_WIDE = 0x7CA01C8EU;
-		
+
 		constexpr auto IDENT_TYPES = 0x10765E5AU;
 		constexpr auto IDENT_DIRECTORIES = 0x9CCE41E2U;
 		constexpr auto IDENT_DIRS = 0x7C95B337U;//directories
@@ -505,6 +505,7 @@ namespace Nilesoft
 		//file attributes
 		constexpr auto IDENT_READONLY = 0xF952C623U;
 		constexpr auto IDENT_TOFILE = 0x1E87C948U;
+		constexpr auto IDENT_TOJSON = 0x1E8A25C2U;
 		constexpr auto IDENT_LNK = 0x0B888CEAU;
 		constexpr auto IDENT_LNK_TARGET = 0x1D90FD6CU;
 		constexpr auto IDENT_LNKTARGET = 0xDD2F0D11U;
@@ -650,7 +651,7 @@ namespace Nilesoft
 		constexpr auto IDENT_MSG_DEFBUTTON1 = 0x724D67A1U;
 		constexpr auto IDENT_MSG_DEFBUTTON2 = 0x724D67A2U;
 		constexpr auto IDENT_MSG_DEFBUTTON3 = 0x724D67A3U;
-		
+
 		/*
 		MB_RIGHT
 		MB_RTLREADING
@@ -659,7 +660,7 @@ namespace Nilesoft
 		MB_DEFBUTTON1
 		MB_DEFBUTTON2
 		MB_DEFBUTTON3
-		*/ 
+		*/
 		//
 		// reg
 		constexpr auto IDENT_REG = 0x0B88A543U;
@@ -788,7 +789,7 @@ namespace Nilesoft
 		constexpr auto IDENT_PRIVILEGES__TRUSTEDINSTALLER = 0xF5E06557U;
 		constexpr auto IDENT_ID_REMOVE = 0x192C7473U;
 		constexpr auto IDENT_ID_ACCOUNT = 0x1CBDB112U;
-		
+
 		constexpr auto IDENT_ID_SEND_FEEDBACK = 0xF4ABBE33U;
 		constexpr auto IDENT_CLIPBOARD = 0x4912A9B5U;
 		constexpr auto IDENT_IS_EMPTY = 0xDC1854CFU;
@@ -875,7 +876,7 @@ namespace Nilesoft
 		constexpr auto IDENT_KEY_HOME = 0x7C97FD8EU;
 		constexpr auto IDENT_KEY_INSERT = 0x04D4029AU;
 		constexpr auto IDENT_KEY_LCONTROL = 0xF7334C72U;
-		
+
 		constexpr auto IDENT_KEY_LWIN = 0x7C9A509FU;
 		constexpr auto IDENT_KEY_NEXT = 0x7C9B1EC4U;
 		constexpr auto IDENT_KEY_PAUSE = 0x1020EA43U;

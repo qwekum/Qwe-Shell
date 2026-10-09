@@ -593,7 +593,14 @@ namespace Nilesoft
 		class Initializer
 		{
 		private:
-			uintptr_t _last_write_time{};
+			uint64_t _last_write_time{};
+			std::wstring _runtime_generation;
+			std::wstring _runtime_config_path;
+			bool _config_state_initialized = false;
+			// A successful reload swaps in a complete cache.  Retain replaced
+			// caches until no context-menu instance is active so an Explorer menu
+			// already holding the previous cache cannot observe freed state.
+			std::vector<CACHE *> _retired_caches;
 
 		public:
 			struct {
@@ -622,6 +629,8 @@ namespace Nilesoft
 			bool init();
 			// Clean up resources allocated during initialization.
 			bool uninit();
+			void collect_retired_caches();
+			std::wstring runtime_generation() const { return _runtime_generation; }
 
 			//reloadOnChange
 			//determine

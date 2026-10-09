@@ -12,11 +12,219 @@ namespace Nilesoft
 	{
 		extern Logger &_log = Logger::Instance();
 
+		class Parser::StudioNodeGuard final
+		{
+			Parser* owner_ = nullptr;
+			bool active_ = false;
+
+		public:
+			StudioNodeGuard(Parser& owner, std::string kind, std::string name, std::size_t start)
+				: owner_(&owner), active_(owner.studio_begin_node(std::move(kind), std::move(name), start))
+			{
+			}
+
+			~StudioNodeGuard()
+			{
+				Finish();
+			}
+
+			StudioNodeGuard(const StudioNodeGuard&) = delete;
+			StudioNodeGuard& operator=(const StudioNodeGuard&) = delete;
+
+			explicit operator bool() const noexcept { return active_; }
+
+			void SetExpression(const Expression* expression)
+			{
+				if(active_) owner_->studio_set_node_expression(expression);
+			}
+
+			void Finish()
+			{
+				if(active_)
+				{
+					owner_->studio_finish_node();
+					active_ = false;
+				}
+			}
+		};
+
+		bool Parser::studio_source_active() const
+		{
+			if(!m_syntaxOnly || !l) return false;
+			const auto root = m_syntaxPath.empty() ? L"<studio>" : m_syntaxPath.c_str();
+			return l->path.equals(root);
+		}
+
+		std::size_t Parser::studio_end_position() const
+		{
+			if(!l) return 0;
+			if(m_triviaLexer == l && m_triviaEnd == l->index)
+				return m_triviaStart;
+			return l->index;
+		}
+
+		std::string Parser::studio_source_text(std::size_t start, std::size_t end) const
+		{
+			if(!l || !l->buffer || start > l->length) return {};
+			end = (std::min)(end, l->length);
+			if(end < start) return {};
+			return UTF8::Utf16ToUtf8(l->buffer + start, end - start);
+		}
+
+		bool Parser::studio_begin_node(std::string kind, std::string name, std::size_t start)
+		{
+			if(!studio_source_active()) return false;
+			if(m_studioNodeStack.size() >= StudioLanguage::FrontendLimits::MaxRecursionDepth)
+			{
+				if(!m_studioEmissionLimited)
+				{
+					m_studioEmissionLimited = true;
+					StudioLanguage::Diagnostic diagnostic;
+					diagnostic.code = "LANG_LIMIT";
+					diagnostic.message = "The native declaration nesting depth exceeds the language service limits.";
+					diagnostic.severity = "error";
+					diagnostic.start = static_cast<int>((std::min)(start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+					diagnostic.length = 1;
+					diagnostic.remedy = "Reduce the declaration nesting depth.";
+					m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+				}
+				error(TokenError::Unknown);
+				return false;
+			}
+			StudioLanguage::Node node;
+			node.id = "native-node-" + std::to_string(++m_studioNodeId);
+			node.kind = std::move(kind);
+			node.name = std::move(name);
+			node.start = static_cast<int>((std::min)(start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			m_studioNodeStack.push_back(std::move(node));
+			return true;
+		}
+
+		void Parser::studio_finish_node()
+		{
+			if(m_studioNodeStack.empty()) return;
+			auto node = std::move(m_studioNodeStack.back());
+			m_studioNodeStack.pop_back();
+			const auto end = (std::max)(static_cast<std::size_t>(node.start), studio_end_position());
+			node.length = static_cast<int>((std::min)(end - static_cast<std::size_t>(node.start), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			if(m_studioNodeStack.empty()) m_studioSyntax.nodes.push_back(std::move(node));
+			else m_studioNodeStack.back().children.push_back(std::move(node));
+		}
+
+		bool Parser::enter_expression_depth()
+		{
+			if(m_expressionDepth >= StudioLanguage::FrontendLimits::MaxRecursionDepth)
+			{
+				if(!m_expressionDepthLimited)
+				{
+					m_expressionDepthLimited = true;
+					StudioLanguage::Diagnostic diagnostic;
+					diagnostic.code = "LANG_LIMIT";
+					diagnostic.message = "The native expression nesting depth exceeds the language service limits.";
+					diagnostic.severity = "error";
+					diagnostic.start = static_cast<int>((std::min)(l ? l->index : 0, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+					diagnostic.length = l && l->index < l->length ? 1 : 0;
+					diagnostic.remedy = "Reduce the expression nesting depth.";
+					m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+				}
+				if(context.Preview) context.Preview->Fail("PREVIEW_LIMIT", L"The native expression nesting depth exceeds the preview limit.");
+				if(!m_error)
+				{
+					m_error = true;
+					error_code = TokenError::Unknown;
+				}
+				return false;
+			}
+			++m_expressionDepth;
+			return true;
+		}
+
+		void Parser::leave_expression_depth()
+		{
+			if(m_expressionDepth > 0) --m_expressionDepth;
+		}
+
+		void Parser::studio_set_property_insert(std::size_t position)
+		{
+			if(!m_studioNodeStack.empty() && m_studioNodeStack.back().propertyInsert < 0)
+				m_studioNodeStack.back().propertyInsert = static_cast<int>((std::min)(position, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+		}
+
+		void Parser::studio_set_child_insert(std::size_t position)
+		{
+			if(!m_studioNodeStack.empty() && m_studioNodeStack.back().childInsert < 0)
+				m_studioNodeStack.back().childInsert = static_cast<int>((std::min)(position, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+		}
+
+		void Parser::studio_set_node_expression(const Expression* expression)
+		{
+			if(!expression || m_studioNodeStack.empty() || !l || !l->buffer) return;
+			const auto projected = StudioLanguage::ProjectNativeExpression(expression,
+				std::wstring_view(l->buffer, l->length), ExpressionSources);
+			if(!projected.id.empty())
+			{
+				m_studioNodeStack.back().hasExpression = true;
+				m_studioNodeStack.back().expression = projected;
+			}
+		}
+
+		void Parser::studio_add_property(std::size_t start, std::size_t name_end,
+			std::size_t value_start, std::size_t end, const Expression* expression)
+		{
+			if(!studio_source_active() || m_studioNodeStack.empty()) return;
+			// Property parsers call skip() before looking for the next property or
+			// closing delimiter.  That advances the lexer over source trivia, but
+			// the trivia belongs outside the property's editable value.  Trim the
+			// lexer-reported end here so replacing a value cannot remove the space
+			// (or comment) that separates it from the next flag/property.
+			end = studio_end_position();
+			if(m_studioNodeStack.back().properties.size() >= StudioLanguage::FrontendLimits::MaxProperties)
+			{
+				if(!m_studioEmissionLimited)
+				{
+					m_studioEmissionLimited = true;
+					StudioLanguage::Diagnostic diagnostic;
+					diagnostic.code = "LANG_LIMIT";
+					diagnostic.message = "The native property count exceeds the language service limits.";
+					diagnostic.severity = "error";
+					diagnostic.start = static_cast<int>((std::min)(start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+					diagnostic.length = 1;
+					m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+				}
+				return;
+			}
+			end = (std::max)(end, start);
+			name_end = (std::max)(name_end, start);
+			value_start = (std::max)(value_start, name_end);
+			// A bare flag has no value.  Its parser cursor may already have
+			// advanced over the separating trivia to the next property, but the
+			// zero-length value span must still belong to this property's span.
+			value_start = (std::min)(value_start, end);
+			StudioLanguage::Property property;
+			property.name = studio_source_text(start, name_end);
+			property.start = static_cast<int>((std::min)(start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			property.length = static_cast<int>((std::min)(end - start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			property.valueStart = static_cast<int>((std::min)(value_start, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			property.valueLength = static_cast<int>((std::min)(end >= value_start ? end - value_start : 0, static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+			if(expression && l->buffer)
+			{
+				property.expression = StudioLanguage::ProjectNativeExpression(expression,
+					std::wstring_view(l->buffer, l->length), ExpressionSources);
+				property.hasExpression = !property.expression.id.empty();
+			}
+			m_studioNodeStack.back().properties.push_back(std::move(property));
+		}
+
 		Parser::Parser()
+			: Parser(Initializer::instance ? Initializer::instance->cache : nullptr)
+		{
+		}
+
+		Parser::Parser(CACHE *target_cache)
 		{
 			context.Application = &Initializer::instance->application;
 
-			context.Cache = Initializer::instance->cache;
+			context.Cache = target_cache ? target_cache : Initializer::instance->cache;
 			context.variables.global = &context.Cache->variables.global;
 			context.variables.runtime = &context.Cache->variables.runtime;
 			context.Selections = nullptr;
@@ -57,7 +265,7 @@ namespace Nilesoft
 
 			_imports.emplace_back(new Lexer);
 			l = _imports.front().get();
-			
+
 			if(!l->load_File(m_path.c_str()) || l->length < 5)
 			{
 				if(HasError())
@@ -65,6 +273,136 @@ namespace Nilesoft
 					error(l->length < 5 ? TokenError::InvalidConfigFile : l->error, m_path.c_str());
 				}
 			}
+		}
+
+		Parser::Parser(SyntaxInput input)
+			: m_syntaxSource(input.source),
+			  m_syntaxPath(input.path),
+			  m_ownedCache(std::make_unique<CACHE>()),
+			  m_syntaxOnly(true),
+			  m_syntaxLocalization(input.localization)
+		{
+			// Syntax parsing gets an isolated context.  It can build the same
+			// native expression/menu objects as the runtime parser, but it never
+			// observes or mutates Initializer state.
+			context.Application = &m_syntaxApplication;
+			context.Cache = m_ownedCache.get();
+			context.variables.global = &context.Cache->variables.global;
+			context.variables.runtime = &context.Cache->variables.runtime;
+			context.Selections = nullptr;
+			context.Runtime = false;
+
+			m_syntaxApplication.Config = m_syntaxPath.empty() ? L"<studio>" : m_syntaxPath;
+			m_syntaxApplication.ConfigPortable = m_syntaxApplication.Config;
+			m_path = m_syntaxApplication.Config;
+
+			_imports.emplace_back(new Lexer);
+			l = _imports.front().get();
+			const wchar_t *source = m_syntaxSource.empty() ? L"" : m_syntaxSource.c_str();
+			const wchar_t *path = m_syntaxPath.empty() ? L"<studio>" : m_syntaxPath.c_str();
+			if(!l->load_buffer(source, m_syntaxSource.length(), path))
+				error(l->error == TokenError::None ? TokenError::InvalidFile : l->error,
+					  m_syntaxApplication.Config.c_str());
+		}
+
+		Parser::Parser(PreviewInput input) : Parser(input.syntax)
+		{
+			m_preview = true;
+			m_previewImport = std::move(input.import);
+			m_previewQuery = std::move(input.query);
+			context.Preview = input.policy;
+		}
+
+		void Parser::preview_query_boundary()
+		{
+			if(m_previewQuery && m_previewQuery(std::wstring_view(l->path.c_str(), l->path.length()), l->index))
+				throw PreviewQueryComplete{};
+		}
+
+		void Parser::record_expression_source(const Expression* expression, std::size_t start)
+		{
+			if(m_syntaxOnly && expression)
+			{
+				const auto end = m_triviaLexer == l && m_triviaEnd == l->index ? m_triviaStart : l->index;
+				ExpressionSources[expression] = {std::wstring(l->path.c_str(), l->path.length()), start, (std::max)(start, end) - start};
+			}
+		}
+
+		std::unique_ptr<Expression> Parser::ParseExpression(std::wstring_view source)
+		{
+			if(!m_syntaxOnly || source.size() > 4u * 1024u * 1024u) return {};
+			StudioLanguage::Frontend limits(source);
+			const auto shape = limits.Parse();
+			if(std::any_of(shape.diagnostics.begin(), shape.diagnostics.end(),
+				[](const auto& d) { return d.code == "LANG_LIMIT"; }))
+			{
+				if(context.Preview) context.Preview->Fail("PREVIEW_LIMIT", L"The expression exceeds the native structural limit.");
+				return {};
+			}
+			Lexer expressionLexer;
+			if(!expressionLexer.load_buffer(source.data(), source.size(), L"<expression>")) return {};
+			auto previous = l;
+			l = &expressionLexer;
+			try
+			{
+				skip();
+				std::unique_ptr<Expression> expression(parse_root_expression());
+				skip();
+				if(!l->eof) error(TokenError::ExpressionExpected);
+				l = previous;
+				return expression;
+			}
+			catch(...)
+			{
+				l = previous;
+				if(context.Preview) context.Preview->Fail("PREVIEW_SYNTAX", L"The native parser rejected this expression.");
+				return {};
+			}
+		}
+
+		void Parser::capture_expression_syntax(const Expression* expression)
+		{
+			if(!m_syntaxOnly || !expression || !l || !l->buffer) return;
+			auto found = ExpressionSources.find(expression);
+			if(found == ExpressionSources.end()) return;
+			m_nativeExpressions[{found->second.file, found->second.start}] =
+				StudioLanguage::ProjectNativeExpression(expression, std::wstring_view(l->buffer, l->length), ExpressionSources);
+		}
+
+		void Parser::project_studio_expressions()
+		{
+			if(!m_syntaxOnly) return;
+			auto project = [&](StudioLanguage::ExpressionNode& expression)
+			{
+				auto found = m_nativeExpressions.find({m_syntaxPath, static_cast<std::size_t>(expression.start)});
+				if(found != m_nativeExpressions.end()) expression = found->second;
+			};
+			std::function<void(std::vector<StudioLanguage::Node>&)> visit = [&](auto& nodes)
+			{
+				for(auto& node : nodes)
+				{
+					if(node.hasExpression) project(node.expression);
+					for(auto& property : node.properties) if(property.hasExpression) project(property.expression);
+					visit(node.children);
+				}
+			};
+			visit(m_studioSyntax.nodes);
+		}
+
+		Scope* Parser::ScopeAt(std::wstring_view path, std::size_t position)
+		{
+			Scope* found = &context.Cache->variables.global;
+			std::function<void(NativeMenu*)> visit = [&](NativeMenu* menu)
+			{
+				if(menu->source_end && menu->source_file.equals(std::wstring(path).c_str()))
+				{
+					const auto start = std::wcstoull(menu->source_node_id.c_str() + 1, nullptr, 10);
+					if(position >= start && position <= menu->source_end) found = &menu->variables;
+				}
+				for(auto child : menu->items) visit(child);
+			};
+			visit(&context.Cache->dynamic);
+			return found;
 		}
 
 		Parser::~Parser() { }
@@ -82,12 +420,102 @@ namespace Nilesoft
 			return error_code;
 		}
 
+		const StudioLanguage::Document &Parser::StudioSyntax() const
+		{
+			return m_studioSyntax;
+		}
+
+		void Parser::refresh_studio_syntax()
+		{
+			m_studioNodeStack.clear();
+			m_nativeExpressions.clear();
+			m_studioEmissionLimited = false;
+			m_studioNodeId = 0;
+			m_expressionDepth = 0;
+			m_expressionDepthLimited = false;
+			m_syntaxDiagnosticAdded = false;
+			if(m_syntaxOnly)
+			{
+				StudioLanguage::Frontend frontend(
+					std::wstring_view(m_syntaxSource.data(), m_syntaxSource.length()));
+				m_studioSyntax = frontend.Tokenize();
+				return;
+			}
+
+			if(l && l->buffer && l->length > 0)
+			{
+				StudioLanguage::Frontend frontend(
+					std::wstring_view(l->buffer, l->length));
+				m_studioSyntax = frontend.Parse();
+			}
+			else
+			{
+				m_studioSyntax = {};
+			}
+		}
+
+		void Parser::append_studio_diagnostic()
+		{
+			if(!m_syntaxOnly || !m_error || m_syntaxDiagnosticAdded)
+				return;
+			if(m_expressionDepthLimited)
+			{
+				m_syntaxDiagnosticAdded = true;
+				return;
+			}
+
+			m_syntaxDiagnosticAdded = true;
+			const auto start = l ? (std::min)(l->index, m_syntaxSource.length()) : 0;
+			const auto line = l ? l->line : 1;
+			const auto column = l ? l->column : 1;
+			const auto numeric_error = static_cast<unsigned>(error_code);
+			StudioLanguage::Diagnostic diagnostic;
+			diagnostic.code = "PARSER_" + std::to_string(numeric_error);
+			diagnostic.message = "The runtime parser rejected this configuration (error " +
+				std::to_string(numeric_error) + ").";
+			diagnostic.severity = "error";
+			diagnostic.start = static_cast<int>(start);
+			diagnostic.length = start < m_syntaxSource.length() ? 1 : 0;
+			diagnostic.remedy = "Correct the configuration syntax before applying it.";
+			m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+
+			// Keep the location visible in the native object for callers that inspect
+			// Parser directly; the JSON protocol carries UTF-16 start/length while
+			// line/column remain available through Parser::Line/Column.
+			(void)line;
+			(void)column;
+		}
+
+		void Parser::set_source_identity(NativeMenu *menu, size_t source_start)
+		{
+			if(!menu || !l)
+				return;
+
+			menu->source_file = l->path;
+			menu->source_node_id = L"n";
+			menu->source_node_id += std::to_wstring(source_start);
+			menu->source_hash = l->source_hash;
+			// The legacy native parser retains the imported file and local span,
+			// but does not retain the import-site occurrence identity.  Mark that
+			// fact at construction time so capture cannot publish an ambiguous,
+			// edit-looking reference.  Root declarations remain fully identifiable.
+			menu->source_occurrence_unavailable = _imports.size() >= 2;
+		}
+
 		bool Parser::error(TokenError tokenError)
 		{
 			if(!m_error)
 			{
 				error_code = tokenError;
 				m_error = true;
+			}
+
+			if(m_syntaxOnly)
+			{
+				const auto line = l ? l->line : 0;
+				const auto column = l ? l->column : 0;
+				const string path = l ? l->path : m_syntaxApplication.Config;
+				throw ParserException(tokenError, line, column, path, false);
 			}
 
 			bool log = true;
@@ -104,6 +532,9 @@ namespace Nilesoft
 			{
 				error_code = tokenError;
 				m_error = true;
+
+				if(m_syntaxOnly)
+					return false;
 
 				auto le = &Initializer::LastError;
 				if(le->code != TokenError::None && (le->code == error_code && le->line == l->line && le->col == l->column))
@@ -154,7 +585,7 @@ namespace Nilesoft
 
 			auto single = (l->tok == L'/' && l->peek == L'/');	// start single-line comment
 			auto multi = (l->tok == L'/' && l->peek == L'*');	// start multi-line comment
-					
+
 			if(single)
 			{
 				if(!singleLineComment) return false;
@@ -195,9 +626,18 @@ namespace Nilesoft
 
 		bool Parser::skip(bool singleLineComment, bool eat_whitespace)
 		{
+			const auto triviaStart = l->index;
+			auto rememberTrivia = [&]()
+			{
+				if(m_syntaxOnly && l->index > triviaStart)
+				{
+					if(m_triviaLexer != l || m_triviaEnd != triviaStart) m_triviaStart = triviaStart;
+					m_triviaLexer = l; m_triviaEnd = l->index;
+				}
+			};
 			for(; ;)
 			{
-				if(l->eof) return false;
+				if(l->eof) { rememberTrivia(); return false; }
 				if(l->is_space() && eat_whitespace) l->next();
 				else if(l->tok == L'/' && l->is({ L'/', L'*' }, 1))
 				{
@@ -209,6 +649,7 @@ namespace Nilesoft
 					break;
 				}
 			}
+			rememberTrivia();
 			return true;
 		}
 
@@ -370,6 +811,16 @@ namespace Nilesoft
 
 				if(ret)
 				{
+					if(m_syntaxOnly)
+					{
+						// Preserve the source spelling in the isolated parser.  The
+						// runtime path below is the only path allowed to expand
+						// process environment variables.
+						value.append(percent);
+						value = (percent + value).move();
+						return true;
+					}
+
 					string var = Environment::Variable(value).move();
 					if(!var.empty())
 					{
@@ -398,12 +849,15 @@ namespace Nilesoft
 
 		void Parser::parse_menu(NativeMenu *menu, bool imported)
 		{
+			struct RestoreScope { Context& context; Scope* old; ~RestoreScope() { context.variables.local = old; } } restore{context, context.variables.local};
+			if(m_preview) context.variables.local = &menu->variables;
 			if(!imported)
 				expect_openCurly();
 
 			while(true)
 			{
 				skip();
+				preview_query_boundary();
 
 				if(l->eof || l->tok == L'}')
 					break;
@@ -416,11 +870,12 @@ namespace Nilesoft
 				if(parse_image())
 					continue;
 
+				const auto source_start = l->index;
 				auto type = parse_ident(false);
-				
+
 				if(type == CONFIG_IMPORT)
 				{
-					auto ret = load_import(l->line, l->column, true, false);
+					auto ret = load_import(l->line, l->column, true, false, source_start);
 					if(ret > 0)
 					{
 						skip();
@@ -433,11 +888,12 @@ namespace Nilesoft
 				}
 				else if(type == CONFIG_MODIFY || type == IDENT_REMOVE)
 				{
-					parse_modify_items(type);
+					parse_modify_items(type, source_start);
 					continue;
 				}
 
 				std::unique_ptr<NativeMenu> sub(new NativeMenu(menu));
+				set_source_identity(sub.get(), source_start);
 				if(parse_menu_item(sub.get(), type))
 				{
 					menu->items.push_back(sub.release());
@@ -453,6 +909,12 @@ namespace Nilesoft
 
 		bool Parser::parse_menu_item(NativeMenu *menu, uint32_t type)
 		{
+			struct RecordEnd { NativeMenu* menu; Lexer* lexer; ~RecordEnd() { menu->source_end = lexer->index; } } record{menu, l};
+			const auto source_start = menu && menu->source_node_id.length() > 1
+				? std::wcstoull(menu->source_node_id.c_str() + 1, nullptr, 10) : l->index;
+			const auto kind = type == MENU_TYPE_MENU ? "menu" : type == MENU_TYPE_ITEM ? "item" :
+				(type == MENU_TYPE_SEP || type == MENU_TYPE_SEPARATOR) ? "separator" : "";
+			StudioNodeGuard studio_node(*this, kind, kind, source_start);
 			switch(type)
 			{
 				case MENU_TYPE_MENU:
@@ -481,7 +943,7 @@ namespace Nilesoft
 			if(!menu->is_separator())
 			{
 				error_if(menu->properties <= 0, TokenError::PropertyExpected, l->column - 1);
-				
+
 				if(!menu->title && !menu->image.defined)
 					error(TokenError::PropertyTitleOrImageExpected, col_after_open_paren);
 
@@ -516,12 +978,19 @@ namespace Nilesoft
 			return true;
 		}
 
-		void Parser::parse_modify_items(uint32_t action)
+		void Parser::parse_modify_items(uint32_t action, std::size_t source_start)
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
+			if(source_start == static_cast<std::size_t>(-1)) source_start = l->index;
+			const auto kind = action == IDENT_REMOVE ? "remove" : "modify";
+			StudioNodeGuard studio_node(*this, kind, kind, source_start);
 			std::unique_ptr<NativeMenu> item(new NativeMenu(true));
+			set_source_identity(item.get(), source_start);
 			if(eat().parse_modify_properties(item.get(), action))
+			{
+				item->source_end = l ? l->index : source_start;
 				cache->statics.push_back(item.release());
+			}
 		}
 
 		struct SETTING
@@ -562,7 +1031,7 @@ namespace Nilesoft
 				return;
 
 			auto has_bracket = eat().l->next_is(L'{');
-			
+
 			if(!has_bracket && !l->is_assign())
 			{
 				if(l->eof && imported)
@@ -605,7 +1074,7 @@ namespace Nilesoft
 
 		void Parser::parse_settings(SETTING *setting, const Ident &id, bool imported)
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
 
 			if(!setting)
 				return;
@@ -620,7 +1089,7 @@ namespace Nilesoft
 				_ident = id;
 			else if(!parse_ident(_ident, true))
 				return;
-			
+
 			skip();
 
 			col = l->column;
@@ -642,7 +1111,7 @@ namespace Nilesoft
 				l->next();
 				has_bracket = true;
 			}
-			
+
 			while(true)
 			{
 				skip();
@@ -666,10 +1135,10 @@ namespace Nilesoft
 
 					if(l->eof && imported)
 						break;
-					
+
 					goto error_undefined;
 				}
-				
+
 				if(ident[0] == IDENT_IMPORT)
 				{
 					if(ident.length() > 1)
@@ -700,6 +1169,8 @@ namespace Nilesoft
 
 		void Parser::parse_theme()
 		{
+			const auto source_start = l ? l->index : 0;
+			StudioNodeGuard studio_node(*this, "theme", "theme", source_start);
 			auto st = &context.Cache->settings.theme;
 
 			SETTING _item = { IDENT_ITEM, nullptr, {
@@ -896,6 +1367,8 @@ namespace Nilesoft
 
 		void Parser::parse_settings()
 		{
+			const auto source_start = l ? l->index : 0;
+			StudioNodeGuard studio_node(*this, "settings", "settings", source_start);
 			auto sets = &context.Cache->settings;
 
 			SETTING _modify = { IDENT_MODIFY, &sets->modify_items.enabled, {
@@ -970,7 +1443,7 @@ namespace Nilesoft
 		{
 			prevCol = l->column - 1;
 			Hash h;
-			
+
 			auto isq = l->is_quote();
 			wchar_t c = 0;
 
@@ -979,7 +1452,7 @@ namespace Nilesoft
 				return !std::iswpunct(c) and !std::iswcntrl(c) and !iswblank(c);
 			};
 
-			if(isq) 
+			if(isq)
 			{
 				bool last_punct = false;
 				auto q = l->tok;
@@ -1032,6 +1505,7 @@ namespace Nilesoft
 		//predefined constant variable
 		bool Parser::parse_variable(Scope *variables, bool has_sign)
 		{
+			const auto source_start = l ? l->index : 0;
 			skip();
 
 			if(has_sign)
@@ -1047,24 +1521,37 @@ namespace Nilesoft
 			error_if(!l->is_ident(0), TokenError::VariableExpected, prevCol);
 			Ident id;
 			id.push_back(parse_ident(true));
+			const auto name_end = l->index;
+			// Localization files use the same assignment grammar as the runtime's
+			// `loc` scope, but their declarations are labels rather than ordinary
+			// configuration variables.  Emit the role-specific `setting` node so
+			// source consumers can build the label table without re-parsing the
+			// document or guessing from the file path.
+			const auto node_kind = (&context.Cache->variables.loc == variables)
+				? "setting" : "variable";
+			StudioNodeGuard studio_node(*this, node_kind,
+				studio_source_text(source_start, name_end), source_start);
 			prevCol = l->column;
 			expect_assign(true);
 			prevCol = l->column;
-			
-			variables->set(id, parse_expression());
+
+			std::unique_ptr<Expression> expression(parse_expression());
+			studio_node.SetExpression(expression.get());
+			variables->set(id, expression.release());
 
 			return true;
 		}
 
 		bool Parser::parse_image()
 		{
-			auto cache = Initializer::instance->cache;
+			auto cache = context.Cache;
+			const auto source_start = l ? l->index : 0;
 
 			skip();
 
 			if(l->tok != L'@')
 				return false;
-			
+
 			l->next(); // skip @
 			skip();
 
@@ -1080,7 +1567,7 @@ namespace Nilesoft
 					ids.push_back(ident);
 				}
 				skip();
-				if(l->next_is(L',')) 
+				if(l->next_is(L','))
 				{
 					skip();
 					if(l->tok == L'@')
@@ -1097,16 +1584,21 @@ namespace Nilesoft
 				return false;
 			}
 
+			StudioNodeGuard studio_node(*this, "image", "image", source_start);
 			expect_assign(true);
-			cache->add_image(std::move(ids), parse_root_expression());
+			std::unique_ptr<Expression> expression(parse_root_expression());
+			studio_node.SetExpression(expression.get());
+			cache->add_image(std::move(ids), expression.release());
 			return true;
 		}
 
 		// ... load data from disk and populate
-		int Parser::load_import(size_t line, size_t col, bool ignore_failed, bool parse_import)
+		int Parser::load_import(size_t line, size_t col, bool ignore_failed, bool parse_import, std::size_t source_start)
 		{
 			skip();
-			
+			if(source_start == static_cast<std::size_t>(-1)) source_start = l ? l->index : 0;
+			StudioNodeGuard studio_node(*this, "import", "import", source_start);
+
 			if(parse_import)
 			{
 				if(!l->skip_import())
@@ -1114,7 +1606,91 @@ namespace Nilesoft
 			}
 
 			std::unique_ptr<Expression> epath(parse_root_expression());
+			studio_node.SetExpression(epath.get());
 			error_if(!epath, TokenError::ImportPathExpected, prevCol);
+
+			if(m_syntaxOnly && !m_preview && epath && l && l->buffer)
+			{
+				// Keep an unresolved runtime import visible to managed callers at the
+				// declaration span.  The native parser does not evaluate import paths
+				// during source inspection, so only expressions whose projected shape
+				// is plainly dynamic receive this warning; literal/interpolation and
+				// concatenation shapes remain eligible for the managed literal resolver.
+				const auto projected = StudioLanguage::ProjectNativeExpression(epath.get(),
+					std::wstring_view(l->buffer, l->length), ExpressionSources);
+				std::function<bool(const StudioLanguage::ExpressionNode&)> dynamic =
+					[&](const StudioLanguage::ExpressionNode& expression)
+				{
+					if(expression.kind == "literal" || expression.kind == "identifier" ||
+						expression.kind == "variable" || expression.kind == "interpolationText")
+						return false;
+					if(expression.kind == "interpolation" || expression.kind == "group" ||
+						expression.kind == "binary")
+						return std::any_of(expression.children.begin(), expression.children.end(),
+							[&](const auto& child) { return dynamic(child); });
+					return true;
+				};
+				if(dynamic(projected))
+				{
+					StudioLanguage::Diagnostic diagnostic;
+					diagnostic.code = "LANG_IMPORT_DYNAMIC";
+					diagnostic.message = "The import path depends on runtime values and was not resolved during source inspection.";
+					diagnostic.severity = "warning";
+					diagnostic.start = static_cast<int>((std::min)(source_start,
+						static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+					const auto end = studio_end_position();
+					diagnostic.length = static_cast<int>((std::min)(end >= source_start ? end - source_start : 0,
+						static_cast<std::size_t>((std::numeric_limits<int>::max)())));
+					diagnostic.remedy = "Open the resolved file explicitly or provide a restricted native preview context.";
+					m_studioSyntax.diagnostics.push_back(std::move(diagnostic));
+				}
+			}
+
+			if(m_syntaxOnly && !m_preview)
+				return 0;
+
+			if(m_preview)
+			{
+				studio_node.Finish();
+				if(!context.Preview || !m_previewImport) return 0;
+				auto value = context.Eval(epath.get()).move();
+				if(context.Preview->failed || !value.is_string()) return 0;
+				if(_imports.size() >= 32 || ++m_previewImportCount > 256)
+				{
+					context.Preview->Fail("IMPORT_LIMIT", L"The preview import graph exceeds its limit.");
+					return 0;
+				}
+				std::wstring path, source;
+				if(!m_previewImport(std::wstring(l->path.c_str()), std::wstring(value.to_string().c_str()), path, source))
+				{
+					context.Preview->Fail("IMPORT_UNAVAILABLE", L"This import is not available in the supplied workspace snapshot.");
+					return 0;
+				}
+				for(const auto& active : _imports)
+					if(active->path.equals(path.c_str()))
+					{
+						context.Preview->Fail("IMPORT_CYCLE", L"The preview import graph contains a cycle.");
+						return 0;
+					}
+				StudioLanguage::Frontend limits(source);
+				const auto shape = limits.Parse();
+				if(std::any_of(shape.diagnostics.begin(), shape.diagnostics.end(), [](const auto& d) { return d.code == "LANG_LIMIT"; }))
+				{
+					context.Preview->Fail("IMPORT_LIMIT", L"The imported document exceeds its structural limit.");
+					return 0;
+				}
+				auto lex = import_push();
+				if(!lex->load_buffer(source.data(), source.size(), path.c_str()))
+				{
+					pop_import();
+					context.Preview->Fail("IMPORT_INPUT", L"The supplied import could not be parsed.");
+					return 0;
+				}
+				l = lex;
+				skip();
+				prevCol = l->column;
+				return 1;
+			}
 
 			Object obj = context.Eval(epath.get()).move();
 
@@ -1125,7 +1701,7 @@ namespace Nilesoft
 
 			if(path.empty())
 				return 0;
-			
+
 			if(path.length() > 2)
 			{
 				if(!((path[1] == L':' && path[2] == L'\\') || (path[0] == L'\\' && path[1] == L'\\')))
@@ -1135,7 +1711,7 @@ namespace Nilesoft
 			path = Path::FixSeparator(path).move();
 
 			auto hash = path.hash();
-			
+
 			if(hash)
 			{
 				for(auto &h : m_imports)
@@ -1182,10 +1758,15 @@ namespace Nilesoft
 			return 0;
 		}
 
-		void Parser::parse_loc(bool has_curly)
+		void Parser::parse_loc(bool has_curly, std::size_t source_start)
 		{
+			if(source_start == static_cast<std::size_t>(-1)) source_start = l ? l->index : 0;
+			StudioNodeGuard studio_node(*this, "localization", "localization", source_start);
 			if(has_curly)
+			{
 				expect_openCurly();
+				studio_set_child_insert(l->index);
+			}
 			while(!l->eof)
 			{
 				if(has_curly && l->tok == L'}')
@@ -1203,8 +1784,9 @@ namespace Nilesoft
 			while(!l->eof)
 			{
 				skip();
+				preview_query_boundary();
 				prevCol = l->column;
-				
+
 				if(l->peek_ident(IDENT_THEME))
 				{
 					parse_theme();
@@ -1216,6 +1798,7 @@ namespace Nilesoft
 					continue;
 				}
 
+				const auto source_start = l->index;
 				Hash id = parse_ident();
 				switch(id)
 				{
@@ -1230,7 +1813,7 @@ namespace Nilesoft
 					case CONFIG_UPDATE:
 					case CONFIG_CHANGE:
 					case IDENT_REMOVE:
-						parse_modify_items(id);
+						parse_modify_items(id, source_start);
 						break;
 					case CONFIG_MENU:
 					case CONFIG_ITEM:
@@ -1238,6 +1821,7 @@ namespace Nilesoft
 					case CONFIG_SEPARATOR:
 					{
 						std::unique_ptr<NativeMenu> item(new NativeMenu(&cache->dynamic));
+						set_source_identity(item.get(), source_start);
 						if(parse_menu_item(item.get(), id))
 						{
 							cache->dynamic.items.push_back(item.release());
@@ -1260,11 +1844,11 @@ namespace Nilesoft
 							l->next(4);
 						}
 
-						auto ret = load_import(l->line, l->column, true, false);
+						auto ret = load_import(l->line, l->column, true, false, source_start);
 						if(ret == 1)
 						{
 							if(bloc)
-								parse_loc(false);
+							parse_loc(false, source_start);
 							else
 								parse_config();
 							pop_import();
@@ -1274,7 +1858,7 @@ namespace Nilesoft
 					case IDENT_LANG:
 					case IDENT_LOC:
 					{
-						parse_loc(true);
+						parse_loc(true, source_start);
 						break;
 					}
 					default:
@@ -1309,9 +1893,19 @@ namespace Nilesoft
 					}
 				};
 
+				refresh_studio_syntax();
+				// The lossless front end enforces structural limits before the
+				// shared recursive runtime grammar runs.  A limit diagnostic must
+				// stop syntax-only validation here; serializing it after parse_config
+				// would be too late to protect the editor's thread stack.
+				if(m_syntaxOnly && std::any_of(m_studioSyntax.diagnostics.begin(),
+					m_studioSyntax.diagnostics.end(), [](const auto &diagnostic)
+					{ return diagnostic.code == "LANG_LIMIT"; }))
+					return false;
+
 				if(_imports.empty() || (l->length == 0 && !m_error))
 					return true;
-			
+
 				context.Runtime = false;
 
 				auto cache = context.Cache;
@@ -1319,22 +1913,44 @@ namespace Nilesoft
 				cache->dynamic.fso.set(TRUE);
 
 				location = Path::Parent(l->path);
-				parse_config();
+				if(m_syntaxLocalization)
+					parse_loc(false, 0);
+				else
+					parse_config();
 
 				result = /*parse_config() && */!m_error;
 				if(result)
 				{
 				}
 			}
+			catch(const PreviewQueryComplete&)
+			{
+				result = !m_error;
+			}
 			catch(const ParserException&)
 			{
+				append_studio_diagnostic();
 			}
 			catch(...)
 			{
-#ifdef _DEBUG
-				Logger::Exception(__func__);
-#endif
+				if(m_syntaxOnly)
+				{
+					if(!m_error)
+					{
+						m_error = true;
+						error_code = TokenError::Unknown;
+					}
+					append_studio_diagnostic();
+				}
+				else
+				{
+		#ifdef _DEBUG
+					Logger::Exception(__func__);
+		#endif
+				}
 			}
+			append_studio_diagnostic();
+			project_studio_expressions();
 			return result;
 		}
 	}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <oleacc.h>
+#include "StudioCapture.h"
 
 /*
 sent to: +0x18, dwItemData start with 0xaa0df00d before its submenu being populated
@@ -163,10 +164,10 @@ namespace Nilesoft
 			bool useSystemPadding;
 			bool forceAccelerators;
 			CMRDArray *parentArray;
-		}; 
+		};
 		//IMEMENUITEMINFOW
 		constexpr auto MF_NOITEM = 0xFFFFFFFFU;
-		
+
 		struct MenuItemInfo : public MENUITEMINFOW
 		{
 			static const uint32_t FMASK = MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP |
@@ -176,7 +177,7 @@ namespace Nilesoft
 			MenuItemInfo *owner{};
 			NativeMenu *owner_static{};
 			NativeMenu *owner_dynamic{};
-			
+
 			string path;
 
 			struct
@@ -199,6 +200,9 @@ namespace Nilesoft
 			std::vector<uint32_t> parent;
 			std::vector<MenuItemInfo *> items;
 			std::vector<NativeMenu *> native_items;
+			StudioCaptureTrace trace;
+			StudioCaptureEvidence evidence;
+			StudioCaptureCompleteness studio_completeness;
 
 			std::vector<struct menuitem_t *> *sys_items=0;
 
@@ -218,6 +222,9 @@ namespace Nilesoft
 			bool dynamic{};
 			bool destroy{};
 			bool submenu_delete{};
+			// A popup can be empty after a complete, side-effect-free capture. Keep
+			// that state separate from an unopened popup whose child vector is empty.
+			bool studio_children_captured{};
 			int separator{};
 			int tab = -1;
 			int column = 0;
@@ -284,7 +291,7 @@ namespace Nilesoft
 					import = ImageImport::None;
 				}
 
-				bool isvalid() const 
+				bool isvalid() const
 				{
 					return hbitmap != nullptr || inherited || import != ImageImport::None;
 				}
@@ -697,7 +704,7 @@ namespace Nilesoft
 			*/
 
 
-			// iswpunct !"#$%&'()*+,-./ 
+			// iswpunct !"#$%&'()*+,-./
 			// iswblank \x09 \x20
 			static bool is_normalize(wchar_t c)
 			{
@@ -709,7 +716,7 @@ namespace Nilesoft
 				uint32_t hash = 0;
 				if(title_normalize)
 					*title_normalize = {};
-				
+
 				if(!title.empty())
 				{
 					Hash h;
@@ -720,7 +727,7 @@ namespace Nilesoft
 
 					bool last_punct = false;
 					int itab = -1;
-					
+
 					for(int i = 0; i < tmp.length<int>(); i++)
 					{
 						c = tmp[i];
@@ -735,7 +742,7 @@ namespace Nilesoft
 								continue;
 							i++;
 						}
-						
+
 						if(c == L'_' || tmp.length() == 1 || is_normalize(c))
 						{
 							if(c == L'_')
@@ -743,7 +750,7 @@ namespace Nilesoft
 								if(!last_punct) h.hash(c);
 								last_punct = true;
 							}
-							else 
+							else
 							{
 								h.hash(c);
 								last_punct = false;
@@ -923,7 +930,7 @@ namespace Nilesoft
 					hash = MenuItemInfo::normalize(title, &title_normalize);
 			}
 
-			string get_title() const 
+			string get_title() const
 			{
 				if(!title.empty())
 					return title;

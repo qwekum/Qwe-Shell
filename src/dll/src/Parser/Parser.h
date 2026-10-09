@@ -1,12 +1,21 @@
 #pragma once
 
+#include "LanguageFrontend.h"
+#include "NativeExpressionSyntax.h"
+
+#include <memory>
+#include <string>
+#include <string_view>
+#include <map>
+#include <vector>
+
 namespace Nilesoft
 {
 	namespace Shell
 	{
 		using namespace Windows;
 		using namespace Drawing;
-		
+
 		class Parser
 		{
 			static constexpr auto error_format0 = L"error %s";
@@ -26,6 +35,59 @@ namespace Nilesoft
 
 			std::vector<uint32_t> m_imports;
 			std::vector<std::unique_ptr<Lexer>> _imports;
+			StudioLanguage::Document m_studioSyntax;
+			std::wstring m_syntaxSource;
+			std::wstring m_syntaxPath;
+			std::unique_ptr<CACHE> m_ownedCache;
+			Application m_syntaxApplication;
+			bool m_syntaxOnly = false;
+			bool m_syntaxLocalization = false;
+			bool m_syntaxDiagnosticAdded = false;
+			bool m_preview = false;
+			std::function<bool(const std::wstring&, const std::wstring&, std::wstring&, std::wstring&)> m_previewImport;
+			std::size_t m_previewImportCount = 0;
+			struct PreviewQueryComplete {};
+			std::function<bool(std::wstring_view, std::size_t)> m_previewQuery;
+			class StudioNodeGuard;
+			class ExpressionDepthGuard final
+			{
+				Parser* owner_ = nullptr;
+				bool active_ = false;
+
+			public:
+				explicit ExpressionDepthGuard(Parser& owner)
+					: owner_(&owner), active_(owner.enter_expression_depth()) {}
+				~ExpressionDepthGuard() { if(active_) owner_->leave_expression_depth(); }
+				ExpressionDepthGuard(const ExpressionDepthGuard&) = delete;
+				ExpressionDepthGuard& operator=(const ExpressionDepthGuard&) = delete;
+				explicit operator bool() const noexcept { return active_; }
+			};
+			std::vector<StudioLanguage::Node> m_studioNodeStack;
+			bool m_studioEmissionLimited = false;
+			std::size_t m_studioNodeId = 0;
+			std::size_t m_expressionDepth = 0;
+			bool m_expressionDepthLimited = false;
+			bool studio_source_active() const;
+			std::size_t studio_end_position() const;
+			bool studio_begin_node(std::string kind, std::string name, std::size_t start);
+			void studio_finish_node();
+			void studio_set_property_insert(std::size_t position);
+			void studio_set_child_insert(std::size_t position);
+			void studio_set_node_expression(const Expression* expression);
+			void studio_add_property(std::size_t start, std::size_t name_end,
+				std::size_t value_start, std::size_t end, const Expression* expression);
+			std::string studio_source_text(std::size_t start, std::size_t end) const;
+			void preview_query_boundary();
+			void record_expression_source(const Expression*, std::size_t start);
+			void capture_expression_syntax(const Expression*);
+			void project_studio_expressions();
+			bool enter_expression_depth();
+			void leave_expression_depth();
+			std::map<std::pair<std::wstring, std::size_t>, StudioLanguage::ExpressionNode> m_nativeExpressions;
+			Lexer* m_triviaLexer = nullptr;
+			std::size_t m_triviaStart = 0, m_triviaEnd = 0;
+			template<class T> T* recorded_expression(T* value, std::size_t start)
+			{ record_expression_source(value, start); return value; }
 
 		private:
 
@@ -96,14 +158,15 @@ namespace Nilesoft
 			Expression *parse_property__();
 			bool parse_property_ident(Ident &id, bool singleLineComment = true);
 
-			
+
 			bool parse_ident(Ident &id, bool allow_dash = false);
 			uint32_t parse_ident(bool multiple = true);
 
 			bool parse_variable(Scope *variables, bool has_sign = true);
-			int load_import(size_t line, size_t col, bool ignore_failed = true, bool parse_import = false);
+			int load_import(size_t line, size_t col, bool ignore_failed = true, bool parse_import = false,
+				std::size_t source_start = static_cast<std::size_t>(-1));
 
-			void parse_modify_items(uint32_t action = 0);
+			void parse_modify_items(uint32_t action = 0, std::size_t source_start = static_cast<std::size_t>(-1));
 
 			uint32_t parse_image_ident();
 			bool parse_image();
@@ -112,13 +175,16 @@ namespace Nilesoft
 			void parse_menu(NativeMenu *menu, bool has_curly = true);
 			bool parse_modify_properties(NativeMenu *item, uint32_t action = 0);
 
-			void parse_loc(bool has_curly = false);
+			void parse_loc(bool has_curly = false, std::size_t source_start = static_cast<std::size_t>(-1));
 
 			void parse_settings(std::vector<struct SETTING> *settings, const Ident &id, bool imported = false);
 			void parse_settings(struct SETTING *setting, const Ident &id = 0, bool imported = false);
 			void parse_theme();
 			void parse_settings();
 			void parse_config();
+			void refresh_studio_syntax();
+			void append_studio_diagnostic();
+			void set_source_identity(NativeMenu *menu, size_t source_start);
 
 			bool is_lexer() const { return l == _imports.front().get(); };
 
@@ -181,13 +247,40 @@ namespace Nilesoft
 */
 
 		public:
+			struct SyntaxInput
+			{
+				std::wstring_view source;
+				std::wstring_view path = {};
+				bool localization = false;
+			};
+			struct PreviewInput
+			{
+				SyntaxInput syntax;
+				PreviewPolicy* policy = nullptr;
+				// Resolves only supplied document snapshots. No filesystem fallback.
+				std::function<bool(const std::wstring&, const std::wstring&, std::wstring&, std::wstring&)> import;
+				// Called at actual grammar boundaries in the current native scope.
+				std::function<bool(std::wstring_view, std::size_t)> query;
+			};
+
 			Parser();
+			explicit Parser(CACHE *target_cache);
+			explicit Parser(SyntaxInput input);
+			explicit Parser(PreviewInput input);
 			~Parser();
+			std::unique_ptr<Expression> ParseExpression(std::wstring_view source);
+			Scope* ScopeAt(std::wstring_view path, std::size_t position);
+			using ExpressionSource = StudioLanguage::ExpressionSource;
+			StudioLanguage::ExpressionSources ExpressionSources;
 
 
 			bool			Load();
 			bool			HasError() const;
 			TokenError		Error() const;
+			// This view is built from the same reusable native front end that
+			// powers Shell Studio. Runtime object construction and evaluation stay
+			// on the existing semantic path below.
+			const StudioLanguage::Document &StudioSyntax() const;
 
 			size_t			Line() const;
 			size_t			Column() const;
@@ -228,7 +321,7 @@ namespace Nilesoft
 							if(id == ident[0])
 								return argc == arg;
 						}
-						else 
+						else
 						{
 							for(auto &func : idents)
 							{
