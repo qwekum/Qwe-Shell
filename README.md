@@ -1,12 +1,25 @@
-# Qwe Shell and Shell Studio
+[![Ceasefire Now](https://badge.techforpalestine.org/default)](https://techforpalestine.org/learn-more)
 
-This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio now has a Windows x64 source implementation, including the visual editor and consolidated tool services. The most recently built MSI predates the 2026-09-12 source-backed editing and automatic semantic-capture changes. The [local verification record](docs/studio/local-verification.md) records the current checks, historical package hashes, and their limits. Explorer, installer lifecycle, runtime parity, and human acceptance remain pending; this is not a qualified release.
+# Qwe-Shell and Shell Studio
+
+<p align="center"><img src=".github/assets/project-logo.png" alt="Qwe Shell logo" width="160" height="160"></p>
+
+This fork of [Nilesoft Shell](https://nilesoft.org) extends the native Windows Explorer context-menu manager. Shell Studio has a Windows x64 source implementation, including the visual editor and consolidated tool services. The [1.9.20 candidate record](docs/studio/release-candidate-1.9.20.md) distinguishes current remediation evidence from the [historical local verification record](docs/studio/local-verification.md). Full Explorer, installer lifecycle, donor/runtime parity, ARM64 compilation, and human acceptance remain incomplete; this is not a qualified release.
+
+This stacked qualification change excludes the twelve original PR review fixes, which remain local. See [publication scope](docs/studio/pr-remediation.md#qualification-draft-scope-and-dependencies) before treating combined qualification evidence as evidence for this branch.
+
+The current remediation target is an unsigned **1.9.20** candidate combining
+the Studio and cloud PR changes with main. Historical checks do not qualify
+this candidate; commits, publication, signing, and desktop installation remain
+separate decisions.
 
 See [Install and use Shell Studio](docs/studio/using-shell-studio.md) for the
 end-user workflow, existing-Shell replacement guidance, backup, and rollback.
 [Build and run Shell Studio](docs/studio/build-and-run.md) covers contributor
 prerequisites, builds, outputs, and verification. The approved plan below
 remains the acceptance contract.
+
+For the offline Linux source/static lane, see [Cloud development in PR2](https://github.com/qwekum/Qwe-Shell/blob/0cb837a5bb5d4a2ae6ec0043a861b658345e7c89/docs/studio/cloud-development.md). Linux execution and environment qualification are recorded separately from Windows application acceptance.
 
 The [Studio interface design](docs/studio/design-system.md) records the shared visual system, independent review gates, and the limits of local UI verification.
 The [workspace redesign record](docs/studio/redesign-2026-09-10.md) covers the menu preview, source-backed entry details, context picker, and configurable file type groups.
@@ -55,12 +68,12 @@ close the other instance. **Stop capture** means that this Studio owns an active
 listener; it does not by itself mean that a matching Explorer menu has arrived.
 See [capture troubleshooting](docs/studio/using-shell-studio.md#capture-troubleshooting)
 for the exact checks and the remaining live-Explorer qualification boundary.
-The current source has passed 58 offscreen WPF checks, 66 Core/exported-parser
+The historical verification record reported 58 offscreen WPF checks and 66 Core/exported-parser
 checks, and the native capture and preview suites. A Release/x64 build compiled
 and published Studio and ToolHost, then stopped before replacing the
-Explorer-loaded `bin\shell.dll`; no current-source MSI was produced. Rebuild the
-combined package in an isolated environment before testing or distributing an
-installer expected to contain these changes.
+Explorer-loaded `bin\shell.dll`; that run produced no MSI. The new candidate has
+separate builds and evidence in the [1.9.20 record](docs/studio/release-candidate-1.9.20.md).
+Historical results do not qualify a replacement package.
 
 Building, opening, capturing with, or closing Studio does not disable Microsoft
 Defender or change its real-time-protection preferences. A Windows Security
@@ -99,6 +112,8 @@ Retain the result JSON, semantic snapshots, PNGs, manifests, and ownership recor
 ## Upstream and attribution
 
 See the [Shell documentation](https://nilesoft.org/docs), [upstream downloads](https://nilesoft.org/download), and [repository license](LICENSE). Upstream downloads and existing screenshots describe Shell, not a completed Studio release. Preserve upstream and donor attribution and third-party notices when integrating functionality.
+
+Support continued development through [Buy Me a Coffee](https://buymeacoffee.com/qwekumk).
 
 ## Shell Studio plan
 
